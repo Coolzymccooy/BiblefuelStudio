@@ -9,6 +9,9 @@ import {
   projectView, renderView, renderStarted, hasTimedLines,
 } from "../lyricView.js";
 
+// The song and background routes read only the caller's own folder. Not media_import_url: the SSRF guard refuses this server's own files.
+const OWN_FOLDER = { message: "The lyric video takes only files in your own media folder (your uploads, imports and renders, see media_list)." };
+
 const ROUTES = ["/api/lyric-video"];
 const FREE_NOTE = "Free: no daily cap or plan quota is spent.";
 const JOB_ID = z.string().trim().regex(/^[\w-]{1,80}$/, "a render job id");
@@ -79,7 +82,7 @@ const lyricSetSong = {
   name: "lyric_set_song",
   title: "Set a lyric video's song",
   description:
-    "Give the song its audio: path is an audio file, or a video whose sound is taken out, in your own media folder (from media_import_url or media_list); URLs, shared voice files, generated images and other paths are refused (import those with media_import_url first). At most 15 minutes. " +
+    "Give the song its audio: path is an audio file, or a video whose sound is taken out, in your own media folder (from media_import_url or media_list); URLs, shared voice files, generated images and other paths are refused. At most 15 minutes. " +
     "A new song clears the old timing, so run lyric_align again. Waits while the file is read (seconds, up to a minute for a long video). Refused while timing or a render runs. Returns the song. " + FREE_NOTE,
   inputSchema: {
     id: LYRIC_ID.describe("The song's project id."),
@@ -87,7 +90,7 @@ const lyricSetSong = {
   },
   routes: ROUTES,
   async handler(ctx, { id, path }) {
-    const media = await resolveOwnMediaInput(ctx, path);
+    const media = await resolveOwnMediaInput(ctx, path, OWN_FOLDER);
     if (media.refusal) return media.refusal;
     return ok(viewOf(ctx, await ctx.api.call("POST", `${projectPath(id)}/song`, { body: { path: media.path } })));
   },
@@ -177,7 +180,7 @@ const brandingSchema = z.object({
 /** The background body, after the path is confined; { refusal } when the path is not the user's. */
 async function backgroundBody(ctx, { path, fit }) {
   if (path === null) return { body: { path: null } };
-  const media = await resolveOwnMediaInput(ctx, path);
+  const media = await resolveOwnMediaInput(ctx, path, OWN_FOLDER);
   if (media.refusal) return { refusal: media.refusal };
   return { body: defined({ path: media.path, fit }) };
 }
@@ -204,7 +207,7 @@ const lyricBackground = {
   name: "lyric_background",
   title: "Set a lyric video's background and look",
   description:
-    "Choose what the lyric video looks like. path: the background picture or video in your own media folder (media_import_url or media_list; URLs, generated images in the shared folder and other paths are refused: import them with media_import_url first), with fit auto, cover or contain; path null clears it (the song's cover picture, else a dark colour, is used). " +
+    "Choose what the lyric video looks like. path: the background picture or video in your own media folder (media_import_url or media_list; URLs, generated images in the shared folder and other paths are refused), with fit auto, cover or contain; path null clears it (the song's cover picture, else a dark colour, is used). " +
     "look { id?, energy?, seed? }: the caption look and how hard its effects hit. branding { logo?, intro?, endCard? }: switches for your logo, the opening credit and the end card. Give any of the three; at least one. Returns the song. " + FREE_NOTE,
   inputSchema: {
     id: LYRIC_ID.describe("The song's project id."),

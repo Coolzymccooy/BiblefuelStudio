@@ -215,7 +215,7 @@ test("resolveOwnMediaInput takes only files in the caller's own media folder: a 
   assert.equal(own.path, fs.realpathSync(path.join(mine, "voice.mp3")));
   const sharedVoice = await resolveOwnMediaInput(ctx, path.join(shared, "tts-abc.mp3"));
   assert.equal(sharedVoice.refusal.structuredContent.error, "BAD_INPUT");
-  assert.match(sharedVoice.refusal.structuredContent.message, /Import it into your media first with media_import_url/);
+  assert.doesNotMatch(sharedVoice.refusal.structuredContent.message, /media_import_url/);
   const outside = await resolveOwnMediaInput(ctx, path.join(elsewhere, "secret.mp3"));
   assert.equal(outside.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
 });

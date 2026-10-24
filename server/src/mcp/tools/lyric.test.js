@@ -181,9 +181,15 @@ test("lyric_set_song and lyric_background refuse shared voice files and generate
   const { ctx, calls } = ctxWith();
   const song = await byName.lyric_set_song.handler(ctx, { id: "lv_1", path: path.join(shared, "tts-a.mp3") });
   assert.equal(song.structuredContent.error, "BAD_INPUT");
-  assert.match(song.structuredContent.message, /media_import_url/);
+  // The SSRF guard refuses this server's own files, so the refusal must not send the agent to media_import_url.
+  const ownFolderOnly = "The lyric video takes only files in your own media folder (your uploads, imports and renders, see media_list).";
+  assert.equal(song.structuredContent.message, ownFolderOnly);
   const picture = await byName.lyric_background.handler(ctx, { id: "lv_1", path: path.join(shared, "genImg", "genvis-u_unit-x", "a.png") });
   assert.equal(picture.structuredContent.error, "BAD_INPUT");
+  assert.equal(picture.structuredContent.message, ownFolderOnly);
+  for (const tool of [byName.lyric_set_song, byName.lyric_background]) {
+    assert.doesNotMatch(tool.description, /import (those|them) with media_import_url/, tool.name);
+  }
   assert.equal(calls.length, 0);
   assert.doesNotMatch(byName.lyric_background.description, /images_generate/);
   assert.doesNotMatch(byName.lyric_set_song.description, /narration/);
