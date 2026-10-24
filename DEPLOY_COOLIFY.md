@@ -30,6 +30,20 @@ Required (secrets): `ADMIN_SETUP_KEY`, `JWT_SECRET`, `OPENAI_API_KEY`.
 Recommended: `CORS_ORIGIN` (your domain), `JWT_EXPIRES_IN=7d`,
 `OUTPUT_DIR`, `DATA_DIR`, `FFMPEG_PATH=ffmpeg`, `FFPROBE_PATH=ffprobe`.
 
+### Agent access (MCP)
+Agents connect to `https://biblefuel.tiwaton.co.uk/api/mcp` with a key made in
+Settings (see `docs/mcp.md`). All of these are optional; defaults in brackets.
+- `MCP_ALLOWED_HOSTS`: host names `/api/mcp` answers on, comma-separated.
+  Unset: `localhost`, `127.0.0.1`, `[::1]`, `biblefuel.tiwaton.co.uk` and every
+  host in `CORS_ORIGIN`. When set it replaces that list entirely.
+- Daily ceilings per agent key, reset at midnight UTC, for every plan:
+  `MCP_DAILY_RENDERS` (10), `MCP_DAILY_AI_VIDEO_USD` (2), `MCP_DAILY_IMAGES`
+  (30), `MCP_DAILY_TTS` (30), `MCP_DAILY_PUBLISHES` (3). A user can lower a
+  key's limits in Settings but never raise them above these.
+- `IMPORT_URL_TIMEOUT_MS` (600000): overall deadline for one URL import.
+- `MAX_INPUT_MB` (200): the largest render input, and also the cap on a URL
+  import's download.
+
 ## Persistent storage
 Generated media and user data must live on a **persistent volume** mounted into
 the container (e.g. `OUTPUT_DIR` / `DATA_DIR`) — Coolify volumes survive

@@ -37,6 +37,23 @@ function activityFilters(req, res, fixedLimit) {
   };
 }
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function hostnameOf(host) {
+  try { return new URL(`http://${host}`).hostname.toLowerCase(); } catch { return ""; }
+}
+
+/**
+ * The URL agents should call. Any public host gets https: behind Cloudflare
+ * and Traefik the request can reach Express as plain http. Loopback keeps the
+ * scheme it came in on, so local development still works.
+ */
+function mcpEndpoint(req) {
+  const host = req.get("host");
+  const scheme = LOOPBACK_HOSTS.has(hostnameOf(host)) ? req.protocol : "https";
+  return `${scheme}://${host}/api/mcp`;
+}
+
 function clampCaps(caps, ceiling) {
   const out = {};
   for (const bucket of CAP_BUCKETS) {
@@ -53,7 +70,7 @@ const validCaps = (caps) =>
 
 router.get("/", (req, res) => {
   const keys = listKeys(req.ctx.userId).map((key) => ({ ...key, usage: capsSummary(key.id, key) }));
-  res.json({ ok: true, endpoint: `${req.protocol}://${req.get("host")}/api/mcp`, ceilings: ceilings(), keys });
+  res.json({ ok: true, endpoint: mcpEndpoint(req), ceilings: ceilings(), keys });
 });
 
 router.post("/", (req, res) => {

@@ -33,13 +33,23 @@ test("create shows the plain key once; list never shows it", async () => {
   const list = await request(app).get("/api/agent-keys").set(bearer("u_one")).set("Host", "studio.example.com");
   assert.equal(list.status, 200);
   assert.equal(list.body.ok, true);
-  assert.equal(list.body.endpoint, "http://studio.example.com/api/mcp");
+  assert.equal(list.body.endpoint, "https://studio.example.com/api/mcp", "a public host gets https even over plain http");
   assert.deepEqual(list.body.ceilings, ceilings());
   const listed = list.body.keys.find((k) => k.id === created.key.id);
   assert.ok(listed);
   assert.equal(listed.usage.renders.used, 0);
   assert.equal(listed.usage.renders.limit, ceilings().renders);
   assert.equal(JSON.stringify(list.body).includes(created.plain), false);
+});
+
+test("a loopback host keeps the request's own scheme in the endpoint", async () => {
+  for (const host of ["localhost:5051", "127.0.0.1", "[::1]:5051", "localhost"]) {
+    const list = await request(app).get("/api/agent-keys").set(bearer("u_one")).set("Host", host);
+    assert.equal(list.status, 200, host);
+    assert.equal(list.body.endpoint, `http://${host}/api/mcp`, host);
+  }
+  const prod = await request(app).get("/api/agent-keys").set(bearer("u_one")).set("Host", "biblefuel.tiwaton.co.uk");
+  assert.equal(prod.body.endpoint, "https://biblefuel.tiwaton.co.uk/api/mcp");
 });
 
 test("create validates the name and the key limit", async () => {

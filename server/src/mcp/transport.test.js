@@ -209,6 +209,37 @@ test("the guide resource returns the markdown", async () => {
   assert.match(text, /bearer_token_env_var = "BIBLEFUEL_AGENT_KEY"/);
 });
 
+test("allowedHosts: loopback and the production host by default, plus CORS_ORIGIN hosts", async () => {
+  const { allowedHosts, PRODUCTION_HOST } = await import("./transport.js");
+  assert.equal(PRODUCTION_HOST, "biblefuel.tiwaton.co.uk");
+  assert.deepEqual(allowedHosts({}), ["localhost", "127.0.0.1", "[::1]", "biblefuel.tiwaton.co.uk"]);
+  assert.deepEqual(
+    allowedHosts({ CORS_ORIGIN: "https://studio.example.com, http://localhost:5174" }),
+    ["localhost", "127.0.0.1", "[::1]", "biblefuel.tiwaton.co.uk", "studio.example.com"],
+  );
+  // An explicit list replaces the defaults entirely.
+  assert.deepEqual(allowedHosts({ MCP_ALLOWED_HOSTS: "a.example, b.example" }), ["a.example", "b.example"]);
+});
+
+test("the production Host header is accepted", async () => {
+  // u_admin: u_user is near the 10-live-keys limit by now.
+  const bearer = testApp.keyFor("u_admin", "Prod host");
+  const http = await import("node:http");
+  const status = await new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: "127.0.0.1", port, path: "/api/mcp", method: "GET", headers: { Host: "biblefuel.tiwaton.co.uk", Authorization: `Bearer ${bearer}` } },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode);
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+  // Past the Host check: GET is answered 405 by the stateless transport, not 403.
+  assert.notEqual(status, 403);
+});
+
 test("an unknown Host header is refused", async () => {
   const bearer = testApp.keyFor("u_user");
   const http = await import("node:http");
