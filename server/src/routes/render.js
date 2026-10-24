@@ -778,7 +778,7 @@ router.post("/captioned-video", async (req, res) => {
       }
       if (isRemoteUrl(videoPath)) {
         try { videoPath = await localizeRemote(videoPath, "video"); }
-        catch (e) { return sendFailure(res, remoteInputFailure(e, "video")); }
+        catch (e) { cleanupTempInputs(); return sendFailure(res, remoteInputFailure(e, "video")); }
       }
       if (isFileTooLarge(videoPath)) {
         return res.status(400).json({ ok: false, error: `videoPath too large (>${MAX_INPUT_MB}MB)` });
@@ -799,7 +799,7 @@ router.post("/captioned-video", async (req, res) => {
       // which they fetch with no SSRF check.
       if (isRemoteUrl(audioPath)) {
         try { audioPath = await localizeRemote(audioPath, "audio"); }
-        catch (e) { return sendFailure(res, remoteInputFailure(e, "audio")); }
+        catch (e) { cleanupTempInputs(); return sendFailure(res, remoteInputFailure(e, "audio")); }
       }
       if (isFileTooLarge(audioPath)) {
         return res.status(400).json({ ok: false, error: `audioPath too large (>${MAX_INPUT_MB}MB)` });
@@ -827,6 +827,7 @@ router.post("/captioned-video", async (req, res) => {
           // HEAD request is needed to fail fast.
           try { local = await localizeRemote(resolved, `bg${i}`); }
           catch (e) {
+            cleanupTempInputs();
             return sendFailure(res, backgroundFetchFailure(e, i, rawBackgroundPaths[i], MAX_INPUT_MB));
           }
         }
@@ -869,7 +870,7 @@ router.post("/captioned-video", async (req, res) => {
         }
         if (isRemoteUrl(m)) {
           try { m = await localizeRemote(m, `music${i}`); }
-          catch (e) { return sendFailure(res, remoteInputFailure(e, `music track ${i + 1}`)); }
+          catch (e) { cleanupTempInputs(); return sendFailure(res, remoteInputFailure(e, `music track ${i + 1}`)); }
         }
         if (isFileTooLarge(m)) {
           return res.status(400).json({ ok: false, error: `music track ${i + 1} too large (>${MAX_INPUT_MB}MB)` });
