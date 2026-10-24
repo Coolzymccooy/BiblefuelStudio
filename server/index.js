@@ -71,6 +71,12 @@ import { createSceneScriptRouter, resumeSceneScriptShots } from "./src/routes/sc
 import { createVisualLibraryRouter, resumeLibraryRerolls } from "./src/routes/visualLibrary.js";
 import { isSeedanceConfigured } from "./src/lib/videoGen/providers/seedance.js";
 import { hasLibass } from "./src/lib/kinetic/capability.js";
+import { initErrorTracking, captureError, captureMessage } from "./src/lib/ops/errorTracking.js";
+import { configureAlerts, alert } from "./src/lib/ops/alerts.js";
+import { onRenderFailure } from "./src/lib/ops/renderFailures.js";
+import { createMaintenance, backupsEnabled } from "./src/lib/ops/maintenance.js";
+import { bucketTarget, folderTarget } from "./src/lib/ops/backup.js";
+import { isFirebaseAdminEnabled, getStorageBucket } from "./src/lib/firebaseAdmin.js";
 
 // Load env from CURRENT server directory
 const __filename = fileURLToPath(import.meta.url);
@@ -91,6 +97,9 @@ try {
   console.error(`❌ ${e.message}`);
   process.exit(1);
 }
+
+// Error tracking (Sentry) is on when SENTRY_DSN is set.
+if (await initErrorTracking()) console.log("🛰️  Error tracking on (Sentry)");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -232,6 +241,46 @@ const emailTransport = createEmailTransport({
   replyTo: process.env.MAIL_REPLY_TO || '',
 });
 const sendEmail = (req) => sendEmailViaTransport(emailTransport, req);
+
+// Alerts go to OPS_ALERT_EMAIL, else the owner. Every render failure is one.
+const firstEmail = (v) => String(v || "").split(",").map((x) => x.trim()).find(Boolean) || "";
+configureAlerts({
+  sendEmail: process.env.RESEND_API_KEY ? sendEmail : null,
+  to: firstEmail(process.env.OPS_ALERT_EMAIL) || firstEmail(process.env.OWNER_EMAIL) || firstEmail(process.env.SUPER_ADMIN_EMAIL),
+  captureMessage,
+});
+onRenderFailure(({ kind, jobId, userId, projectId, error }) => {
+  alert("render-failed", `A ${kind} render failed`, [
+    jobId && `Job: ${jobId}`,
+    projectId && `Project: ${projectId}`,
+    userId && `User: ${userId}`,
+    `Error: ${error}`,
+  ].filter(Boolean).join("\n"));
+});
+
+// Housekeeping: disk alarm, throwaway-file cleanup, nightly backups.
+function backupTarget() {
+  if (!backupsEnabled()) return null;
+  const dir = String(process.env.BACKUP_TARGET || "").match(/^dir:(.+)$/)?.[1];
+  if (dir) return folderTarget(dir);
+  if (!isFirebaseAdminEnabled()) return null;
+  try {
+    return bucketTarget(getStorageBucket());
+  } catch (e) {
+    console.warn("[maintenance] backups off:", e?.message || e);
+    return null;
+  }
+}
+const maintenance = createMaintenance({ dataDir: DATA_DIR, outputDir: OUTPUT_DIR, alert, backupTarget: backupTarget() });
+function opsHealth() {
+  const st = maintenance.status();
+  const lastOk = Date.parse(st.backup?.lastOkAt || "");
+  return {
+    diskLow: st.disk ? st.disk.low : null,
+    backupsOn: st.backupsOn,
+    backupFresh: st.backupsOn ? Number.isFinite(lastOk) && Date.now() - lastOk < 36 * 3600_000 : null,
+  };
+}
 const accessRequestsStore = getAccessRequestsStore();
 // refuseAgentCalls here is belt-and-braces: the router is a public POST with no
 // requireAuth, so req.user is normally unset and it passes everyone through.
@@ -293,7 +342,9 @@ app.get('/api/health', async (req, res) => {
       // Studio caption looks draw with ffmpeg's ass filter (libass); false
       // means they fall back to drawtext presets on this box.
       libass: hasLibass(),
-    }
+    },
+    // Booleans only: this endpoint is public.
+    ops: opsHealth(),
   });
 });
 
@@ -460,6 +511,7 @@ app.get('*', spaFallback(publicDir));
 app.use((err, req, res, next) => {
   console.error("Unhandled Error:", err);
   const status = Number(err?.status || err?.statusCode || 500);
+  if (!(status < 500)) captureError(err, { tags: { route: req.path, method: req.method } });
   res.status(Number.isFinite(status) ? status : 500).json({
     ok: false,
     error: err.message || "Internal Server Error",
@@ -508,6 +560,9 @@ try {
 
 app.listen(PORT, () => {
   console.log(`✅ Biblefuel Studio v2 running at http://localhost:${PORT}`);
+  maintenance.start();
+  const { backupsOn } = maintenance.status();
+  console.log(`🧹 Housekeeping on: disk alarm, cleanup, backups ${backupsOn ? "on" : "off"}`);
 
   // Multi-tenancy posture diagnostics — surface the data-isolation mode
   // so operators don't accidentally ship in single-tenant where every
