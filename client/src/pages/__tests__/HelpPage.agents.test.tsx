@@ -16,4 +16,13 @@ describe('HelpPage: Connect an agent', () => {
     expect(document.querySelectorAll('pre code').length).toBeGreaterThan(3);
     expect(document.body.textContent).not.toContain('```');
   });
+
+  it('renders the whole file, the agent part and the setup part, without the split marker', () => {
+    render(<HelpPage />);
+    expect(screen.getByRole('heading', { name: 'First calls' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Troubleshooting' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Connect Claude Code' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Prompts' })).toBeTruthy();
+    expect(document.body.textContent).not.toContain('biblefuel://guide ends here');
+  });
 });

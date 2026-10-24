@@ -50,9 +50,9 @@ test("resources/templates/list shows the job template as JSON", async () => {
   assert.equal(JOB_TEMPLATE_URI, "biblefuel://jobs/{kind}/{id}");
 });
 
-test("resources/list still lists the guide, and no job entries", async () => {
+test("resources/list lists the two guide resources, and no job entries", async () => {
   const { resources } = await client.listResources();
-  assert.deepEqual(resources.map((r) => r.uri), ["biblefuel://guide"]);
+  assert.deepEqual(resources.map((r) => r.uri), ["biblefuel://guide", "biblefuel://guide/setup"]);
 });
 
 test("reading a done job returns the same handle as jobs_get, as JSON", async () => {

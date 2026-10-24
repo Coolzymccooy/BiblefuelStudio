@@ -132,3 +132,46 @@ test("the Prompts row for make_lyric_video counts the import a URL costs", () =>
   const row = section("## Prompts").split(/\r?\n/).find((line) => line.startsWith("| `make_lyric_video`"));
   assert.match(row, /`imports`/);
 });
+
+// ---- #121: a shorter agent guide, agent part first ----
+
+const { guideParts, GUIDE_MARKER, SETUP_TITLE } = await import("./guide.js");
+const parts = guideParts(GUIDE);
+const KB = 1024;
+
+test("the file has one marker: the agent part before it, the setup part after, and nothing is lost", () => {
+  assert.equal(GUIDE.split(GUIDE_MARKER).length, 2, "exactly one marker");
+  const words = (text) => text.replace(/\s+/g, " ").trim();
+  assert.ok(parts.setup.startsWith(`${SETUP_TITLE}\n`));
+  assert.equal(words(`${parts.agent} ${parts.setup.slice(SETUP_TITLE.length)}`), words(GUIDE.replace(GUIDE_MARKER, "")));
+});
+
+test("the agent part (biblefuel://guide) is under 30 KB", () => {
+  const bytes = Buffer.byteLength(parts.agent);
+  assert.ok(bytes < 30 * KB, `the agent guide is ${bytes} bytes; keep it under ${30 * KB}`);
+});
+
+test("the agent part runs first calls, the job handle, pipelines, costs, then errors and troubleshooting", () => {
+  const order = ["## First calls", "## Waiting for jobs", "## Pipelines", "## Quotas and daily caps", "## Troubleshooting"];
+  const at = order.map((heading) => parts.agent.split("\n").indexOf(heading));
+  assert.ok(at.every((i) => i >= 0), `the agent part has every section: ${order.filter((_, i) => at[i] < 0).join(", ")}`);
+  assert.deepEqual([...at].sort((a, b) => a - b), at, "in this order");
+});
+
+test("human setup (keys, connecting clients, Settings steps) is in the setup part only", () => {
+  for (const heading of ["## Get a key", "## Connect Hermes Agent", "## Connect Codex", "## Connect Claude Code", "### Tools available today"]) {
+    assert.equal(parts.agent.includes(heading), false, `${heading} is not in the agent part`);
+    assert.ok(parts.setup.includes(heading), `${heading} is in the setup part`);
+  }
+});
+
+test("both parts are served with LF line endings", () => {
+  assert.equal(parts.agent.includes("\r"), false);
+  assert.equal(parts.setup.includes("\r"), false);
+});
+
+test("the agent part tells agents about jobs_cancel, durationSec and the setup resource", () => {
+  assert.match(parts.agent, /`jobs_cancel \{ kind, id, projectId\? \}`/);
+  assert.match(parts.agent, /`durationSec`, the video's real length/);
+  assert.match(parts.agent, /biblefuel:\/\/guide\/setup/);
+});

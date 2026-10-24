@@ -282,18 +282,35 @@ test("a tool reaches the app through the loopback API", async () => {
   assert.equal(result.structuredContent.publicBase, `http://127.0.0.1:${port}`);
 });
 
-test("the guide resource returns the markdown", async () => {
+test("the guide resource returns the agent part of the markdown, and the setup part, both with LF line endings (#121)", async () => {
   const client = await connect(testApp.keyFor("u_user"));
   const { contents } = await client.readResource({ uri: "biblefuel://guide" });
   assert.equal(contents[0].mimeType, "text/markdown");
   const text = contents[0].text;
   assert.ok(text.startsWith("# Connect an agent"));
   assert.doesNotMatch(text, /guide is not available/);
-  for (const heading of ["## Get a key", "## How a call works", "## Waiting for jobs", "## Troubleshooting"]) {
+  for (const heading of ["## First calls", "## How a call works", "## Waiting for jobs", "## Pipelines", "## Troubleshooting"]) {
+    assert.ok(text.includes(heading), `missing ${heading}`);
+  }
+  assert.equal(/\r/.test(text), false, "LF line endings only");
+  assert.equal(text.includes("## Get a key"), false, "human setup is in biblefuel://guide/setup");
+  assert.ok(Buffer.byteLength(text) < 30 * 1024, `the agent guide is ${Buffer.byteLength(text)} bytes`);
+  await assertSetupResource(client);
+});
+
+/** The setup resource holds the human setup and the tool table, with LF line endings (#121). */
+async function assertSetupResource(client) {
+  const { contents } = await client.readResource({ uri: "biblefuel://guide/setup" });
+  assert.equal(contents[0].mimeType, "text/markdown");
+  const text = contents[0].text;
+  assert.ok(text.startsWith("# "));
+  for (const heading of ["## Get a key", "## Connect Codex", "### Tools available today", "## Resources", "## Prompts"]) {
     assert.ok(text.includes(heading), `missing ${heading}`);
   }
   assert.match(text, /bearer_token_env_var = "BIBLEFUEL_AGENT_KEY"/);
-});
+  assert.equal(/\r/.test(text), false, "LF line endings only");
+  assert.equal(text.includes("## Waiting for jobs"), false);
+}
 
 test("allowedHosts: loopback and the production host by default, plus CORS_ORIGIN hosts", async () => {
   const { allowedHosts, PRODUCTION_HOST } = await import("./transport.js");
