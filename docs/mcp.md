@@ -128,6 +128,15 @@ Every call passes the same checks, in this order:
 | `images_generate` | `{ lines, aspect?, count? }`. AI stills from text lines. Returns `path` and `url` per image. One daily `images` per image. |
 | `visual_library` | `{ action: "list" or "similar" or "import" or "update" or "remove", ... }`. Paid AI clips. Super-admin keys only; other keys do not see it. |
 | `branding` | `{ action: "get" or "set", enabled?, position?, size?, opacity? }`. The logo drawn on your rendered videos. |
+| `render_short` | `{ lines, backgrounds? or autoBackground?, audioPath?, musicPath?, ... }`. A short captioned video. Job handle of kind `job`. One daily render (plus four `images` with `autoBackground`). |
+| `render_captioned` | `{ videoPath }` or `{ audioPath, backgrounds }`, plus `words` from `transcribe`. Word-by-word captions. Handle of kind `captioned`. One daily render. |
+| `render_cancel` | `{ id }`. Stop a running `render_captioned` job. |
+| `social_status` | Where you can publish: YouTube, playlists, auto-publish destinations, Buffer profiles, saved webhooks and schedules. No secrets. Free. |
+| `publish_youtube` | `{ videoPath, title, ... }`. Upload to the connected channel. Handle of kind `publish`. Needs publish consent; one daily publish. |
+| `publish_post` | `{ destination: "webhook" or "buffer", videoPath, caption, ... }`. Post to a saved webhook (and TikTok when connected) or Buffer. Needs publish consent; one daily publish. |
+| `youtube_thumbnail` | `{ videoId, thumbnailPath }`. Replace a YouTube video's thumbnail. Needs publish consent; no daily publish. |
+| `schedules` | `{ action: "list" or "create" or "remove", ... }`. Recurring posts. `create` and `remove` need publish consent; `create` is one daily publish. |
+| `autopublish_run` | One-click Auto-Publish: script, voice, render and post in one job (kind `job`). Needs publish consent; one daily render and one daily publish. |
 
 More tools arrive in later slices. The Pipelines section shows where each fits.
 
@@ -230,13 +239,20 @@ Each pipeline is an ordered list of tools. Tools marked **coming** are planned a
 1. `media_import_url` (or `media_list` to reuse a file)
 2. `transcribe` (words and timings)
 3. `media_trim` (optional: cut a new file by seconds)
-4. A render tool, then `jobs_wait`. Render tools are **coming**.
+4. `render_captioned` (the words from step 2 burned onto the video, or onto backgrounds under the audio), then `jobs_wait` with `kind: "captioned"`.
 
 Stuck or finished jobs: `jobs_list`, `jobs_get`, `jobs_retry`, then `jobs_wait`.
 
-### Short video from a Bible verse (coming)
+### Short video from a Bible verse (available now)
 
-`bible_lookup` or `scripts_generate`, then `voice_synthesize`, then `backgrounds_search`, then `render_short`, then `jobs_wait`, then `publish_youtube` (needs publish consent).
+1. `bible_lookup { mode: "verse", reference }` for the text, or `scripts_generate` for a whole script (hook, verse, reflection, call to action).
+2. `voice_synthesize { text }` speaks it. Keep the returned `path`. One daily `tts` call.
+3. `backgrounds_search { source, query }`, then `library_items { action: "download", source, sourceId }` for each clip you want. Keep each item's `id` (a library id). Or skip this and use `autoBackground: true` in the next step.
+4. `render_short { lines, backgrounds: [library ids], audioPath }`. `lines` are the captions in order (1 to 12). Several backgrounds play one after another; pictures from your media folder work too. `musicPath` takes a `ref` from `music_library`. Returns `{ kind: "job", id, autoPublish }`. One daily render, plus four daily `images` with `autoBackground` (it may AI-generate pictures). Videos are capped at the server's maximum length (30 seconds by default).
+5. `jobs_wait { kind: "job", id }` until `status` is `done`. The handle's `output.path` is the finished video.
+6. `publish_youtube { videoPath: output.path, title }` (needs publish consent), then `jobs_wait { kind: "publish", id }`.
+
+If the user switched on auto-publish in Settings, a finished `render_short` is posted to their auto-publish platforms by itself. That happens only on a key that may publish, and then the render also costs one daily publish (charged with the render, all or nothing). On a key without consent the render is queued with auto-publish off; `autoPublish` in the result says `suppressed`, `on` or `off`. `render_captioned` never posts.
 
 ### Scripts and Bible (available now)
 
@@ -314,9 +330,20 @@ These tools read and write files in your media folder only. `audio_process`, `au
 
 `branding { action: "get" }` shows whether the logo overlay is on, its corner, size and opacity, and whether a logo is uploaded. `branding { action: "set", enabled?, position?, size?, opacity? }` changes only the fields you pass. Turning it on fails until a logo exists; the logo image itself is uploaded in the app, not through MCP.
 
-### Publishing (coming)
+### Publishing (available now)
 
-`social_status`, `publish_youtube`, `publish_post`, `youtube_thumbnail`, `schedules`, `autopublish_run`. All of them except `social_status` need the key owner's consent (see below).
+Publishing posts to the user's own accounts, as them, so it needs **consent**: the key owner switches on **This key may publish** for this key in **Settings, Connected agents**. Without it, `publish_youtube`, `publish_post`, `youtube_thumbnail`, `autopublish_run` and `schedules` `create`/`remove` fail with `PUBLISH_NOT_ALLOWED` and nothing is uploaded, posted or scheduled. `social_status` and `schedules` `list` work on any key. `whoami` shows the switch as `key.publishAllowed`.
+
+1. `social_status` first: is YouTube connected (and its playlists), which auto-publish destinations exist, the Buffer profile ids, the saved webhooks (`id`, `name`, `enabled`) and the schedules. Tokens, secrets and webhook addresses are never returned. Accounts and webhooks are connected in the app's Settings; a key cannot change them.
+2. A finished video from your media folder, usually `output.path` from `jobs_wait` after `render_short` or `render_captioned`. Every publish tool takes a `videoPath` in your media folder, never a URL.
+3. Post it:
+   - `publish_youtube { videoPath, title, description?, privacyStatus?, publishAt?, playlistId?, thumbnailPath? }` returns `{ kind: "publish", id }`; `jobs_wait { kind: "publish", id }` until it is `done`. Uploads are `private` unless you say otherwise. One daily publish.
+   - `publish_post { destination: "webhook" or "buffer", videoPath, caption, webhookId? or profileIds? }` posts to a saved webhook (Make or Zapier; TikTok too when it is connected) or Buffer. It waits for the destination and returns `posted` with one result per destination. One daily publish.
+   - `youtube_thumbnail { videoId, thumbnailPath }` changes the picture of a video already on the channel. Needs consent, but costs no daily publish.
+4. `schedules { action: "create", cron, destination, type, ... }` posts by itself later: `replay` posts the same `videoPath` each time, `auto_generate` makes a fresh short each run. A schedule may run at most once an hour (`cron` has five fields and a single-number minute, for example `0 9 * * *`). Creating one costs one daily publish now; its runs happen on the server later. `list` and `remove { id }` manage them.
+5. `autopublish_run` does all of it in one job (the Home page's Auto-Publish): a new script, voice, backgrounds from your library, render and post. It needs at least one background in your library and costs one daily render and one daily publish. `jobs_wait { kind: "job", id }`.
+
+The daily `publishes` cap is 3 per key by default.
 
 ## Quotas and daily caps
 
@@ -332,7 +359,7 @@ Two limits apply, and the lower one wins.
 | `aiVideoUsd` | AI video: the estimated cost in US dollars | 2 |
 | `images` | Image generation | 30 |
 | `tts` | Voice synthesis calls | 30 |
-| `publishes` | Publishing calls | 3 |
+| `publishes` | Publishing calls, a schedule created, and a render that the user's auto-publish will post | 3 |
 
 A call that would cross a cap is refused before anything runs, so nothing is spent. The error is `MCP_CAP_REACHED` with `bucket`, `scope`, `used`, `limit` and `resetsAt` (an ISO time, the next midnight UTC). `scope` is `key` when this key's own cap is reached, and `user` when your account's shared cap is reached across all your agents. Stop, tell the user, and retry after `resetsAt`.
 
