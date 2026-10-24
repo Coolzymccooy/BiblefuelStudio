@@ -86,11 +86,12 @@ test("another user's job reads exactly like a missing one, as jobs_get answers i
   assert.doesNotMatch(JSON.stringify(theirs.data), /u_other|render_video|2026-10-23T09/);
 });
 
-test("a lyric_render without projectId is refused like jobs_wait refuses it", async () => {
+test("a lyric_render without projectId is BAD_INPUT, like jobs_wait, and shows the resource's query form", async () => {
   const err = await readError("biblefuel://jobs/lyric_render/r_1");
   const viaTool = await client.callTool({ name: "jobs_wait", arguments: { kind: "lyric_render", id: "r_1", timeoutSec: 1 } });
-  assert.ok(err.message.includes(viaTool.content[0].text), `${err.message} vs ${viaTool.content[0].text}`);
+  assert.equal(viaTool.structuredContent.error, "BAD_INPUT");
   assert.equal(err.data.error, "BAD_INPUT");
+  assert.ok(err.data.message.includes("biblefuel://jobs/lyric_render/<jobId>?projectId=<id>"), err.data.message);
 });
 
 // ---- unit: the read itself ---------------------------------------------------

@@ -64,7 +64,10 @@ function addressRefusal({ kind, id, projectId }) {
   const badId = jobAddressProblem({ id, projectId });
   if (badId) return refusal("BAD_INPUT", badId);
   if (NORMALISERS[kind].needsProjectId && !projectId) {
-    return refusal("BAD_INPUT", `A ${kind} job needs projectId as well as id: pass both from the handle that started it.`);
+    return refusal(
+      "BAD_INPUT",
+      `A ${kind} job needs projectId as well as id: read biblefuel://jobs/${kind}/<jobId>?projectId=<id>, both from the handle that started it.`,
+    );
   }
   return null;
 }
