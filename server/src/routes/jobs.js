@@ -45,7 +45,6 @@ let ffmpegOk = false;
 const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
 const JOBS_RETENTION = Math.max(50, Number(process.env.JOBS_RETENTION || 500));
 const JOB_EXEC_TIMEOUT_SEC = Math.max(30, Number(process.env.JOB_EXEC_TIMEOUT_SEC || 600));
-const STALE_RUNNING_JOB_MINUTES = Math.max(1, Number(process.env.STALE_RUNNING_JOB_MINUTES || 45));
 
 function ensureFfmpegAvailable() {
   if (ffmpegChecked) return ffmpegOk;
@@ -106,6 +105,21 @@ function probeAudioDuration(filePath) {
       resolve(dur);
     });
   });
+}
+
+/**
+ * The render's result with `durationSec`, the finished video's real length (#121): a voice
+ * track sets the length, not the durationSec asked for. A failed probe leaves it out.
+ */
+async function withVideoLength(result) {
+  if (!result?.outFile) return result;
+  try {
+    const seconds = await probeAudioDuration(result.outFile);
+    return { ...result, durationSec: Math.round(seconds * 100) / 100 };
+  } catch (err) {
+    console.warn(`[RENDER] could not read the finished video's length: ${err?.message || err}`);
+    return result;
+  }
 }
 
 function clampDuration(value) {
@@ -334,6 +348,8 @@ function updateJob(id, patch) {
   store = loadJobs(); // Reload to ensure freshness
   const j = store.jobs.find(x => x.id === id);
   if (!j) return null;
+  // A cancelled job stays cancelled (#121): the worker's late writes for it (progress, done, failed) are dropped.
+  if (j.status === "cancelled") return j;
   Object.assign(j, patch);
   saveJobs(store);
   return j;
@@ -366,6 +382,19 @@ function safeUpdateJob(id, patch) {
  * Set when a job starts, cleared when the worker finishes it.
  */
 let currentJobRun = null;
+
+const JOB_CANCELLED = "Job cancelled";
+
+/**
+ * Stops the job this process is running, when it is `jobId` (#121): its ffmpeg is killed and no
+ * further ffmpeg starts for it, so the render fails at once (the job already reads cancelled).
+ */
+function stopRunningJob(jobId) {
+  const run = currentJobRun;
+  if (!run || run.jobId !== jobId) return;
+  run.cancelled = true;
+  try { run.ffmpeg?.kill("SIGTERM"); } catch {}
+}
 
 /** Did the running job, under this very ctx, download `file` itself? */
 function isOwnJobDownload(file) {
@@ -503,6 +532,8 @@ function wrapTextLines(lines, maxChars, maxLines) {
 }
 
 let running = false;
+// The id of the job this process's worker is running now, or null.
+let activeJobId = null;
 const lastProgressByJob = new Map();
 const volatileProgressByJob = new Map();
 
@@ -552,8 +583,12 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
   // so the progress parser (matching `time=HH:MM:SS.xx`) can read the
   // running encoder stats — so we don't touch -loglevel.
   const fullArgs = args.includes("-hide_banner") ? args : ["-hide_banner", ...args];
+  // The job's cancel kills this ffmpeg (stopRunningJob), and a cancelled job starts no more.
+  const run = currentJobRun;
+  if (run?.cancelled) return Promise.reject(new Error(JOB_CANCELLED));
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpeg, fullArgs);
+    if (run) run.ffmpeg = proc;
     let stderr = "";
     let settled = false;
     let timedOut = false;
@@ -607,6 +642,7 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
     });
 
     proc.on("close", (code) => {
+      if (run?.ffmpeg === proc) run.ffmpeg = null;
       if (timedOut) {
         return done(new Error(`ffmpeg timed out after ${JOB_EXEC_TIMEOUT_SEC}s\n${summarizeFfmpegError(stderr)}`));
       }
@@ -658,7 +694,7 @@ function assertJobPathsInScope(payload, ctx) {
 }
 
 async function executeJob(job) {
-  currentJobRun = { ctx: currentJobCtx, made: new Set() };
+  currentJobRun = { ctx: currentJobCtx, made: new Set(), jobId: job?.id };
   assertJobPathsInScope(job?.payload, currentJobCtx);
   if (!ensureFfmpegAvailable()) {
     throw new Error("FFmpeg not available on server");
@@ -798,7 +834,7 @@ async function executeJob(job) {
   }
 
   if (job.type === "render_video") {
-    return await renderVideoCore(job.payload || {}, job.id);
+    return withVideoLength(await renderVideoCore(job.payload || {}, job.id));
   }
 
   if (job.type === "campaign_auto_post") {
@@ -1882,30 +1918,45 @@ export function validatePayloadForEnqueue(type, payload) {
   return { ok: false, error: `unsupported job type: ${type}` };
 }
 
-function recoverStaleRunningJobs() {
-  const now = Date.now();
-  const staleAfterMs = STALE_RUNNING_JOB_MINUTES * 60 * 1000;
+export const RESTART_INTERRUPTED_ERROR = "Interrupted by a server restart. Retry it.";
+// Statuses where nothing is running: waiting for the worker, or finished.
+const NOT_IN_FLIGHT = new Set(["queued", "done", "failed", "cancelled"]);
+
+/**
+ * Restart recovery (#118). Every job left running (or in any status between
+ * queued and finished) that this process is not running is marked failed and
+ * `interrupted`, whatever its age, so a retry is allowed at once.
+ *
+ * This is safe without a heartbeat because the server runs as ONE process
+ * (`node index.js`, one worker loop): no other live process can own a job in
+ * this store, so a running job this process did not start was stopped by a
+ * restart or deploy. If the server ever runs several processes against one
+ * store, this needs a per-job heartbeat instead.
+ *
+ * Queued jobs are left queued: the worker runs them as before.
+ * The store is one file for every user, so every user's jobs are covered.
+ */
+function recoverInterruptedJobs() {
   store = loadJobs();
   let changed = false;
 
   for (const job of store.jobs) {
-    if (job?.status !== "running") continue;
-    const refIso = job.startedAt || job.createdAt;
-    const refTs = new Date(refIso || 0).getTime();
-    if (!Number.isFinite(refTs)) continue;
-    if (now - refTs < staleAfterMs) continue;
+    if (!job || NOT_IN_FLIGHT.has(job.status)) continue;
+    if (job.id === activeJobId) continue;
 
-    const lastPct = Number.isFinite(job.progress) ? job.progress : 0;
     job.status = "failed";
+    job.interrupted = true;
     job.finishedAt = new Date().toISOString();
-    job.progress = lastPct;
-    job.error = `Recovered stale running job after ${STALE_RUNNING_JOB_MINUTES}m (worker restart or timeout).`;
+    job.progress = Number.isFinite(job.progress) ? job.progress : 0;
+    job.error = RESTART_INTERRUPTED_ERROR;
     changed = true;
-    console.warn(`[JOBS] Recovered stale running job ${job.id}`);
+    console.warn(`[JOBS] Marked job ${job.id} failed: interrupted by a server restart`);
   }
 
   if (changed) saveJobs(store);
 }
+
+export function _recoverInterruptedJobsForTest() { recoverInterruptedJobs(); }
 
 function publicVideoUrlFromOutFile(outFile) {
   if (!outFile) return "";
@@ -1931,6 +1982,8 @@ function buildAutoPublishCaption(job) {
 export async function maybeAutoPublish(job, result) {
   try {
     if (job?.suppressAutoPublish === true) return;
+    // A render cancelled while it was finishing is not posted (#121).
+    if (loadJobs().jobs.find((j) => j.id === job?.id)?.status === "cancelled") return;
     if (!isPostizConfigured()) return;
     const outFile = result?.outFile || result?.file;
     if (!outFile) return;
@@ -1969,6 +2022,7 @@ async function workerTick() {
   const next = store.jobs.find(j => j.status === "queued");
   if (!next) return;
   running = true;
+  activeJobId = next.id;
   volatileProgressByJob.set(next.id, 0);
   safeUpdateJob(next.id, { status: "running", startedAt: new Date().toISOString(), progress: 0 });
   currentJobCtx = next.ctx || null;
@@ -1992,6 +2046,7 @@ async function workerTick() {
     lastProgressByJob.delete(next.id);
     volatileProgressByJob.delete(next.id);
     running = false;
+    activeJobId = null;
     currentJobCtx = null;
     currentJobRun = null;
   }
@@ -2005,7 +2060,7 @@ function withVolatileProgress(job) {
 }
 
 // poll worker every 1s
-recoverStaleRunningJobs();
+recoverInterruptedJobs();
 const _t = setInterval(workerTick, 1000);
 _t.unref();
 
@@ -2161,6 +2216,28 @@ router.post("/:id/retry", (req, res) => {
   });
   res.json({ ok: true, job });
 });
+
+/**
+ * Cancel a queued or running job (#121), for its owner only (anyone else gets the same 404 a
+ * missing job gets). A queued job is never started; a running one has its ffmpeg killed. Either
+ * way it reads `cancelled` at once and stays so. A job that has ended answers 409 NOTHING_RUNNING.
+ * A post that a finishing campaign_auto_post has already handed to its destination still goes out.
+ */
+router.post("/:id/cancel", (req, res) => {
+  store = loadJobs();
+  const job = store.jobs.find((j) => j.id === req.params.id);
+  if (!job || !isJobVisibleTo(job, req.ctx)) return res.status(404).json({ ok: false, error: "Not found" });
+  if (job.status !== "queued" && job.status !== "running") {
+    return res.status(409).json({ ok: false, error: "NOTHING_RUNNING", hint: `Job is already ${job.status}; nothing to cancel.` });
+  }
+  const cancelled = safeUpdateJob(job.id, { status: "cancelled", finishedAt: new Date().toISOString(), error: JOB_CANCELLED });
+  if (!cancelled) return res.status(500).json({ ok: false, error: "The cancel could not be saved. Try again." });
+  stopRunningJob(job.id);
+  res.json({ ok: true, job: cancelled });
+});
+
+/** Test seam: true while the worker is running a job. */
+export function _workerBusyForTests() { return running; }
 
 // Pure constructor for a campaign_auto_post job row. Extracted so the
 // ownership/isolation contract is unit-testable without touching the jobs

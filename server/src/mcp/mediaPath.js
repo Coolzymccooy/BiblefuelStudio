@@ -152,6 +152,18 @@ export async function resolveOwnMediaInput(ctx, value, { message = OWN_FOLDER_ON
   return refuse("BAD_INPUT", message);
 }
 
+/**
+ * The key owner's own output folder (where their renders land) as a real absolute path, for job
+ * handles whose status route names the video by its file name only (lyric_render).
+ *
+ * @param {object} user the key's user (`ctx.user`)
+ * @returns {Promise<string>}
+ */
+export async function ownOutputDir(user) {
+  const { outputDir } = await scopeOf(user);
+  return realpathOrNull(outputDir) || path.resolve(outputDir);
+}
+
 /** The /outputs/ link of a real path already confirmed in scope, or null. */
 function outputsLinkFor(real, outputDir, sharedDir, user) {
   const mine = realpathOrNull(outputDir);

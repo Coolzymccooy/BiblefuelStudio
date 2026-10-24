@@ -117,7 +117,7 @@ const renderShort = {
     "Queue a short captioned video (Studio Render): your lines as captions over background videos or pictures, with an optional voice track and music bed. " +
     "Needs lines and EITHER backgrounds (library ids from library_items, or video/picture files in your media folder; several play one after another) OR autoBackground: true (the server picks clips from your library by mood and AI-generates any it cannot find). " +
     "audioPath is a voice file (from voice_synthesize or your media folder); musicPath is a music_library ref or a media file. URLs and paths outside your media folder are refused. " +
-    "Returns a job handle of kind job: call jobs_wait with kind job and the id; the finished video's path is what publish_youtube and publish_post take. " +
+    "Returns a job handle of kind job: call jobs_wait with kind job and the id; the finished video's path is what publish_youtube and publish_post take, and the finished handle's durationSec is the video's real length in seconds (report that, not the length you asked for); jobs_cancel with kind job stops it while it is queued or running. " +
     "Costs one daily render (plus four daily images with autoBackground, for possible AI pictures), charged together, and one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up, before any cap is spent). Videos are capped at the server's maximum length (30 seconds by default). " +
     "With a voice track (audioPath, or kineticCaptions speaking the lines) the video is as long as the voice and durationSec is ignored: a one-verse voice is about 6 seconds, so for a longer short write more lines to speak. Takes about one to three minutes. " +
     "If the user has turned on auto-publish in Settings, a finished render is posted automatically only when this key may publish and auto-publish is on when you call this; then it also costs one daily publish. Otherwise the render is queued with auto-publish off and never posts. " +
@@ -211,7 +211,7 @@ const renderCaptioned = {
     "Burn word-by-word captions onto a video (Timeline render). Two modes: videoPath (a video in your media folder) OR audioPath plus backgrounds (library ids or media files, up to 30, shown in turn). " +
     "words are the timed words transcribe returns ({ text, startMs, endMs }); required unless captions is false. Paths outside your media folder and URLs are refused. " +
     "Optional: musicPaths (music_library refs or media files), musicVolume, autoDuck, startSec and durationSec (a trim window), typographyPreset, layout, depth, kenBurns, syncBackgrounds. " +
-    "Returns a handle of kind captioned: call jobs_wait with kind captioned and the id; render_cancel stops it. Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up, before any cap is spent). Takes a few seconds to start and about real time to finish. It never posts anywhere.",
+    "Returns a handle of kind captioned: call jobs_wait with kind captioned and the id; jobs_cancel with kind captioned stops it. Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up, before any cap is spent). Takes a few seconds to start and about real time to finish. It never posts anywhere.",
   inputSchema: {
     videoPath: z.string().max(1000).optional().describe("Video mode: a video in your media folder."),
     audioPath: z.string().max(1000).optional().describe("Audio mode: a voice or audio file in your media folder."),
@@ -251,20 +251,4 @@ const renderCaptioned = {
   },
 };
 
-// ---- render_cancel -----------------------------------------------------------
-
-const renderCancel = {
-  name: "render_cancel",
-  title: "Cancel a captioned render",
-  description:
-    "Stop a running render_captioned job by its id. A finished render cannot be cancelled (an error says so). " +
-    "Queued render_short jobs (kind job) have no cancel. Free and instant.",
-  inputSchema: { id: z.string().min(1).max(200).describe("The id render_captioned returned.") },
-  routes: ["/api/render"],
-  async handler(ctx, { id }) {
-    await ctx.api.call("POST", `/api/render/captioned-video/${encodeURIComponent(id)}/cancel`);
-    return ok({ kind: "captioned", id, status: "cancelled" });
-  },
-};
-
-export default [renderShort, renderCaptioned, renderCancel];
+export default [renderShort, renderCaptioned];

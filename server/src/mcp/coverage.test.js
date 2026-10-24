@@ -81,3 +81,16 @@ test("the account routers agents must never act on carry refuseAgentCalls", () =
     assert.match(mount, /refuseAgentCalls/, `/api/${name} mount carries refuseAgentCalls`);
   }
 });
+
+test("jobs_cancel declares the router of every kind it can cancel, and render_cancel is folded into it (#121)", async () => {
+  const { CANCEL_ROUTES } = await import("./jobCancel.js");
+  const { NORMALISERS } = await import("./jobs.js");
+  const names = catalogue().map((def) => def.name);
+  assert.equal(names.includes("render_cancel"), false, "render_cancel is folded into jobs_cancel");
+  const jobsCancel = catalogue().find((def) => def.name === "jobs_cancel");
+  assert.ok(jobsCancel, "jobs_cancel is in the catalogue");
+  for (const kind of Object.keys(CANCEL_ROUTES)) {
+    const router = /^\/api\/[a-z0-9-]+/.exec(NORMALISERS[kind].route("x1", "p1"))[0];
+    assert.ok(jobsCancel.routes.includes(router), `jobs_cancel routes lack ${router} (kind ${kind})`);
+  }
+});

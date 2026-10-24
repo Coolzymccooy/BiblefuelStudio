@@ -4,6 +4,8 @@ import { JOB_KINDS, NORMALISERS, clampTimeoutSec, outputUrl, waitForJob } from "
 import { lacksPublishConsent, renderPublishPlan } from "../autoPublish.js";
 import { renderQuotaRefusal } from "../planQuota.js";
 import { jobAddressProblem } from "../jobHandle.js";
+import { ownOutputDir } from "../mediaPath.js";
+import { CANCEL_ROUTES, CANCELLABLE_KINDS, CANCEL_ROUTERS } from "../jobCancel.js";
 
 const DEFAULT_LIST_LIMIT = 20;
 
@@ -23,7 +25,9 @@ function jobRow(job, ctx) {
 const jobsList = {
   name: "jobs_list",
   title: "List jobs",
-  description: "Your recent queued render jobs, newest first, each with its status, progress and output.",
+  description:
+    "Your recent queued render jobs only (kind job: render_short, autopublish_run, series_generate parts and their retries), newest first, each with its status, progress and output. " +
+    "Other features' jobs (captioned, story, ambient, lyric, moments, timeline...) are not here: wait on the handle their tool returned, or list them with that feature's project tool.",
   inputSchema: { limit: z.number().int().min(1).max(100).default(DEFAULT_LIST_LIMIT).describe("How many jobs to return, 1 to 100.") },
   routes: ["/api/jobs"],
   async handler(ctx, { limit = DEFAULT_LIST_LIMIT }) {
@@ -132,15 +136,65 @@ const jobsWait = {
     if (NORMALISERS[kind].needsProjectId && !projectId) {
       return fail("BAD_INPUT", `A ${kind} job needs projectId as well as id: pass both from the handle that started it.`);
     }
+    const outputDir = NORMALISERS[kind].needsOutputDir ? await ownOutputDir(ctx.user) : undefined;
     const handle = await waitImpl(ctx.api, {
       kind,
       id,
       projectId,
       timeoutSec: clampTimeoutSec(timeoutSec),
       outputUrl: (p) => outputUrl(p, ctx.publicBase),
+      ...(outputDir ? { outputDir } : {}),
     });
     return ok(handle);
   },
 };
 
-export default [jobsList, jobsGet, jobsRetry, jobsWait];
+const ACTIVE = new Set(["queued", "running"]);
+const CANCELLABLE = CANCELLABLE_KINDS.join(", ");
+
+/** Why `kind`, `id` and `projectId` cannot name a job to cancel, as a tool error, or null. */
+function cancelAddressRefusal({ kind, id, projectId }) {
+  if (!Object.hasOwn(CANCEL_ROUTES, kind)) {
+    return fail("BAD_KIND", `Kind "${kind}" has no cancel. Kinds that can be cancelled: ${CANCELLABLE}.`);
+  }
+  const badId = jobAddressProblem({ id, projectId });
+  if (badId) return fail("BAD_INPUT", badId);
+  if (NORMALISERS[kind].needsProjectId && !projectId) {
+    return fail("BAD_INPUT", `A ${kind} job needs projectId as well as id: pass both from the handle that started it.`);
+  }
+  return null;
+}
+
+const jobsCancel = {
+  name: "jobs_cancel",
+  title: "Cancel a job",
+  description:
+    `Stop a queued or running job. Kinds that can be cancelled: ${CANCELLABLE}. ` +
+    "Pass the kind, id and (for lyric_render) projectId from the handle that started it; for story, longform, ambient, moments and scene the id is the project id. " +
+    "It reads the job first: NOTHING_RUNNING (with jobStatus) when it is not queued or running, so nothing is stopped; a job a server restart stopped reads failed, and its error says what to call. " +
+    "Voicing (ambient, scene) cannot be stopped: VOICING_CANNOT_CANCEL. A story or long-form project stops its running step, or its AI motion clip orders while only those run; a scene script stops its render, else its clip orders (scene_script_cancel picks one). " +
+    "Clips already ordered still arrive and are paid for; a post a finishing auto-post job already sent still goes out. Other kinds (lyric_align, timeline, instrumental, publish) have no cancel: BAD_KIND (vocal removal stops with music_instrumental_decide discard). " +
+    "Free and instant; jobs_wait then reads cancelled.",
+  inputSchema: {
+    kind: z.string().describe(`The handle's kind: ${CANCELLABLE}.`),
+    id: z.string().min(1).describe("The handle's id (the project id for story, longform, ambient, moments and scene)."),
+    projectId: z.string().optional().describe("The song's id, for lyric_render (on its handle)."),
+  },
+  routes: CANCEL_ROUTERS,
+  async handler(ctx, { kind, id, projectId }) {
+    const refused = cancelAddressRefusal({ kind, id, projectId });
+    if (refused) return refused;
+    const entry = NORMALISERS[kind];
+    const handle = entry.normalise(await ctx.api.call("GET", entry.route(id, projectId)), { outputUrl: (p) => p });
+    if (!ACTIVE.has(handle.status)) {
+      const why = handle.error ? ` ${handle.error}` : "";
+      return fail("NOTHING_RUNNING", `This ${kind} job is ${handle.status}, so there is nothing to cancel.${why}`, { jobStatus: handle.status });
+    }
+    const target = CANCEL_ROUTES[kind]({ id, projectId, handle });
+    if (typeof target !== "string") return fail(target.code, target.message);
+    await ctx.api.call("POST", target);
+    return ok({ kind, id, ...(projectId ? { projectId } : {}), cancelled: true });
+  },
+};
+
+export default [jobsList, jobsGet, jobsRetry, jobsWait, jobsCancel];

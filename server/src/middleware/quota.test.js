@@ -95,3 +95,30 @@ test("refundQuota gives back what was spent, never below zero, and nothing on un
   refundQuota({ dataDir: premiumDir, plan: "premium" }, "render", 2);
   assert.equal(readUsage(premiumDir).counts.render, 0);
 });
+
+test("refundQuota for another day gives nothing back from today's count", () => {
+  const dir = freshDir("refund-other-day");
+  const ctx = { dataDir: dir, plan: "free" };
+  consumeQuota(ctx, "tts", 1);
+  refundQuota(ctx, "tts", 1, { day: "2000-01-01" });
+  assert.equal(readUsage(dir).counts.tts, 1);
+  refundQuota(ctx, "tts", 1, { day: readUsage(dir).day });
+  assert.equal(readUsage(dir).counts.tts, 0);
+});
+
+test("a refundOnFailure request charged before midnight and failing after it leaves the new day's count alone", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-24T23:59:59Z") });
+  const dir = freshDir("refund-midnight");
+  const app = express();
+  app.use((req, _res, next) => { req.ctx = { dataDir: dir, plan: "free", userId: "u_q" }; next(); });
+  app.use(quota("tts", { refundOnFailure: true }));
+  app.post("/x", (_req, res) => {
+    t.mock.timers.setTime(Date.parse("2026-10-25T00:00:05Z"));
+    consumeQuota({ dataDir: dir, plan: "free" }, "tts"); // another request, charged on the new day
+    res.status(502).json({ ok: false });
+  });
+  await request(app).post("/x").expect(502);
+  const usage = readUsage(dir);
+  assert.equal(usage.day, "2026-10-25");
+  assert.equal(usage.counts.tts, 1);
+});

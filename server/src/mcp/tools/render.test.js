@@ -52,11 +52,10 @@ const routesCalled = (calls) => calls.map((c) => `${c.method} ${c.path}`);
 
 // ---- definitions ----
 
-test("the render file declares render_short, render_captioned and render_cancel", () => {
-  assert.deepEqual(renderTools.map((t) => t.name), ["render_short", "render_captioned", "render_cancel"]);
+test("the render file declares render_short and render_captioned (jobs_cancel stops a captioned job, #121)", () => {
+  assert.deepEqual(renderTools.map((t) => t.name), ["render_short", "render_captioned"]);
   assert.deepEqual(byName.render_short.routes, ["/api/jobs", "/api/library"]);
   assert.deepEqual(byName.render_captioned.routes, ["/api/render", "/api/library"]);
-  assert.deepEqual(byName.render_cancel.routes, ["/api/render"]);
   // Charged in the handler, after its own checks and the plan quota pre-check.
   assert.equal(byName.render_captioned.caps, undefined);
   // render_short charges its render together with any publish in one atomic call (R31), so it declares none.
@@ -312,13 +311,10 @@ test("render_captioned refuses a URL video", async () => {
   assert.deepEqual(chargeCalls, []);
 });
 
-// ---- render_cancel ----
+// ---- cancelling ----
 
-test("render_cancel posts the cancel route for that job", async () => {
-  const { ctx, calls } = ctxWith({ "POST /api/render/captioned-video/cap%2F1/cancel": { ok: true } });
-  const result = await byName.render_cancel.handler(ctx, { id: "cap/1" });
-  assert.deepEqual(routesCalled(calls), ["POST /api/render/captioned-video/cap%2F1/cancel"]);
-  assert.deepEqual(result.structuredContent, { kind: "captioned", id: "cap/1", status: "cancelled" });
+test("render_captioned says jobs_cancel with kind captioned stops it", () => {
+  assert.match(byName.render_captioned.description, /jobs_cancel with kind captioned stops it/);
 });
 
 // ---- through the real MCP client ----
@@ -333,7 +329,7 @@ function readJobRows() {
 test("tools/list shows the render tools", async () => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
-  for (const name of ["render_short", "render_captioned", "render_cancel"]) assert.ok(names.includes(name), name);
+  for (const name of ["render_short", "render_captioned"]) assert.ok(names.includes(name), name);
 });
 
 test("render_short through MCP on a key without consent queues a render that cannot auto-post", async () => {
@@ -351,8 +347,8 @@ test("render_short through MCP on a key without consent queues a render that can
   assert.equal(who.structuredContent.caps.publishes.used, 0);
 });
 
-test("render_cancel through MCP on an unknown job is a tool error", async () => {
-  const result = await client.callTool({ name: "render_cancel", arguments: { id: "nope" } });
+test("jobs_cancel through MCP on an unknown captioned job is a tool error", async () => {
+  const result = await client.callTool({ name: "jobs_cancel", arguments: { kind: "captioned", id: "nope" } });
   assert.equal(result.isError, true);
 });
 
@@ -373,4 +369,8 @@ test("render_short says a voice track sets the length, so durationSec alone does
   const { description, inputSchema } = byName.render_short;
   assert.match(description, /as long as the voice/);
   assert.match(inputSchema.durationSec.description, /ignored when there is a voice/i);
+});
+
+test("render_short says the finished handle gives the video's real length as durationSec (#121)", () => {
+  assert.match(byName.render_short.description, /durationSec[^.]*real length/);
 });

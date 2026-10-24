@@ -438,7 +438,8 @@ app.use("/api/billing",   billingRouter);
 //     are uncapped. Mount on routes that consume API budget or compute.
 app.use("/api/scripts",   requireAuth, withUserScope, requireVerifiedEmail, quota("scripts"),    scriptsRouter);
 app.use("/api/queue",     requireAuth, withUserScope,                                              queueRouter);
-app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quota("tts"),        ttsRouter);
+// A failed synthesis gives its tts unit back (#120).
+app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quota("tts", { refundOnFailure: true }), ttsRouter);
 app.use("/api/abi",       abiRouter);
 app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeRenderRequest }), renderRouter);
 app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeStoryRequest }), storyRouter);

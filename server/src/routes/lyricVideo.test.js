@@ -44,11 +44,30 @@ before(async () => {
 });
 after(() => { server.close(); fs.rmSync(root, { recursive: true, force: true }); });
 
+// "connection: close": every call opens its own socket, so a long spawnSync between calls cannot leave a pooled
+// keep-alive socket for the server to time out under the next request.
 const call = async (method, url, body) => {
-  const r = await fetch(`${base}${url}`, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(`${base}${url}`, { method, headers: { "content-type": "application/json", connection: "close" }, body: body ? JSON.stringify(body) : undefined });
   const text = await r.text();
   try { return { status: r.status, json: JSON.parse(text), headers: r.headers }; } catch { return { status: r.status, text, headers: r.headers }; }
 };
+// The route work is async, but this file also runs ffmpeg with spawnSync in the SAME process as the server,
+// which freezes the event loop. Under a loaded machine that freeze outlasts the server's keep-alive time, and
+// the next request on the idle pooled socket is reset (ECONNRESET). The harness must not depend on that socket.
+test("the harness survives the event loop being blocked past the server's keep-alive time", async () => {
+  const keepAlive = server.keepAliveTimeout;
+  server.keepAliveTimeout = 3000;
+  try {
+    for (let i = 0; i < 2; i++) {
+      assert.equal((await call("GET", "/prefs")).status, 200, `call ${i + 1} before the block`);
+      const end = Date.now() + 4300; // stands in for a slow spawnSync ffmpeg under load
+      while (Date.now() < end) { /* block the loop, like spawnSync */ }
+      assert.equal((await call("GET", "/prefs")).status, 200, `call ${i + 1} after the block`);
+    }
+  } finally {
+    server.keepAliveTimeout = keepAlive;
+  }
+});
 const FF = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
 const hasFfmpeg = spawnSync(FF, ["-version"]).status === 0;
 const newProject = async (title = "T") => (await call("POST", "/", { title })).json.project.projectId;

@@ -59,6 +59,19 @@ test("job: done maps result.videoUrl and result.outFile", () => {
   assert.deepEqual(handle.output, { url: `${BASE}/outputs/video-9.mp4`, path: "C:\\data\\outputs\\video-9.mp4" });
 });
 
+test("job: a finished render carries durationSec, the video's real length from the job result (#121)", () => {
+  const payload = { ok: true, job: { id: "job_6", status: "done", progress: 100, result: { outFile: "/srv/outputs/video-6.mp4", durationSec: 6.27 } } };
+  const handle = NORMALISERS.job.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.durationSec, 6.27);
+});
+
+test("job: no durationSec on the handle when the result has none (an older job, or still running)", () => {
+  const old = NORMALISERS.job.normalise({ job: { id: "job_7", status: "done", result: { outFile: "/srv/outputs/v.mp4" } } }, { outputUrl: toUrl });
+  assert.equal("durationSec" in old, false);
+  const odd = NORMALISERS.job.normalise({ job: { id: "job_8", status: "done", result: { outFile: "/srv/outputs/v.mp4", durationSec: "6" } } }, { outputUrl: toUrl });
+  assert.equal("durationSec" in odd, false);
+});
+
 test("job: waveform result has only outFile", () => {
   const payload = { ok: true, job: { id: "job_3", status: "done", progress: 100, result: { outFile: "/srv/outputs/waveform-1.mp4" } } };
   const handle = NORMALISERS.job.normalise(payload, { outputUrl: toUrl });
@@ -71,6 +84,21 @@ test("job: failed carries the error and non-numeric progress is null", () => {
   assert.equal(handle.status, "failed");
   assert.equal(handle.percent, null);
   assert.equal(handle.error, "ffmpeg exited 1");
+  assert.equal(handle.output, null);
+});
+
+test("job: a job a restart stopped (#118) reads failed with the retry message, not cancelled", () => {
+  const payload = {
+    ok: true,
+    job: {
+      id: "job_6", type: "render_video", status: "failed", interrupted: true, progress: 37,
+      error: "Interrupted by a server restart. Retry it.",
+    },
+  };
+  const handle = NORMALISERS.job.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "failed");
+  assert.equal(handle.error, "Interrupted by a server restart. Retry it.");
+  assert.equal(handle.percent, 37);
   assert.equal(handle.output, null);
 });
 

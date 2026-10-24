@@ -9,6 +9,7 @@ import { fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "./toolResult.js";
 import { lacksPublishConsent } from "./autoPublish.js";
 import { planAllows } from "../middleware/featureGate.js";
 import { registerJobResource } from "./resources.js";
+import { registerGuideResources } from "./guide.js";
 import { registerPrompts } from "./prompts.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
 
@@ -42,10 +43,7 @@ export { PUBLISH_NOT_ALLOWED_MESSAGE };
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SERVER_ROOT = path.resolve(__dirname, "../..");
 const TOOLS_DIR = path.join(__dirname, "tools");
-const GUIDE_FILE = path.resolve(SERVER_ROOT, "../docs/mcp.md");
-const GUIDE_URI = "biblefuel://guide";
 const SERVER_INFO = { name: "biblefuel", version: "1.0.0" };
 const MAX_LOGGED_ERROR = 300;
 
@@ -256,15 +254,6 @@ function wrap(def, ctx) {
   };
 }
 
-function readGuide() {
-  try {
-    return fs.readFileSync(GUIDE_FILE, "utf-8");
-  } catch (err) {
-    console.warn("[MCP] guide not readable:", err?.message || String(err));
-    return "# Connect an agent to BibleFuel\n\nThe guide is not available on this server.\n";
-  }
-}
-
 /** @param {McpCtx} ctx */
 export function buildServer(ctx) {
   const server = new McpServer(SERVER_INFO, { instructions: SERVER_INSTRUCTIONS });
@@ -276,12 +265,7 @@ export function buildServer(ctx) {
       wrap(def, ctx),
     );
   }
-  server.registerResource(
-    "guide",
-    GUIDE_URI,
-    { title: "Connect an agent to BibleFuel", description: "How to use the BibleFuel tools.", mimeType: "text/markdown" },
-    async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: readGuide() }] }),
-  );
+  registerGuideResources(server);
   registerJobResource(server, ctx);
   registerPrompts(server);
   return server;
