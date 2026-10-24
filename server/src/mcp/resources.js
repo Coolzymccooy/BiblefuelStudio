@@ -17,9 +17,18 @@ import { jobAddressProblem } from "./jobHandle.js";
 export const JOB_TEMPLATE_URI = "biblefuel://jobs/{kind}/{id}";
 const MIME = "application/json";
 
-/** An MCP error whose text reads `CODE: message`, like a tool error, with the same object as data. */
-function refusal(code, message, extra = {}) {
-  return new McpError(ErrorCode.InvalidParams, `${code}: ${message}`, { error: code, message, ...extra });
+/**
+ * An MCP error whose own text reads `CODE: message`, like a tool error, with the same object as data
+ * (the SDK puts "MCP error <code>: " in front on the wire). InvalidParams unless `rpcCode` says otherwise.
+ */
+function refusal(code, message, extra = {}, rpcCode = ErrorCode.InvalidParams) {
+  return new McpError(rpcCode, `${code}: ${message}`, { error: code, message, ...extra });
+}
+
+/** The app's answer as an MCP error: its refusals (4xx) are InvalidParams, its own failures (5xx) InternalError. */
+function fromApiError(err) {
+  const rpcCode = err.status >= 500 ? ErrorCode.InternalError : ErrorCode.InvalidParams;
+  return refusal(err.code, err.message, { hint: err.hint ?? null, status: err.status }, rpcCode);
 }
 
 function decoded(value) {
@@ -73,7 +82,7 @@ export async function readJobHandle(ctx, address) {
   try {
     payload = await ctx.api.call("GET", entry.route(id, projectId));
   } catch (err) {
-    if (err?.name === "ApiError") throw refusal(err.code, err.message, { hint: err.hint ?? null, status: err.status });
+    if (err?.name === "ApiError") throw fromApiError(err);
     console.warn("[MCP] job resource read failed:", err?.message || String(err));
     throw new McpError(ErrorCode.InternalError, "INTERNAL: Something went wrong", { error: "INTERNAL", message: "Something went wrong" });
   }

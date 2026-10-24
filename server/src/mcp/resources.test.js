@@ -173,3 +173,20 @@ test("readJobHandle refuses an empty, . or .. id or projectId before any loopbac
     assert.equal(calls.length, 0, JSON.stringify(address));
   }
 });
+
+// L1: a route's server error is not the caller's bad input, so it is InternalError (-32603), with the same data.
+test("a 5xx answer from the route is an InternalError carrying the route's code and status", async () => {
+  const apiError = Object.assign(new Error("Bad gateway"), { name: "ApiError", status: 502, code: "HTTP_502", hint: null });
+  const { ctx } = fakeMcpCtx({ "GET /api/story/s_1": apiError });
+  await assert.rejects(readJobHandle(ctx, { kind: "story", id: "s_1" }), (err) => {
+    assert.equal(err.code, -32603);
+    assert.deepEqual(err.data, { error: "HTTP_502", message: "Bad gateway", hint: null, status: 502 });
+    return true;
+  });
+});
+
+test("a 4xx answer from the route stays InvalidParams (-32602)", async () => {
+  const apiError = Object.assign(new Error("Not found"), { name: "ApiError", status: 404, code: "HTTP_404", hint: null });
+  const { ctx } = fakeMcpCtx({ "GET /api/story/s_1": apiError });
+  await assert.rejects(readJobHandle(ctx, { kind: "story", id: "s_1" }), (err) => err.code === -32602);
+});

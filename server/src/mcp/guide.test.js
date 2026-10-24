@@ -89,3 +89,10 @@ test("Troubleshooting covers the errors agents meet, by their real codes", () =>
   }
   assert.doesNotMatch(GUIDE, /MCP_CONSENT_REQUIRED/, "no such code: consent refusals are PUBLISH_NOT_ALLOWED");
 });
+
+test("Resources describes the real wire shape of a refused read", () => {
+  const text = section("## Resources");
+  assert.match(text, /MCP error -32602: BAD_KIND/, "the SDK prefixes the message");
+  assert.match(text, /-32603/, "server errors are InternalError");
+  assert.match(text, /data\.error/, "agents branch on data.error, not the message");
+});
