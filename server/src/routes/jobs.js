@@ -7,7 +7,7 @@ import { readLibrary } from "../lib/library.js";
 import { consumeQuota } from "../middleware/quota.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
 import { isOwnerCtx } from "../lib/paths.js";
-import { assertPayloadPathsInScope, resolveOutputAliasForCtx, scopeMediaInput } from "../lib/mediaInputScope.js";
+import { assertLibraryItemInScope, assertPayloadPathsInScope, resolveOutputAliasForCtx, scopeMediaInput } from "../lib/mediaInputScope.js";
 import { sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 import { tiktokAccountFor } from "../lib/social/zernioConnect.js";
 import { generateScripts } from "../lib/generateScripts.js";
@@ -352,6 +352,37 @@ function safeUpdateJob(id, patch) {
  * tenant's library and either misses the user's own item or matches a
  * different tenant's item that happens to share an id.
  */
+/**
+ * Local copies this job downloaded through the SSRF guard (localiseJobInputs).
+ * They sit in the shared remote cache, outside every account's folder, and are
+ * resolved again later in the same run. Cleared when a job starts; the worker
+ * runs one job at a time.
+ */
+const serverMadeInputs = new Set();
+
+/** A non-owner's local input, held to their scope (#112); a refusal fails the job. */
+function confineJobInput(value) {
+  try {
+    return scopeMediaInput(value, currentJobCtx);
+  } catch (err) {
+    if (err instanceof UserPathError) throw new Error(`${err.code}: ${err.message}`);
+    throw err;
+  }
+}
+
+const PLAIN_LIBRARY_ID = /^[A-Za-z0-9_-]{1,200}$/;
+
+/**
+ * The library items a job may pick by itself (auto backgrounds, campaign
+ * scenes). For a non-owner only items with a plain id (#112): an id shaped
+ * like a path would be resolved as that path. The owner keeps every item.
+ */
+function pickableLibraryItems(items) {
+  const list = Array.isArray(items) ? items : [];
+  if (!currentJobCtx || isOwnerCtx(currentJobCtx)) return list;
+  return list.filter((item) => PLAIN_LIBRARY_ID.test(String(item?.id ?? "")));
+}
+
 export function resolveAssetPath(pathOrId, dataDir) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
@@ -383,7 +414,13 @@ export function resolveAssetPath(pathOrId, dataDir) {
   const usable = (p) => Boolean(p) && (unconfined || path.isAbsolute(p)) && fs.existsSync(p);
   const direct = resolveOutputAliasForCtx(normalized, currentJobCtx);
   if (isRemoteUrl(direct)) return direct;
-  if (usable(direct)) return direct;
+  if (usable(direct)) {
+    // A path a non-owner names (a payload field or a picked id that looks
+    // like one) is theirs or shared, or refused (#112). A copy this job just
+    // downloaded through the SSRF guard is the server's own, not a request.
+    if (unconfined || serverMadeInputs.has(path.resolve(direct))) return direct;
+    return confineJobInput(direct);
+  }
 
   // Try to find in library
   const lib = readLibrary(dataDir || currentDataDir());
@@ -392,9 +429,11 @@ export function resolveAssetPath(pathOrId, dataDir) {
     // A saved item's local links must be the caller's own (#112). Ids are
     // also picked at RUN time (auto backgrounds, campaign scenes), past the
     // payload check, so this is where they are confined.
+    // The item's OWN links are checked, whatever its id looks like: an id
+    // shaped like a path must not stand in for them.
     if (!unconfined) {
       try {
-        scopeMediaInput(normalized, currentJobCtx);
+        assertLibraryItemInScope(item, currentJobCtx);
       } catch (err) {
         if (err instanceof UserPathError) throw new Error(`${err.code}: ${err.message}`);
         throw err;
@@ -585,6 +624,7 @@ async function localiseJobInputs(payload, { background = false } = {}) {
     } catch (err) {
       throw new Error(remoteInputFailure(err, what).error);
     }
+    serverMadeInputs.add(path.resolve(local));
     next = { ...next, [field]: local };
   }
   return next;
@@ -606,6 +646,7 @@ function assertJobPathsInScope(payload, ctx) {
 }
 
 async function executeJob(job) {
+  serverMadeInputs.clear();
   assertJobPathsInScope(job?.payload, currentJobCtx);
   if (!ensureFfmpegAvailable()) {
     throw new Error("FFmpeg not available on server");
@@ -763,7 +804,7 @@ async function executeJob(job) {
 // when nothing can be sourced. Pure selection logic lives in lib/autoBackground.
 async function applyAutoBackground(payload) {
   const lib = readLibrary(currentDataDir());
-  const pool = Array.isArray(lib?.items) ? lib.items : [];
+  const pool = pickableLibraryItems(lib?.items);
   const lines = Array.isArray(payload?.lines) ? payload.lines.filter(Boolean) : [];
   const total = clampDuration(payload?.durationSec || 20);
   const aspect = String(payload?.aspect || "portrait");
@@ -1468,7 +1509,7 @@ async function runCampaignAutoPost(payload, jobId) {
   // 2. Library check — we'll pick backgrounds per beat after TTS so each
   // scene matches its own text mood.
   const lib = readLibrary(currentDataDir());
-  const pool = Array.isArray(lib?.items) ? lib.items : [];
+  const pool = pickableLibraryItems(lib?.items);
   if (pool.length === 0) throw new Error("campaign: library is empty — add at least one background before running auto-post");
   safeUpdateJob(jobId, { progress: 18 });
 

@@ -77,3 +77,23 @@ test("a campaign picking a planted library item fails with PATH_OUTSIDE_MEDIA an
   const readSecret = cap.commands().filter((c) => c.tokens.some((t) => path.resolve(t) === path.resolve(secret)));
   assert.deepEqual(readSecret, []);
 });
+
+test("a campaign never picks a library item whose id is a path", { skip: noFfmpeg }, async () => {
+  fs.writeFileSync(path.join(userDir, "library.json"), JSON.stringify({ items: [{ id: secret, tags: ["peace"] }] }));
+  const cap = captureFfmpegReports(path.join(root, "reports-pathid"));
+  jobs._setJobCtxForTest(ctx);
+  try {
+    await assert.rejects(() => jobs._executeJobForTest({
+      id: "job_campaign_pathid", type: "campaign_auto_post",
+      payload: {
+        destination: "none",
+        prebuiltScript: { hook: "Peace be with you", verse: "The Lord is my shepherd", reference: "Psalm 23:1", reflection: "Rest in him", cta: "Share this" },
+      },
+    }), /library is empty/);
+  } finally {
+    jobs._resetJobCtxForTest();
+    cap.stop();
+  }
+  const readSecret = cap.commands().filter((c) => c.tokens.some((t) => path.resolve(t) === path.resolve(secret)));
+  assert.deepEqual(readSecret, []);
+});

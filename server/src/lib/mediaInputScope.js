@@ -142,8 +142,20 @@ export function scopeMediaInput(value, ctx) {
   if (looksLikePath(raw)) return confineUserPath(raw, ctx, scopeFor(ctx));
   const item = ctx.dataDir ? readLibrary(ctx.dataDir).items.find((x) => String(x?.id) === raw) : null;
   if (!item) throw new UserPathError("FILE_NOT_FOUND", 400, `Not found: ${raw}`);
-  for (const link of localLinksOf(item)) confineUserPath(link, ctx, scopeFor(ctx));
+  assertLibraryItemInScope(item, ctx);
   return raw;
+}
+
+/**
+ * Every local link of a saved library item must be in the caller's scope
+ * (#112). Throws a UserPathError for the first one that is not; a missing
+ * file inside the caller's folder throws FILE_NOT_FOUND.
+ *
+ * @param {Record<string, any>} item
+ * @param {object} ctx
+ */
+export function assertLibraryItemInScope(item, ctx) {
+  for (const link of localLinksOf(item)) confineUserPath(link, ctx, scopeFor(ctx));
 }
 
 /**

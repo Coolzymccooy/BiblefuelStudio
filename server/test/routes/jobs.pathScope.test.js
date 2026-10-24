@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 // jobs.js and paths.js read DATA_DIR / OUTPUT_DIR at import time.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "jobs-scope-"));
@@ -26,6 +28,8 @@ const jobs = await import("../../src/routes/jobs.js");
 const { captureFfmpegReports } = await import("../helpers/ffreport.js");
 
 const OUT = process.env.OUTPUT_DIR;
+const FF_BIN = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+const spawnFfmpegOk = () => spawnSync(FF_BIN, ["-version"]).status === 0;
 const JOBS_FILE = path.join(process.env.DATA_DIR, "jobs.json");
 const userDir = path.join(process.env.DATA_DIR, "users", "me");
 const mine = path.join(userDir, "outputs");
@@ -263,6 +267,101 @@ describe("jobs.resolveAssetPath follows the job's ctx", () => {
     jobs._setJobCtxForTest(ownerCtx);
     try {
       assert.equal(path.resolve(jobs.resolveAssetPath("/outputs/owner.mp4")), path.resolve(f.global));
+    } finally {
+      jobs._resetJobCtxForTest();
+    }
+  });
+});
+
+// Re-review finding (MEDIUM): a stored item whose id looks like a path was
+// checked as a path (not by its own links), and a path id came back through
+// the direct branch unchecked.
+describe("stored library ids that look like paths", () => {
+  const theirGenDir = () => path.join(OUT, "genImg", "genvis-them-1");
+  const restore = () => fs.writeFileSync(path.join(userDir, "library.json"), JSON.stringify({ items: [
+    { id: "801", url: "https://videos.example.com/stock.mp4" },
+    { id: "802", url: f.theirs, previewUrl: f.theirs },
+  ] }));
+
+  test("an item whose id names the caller's own file still has its links confined", () => {
+    const relOwn = path.relative(root, f.bg).split(path.sep).join("/");
+    fs.writeFileSync(path.join(userDir, "library.json"), JSON.stringify({ items: [
+      { id: relOwn, files: [{ link: f.theirs, quality: "hd", width: 1 }] },
+    ] }));
+    const cwd = process.cwd();
+    process.chdir(root);
+    jobs._setJobCtxForTest(ctx);
+    try {
+      assert.throws(() => jobs.resolveAssetPath(relOwn), /PATH_OUTSIDE_MEDIA/);
+    } finally {
+      jobs._resetJobCtxForTest();
+      process.chdir(cwd);
+      restore();
+    }
+  });
+
+  test("a path id, or any direct path outside the caller's scope, is refused rather than returned", () => {
+    fs.mkdirSync(theirGenDir(), { recursive: true });
+    const theirGen = path.join(theirGenDir(), "a.png");
+    fs.writeFileSync(theirGen, "x");
+    fs.writeFileSync(path.join(userDir, "library.json"), JSON.stringify({ items: [{ id: f.theirs }] }));
+    jobs._setJobCtxForTest(ctx);
+    try {
+      for (const value of [f.theirs, theirGen, f.global]) {
+        assert.throws(() => jobs.resolveAssetPath(value), /PATH_OUTSIDE_MEDIA/, value);
+      }
+      assert.equal(jobs.resolveAssetPath(f.bg), fs.realpathSync(f.bg));
+      assert.equal(path.resolve(jobs.resolveAssetPath(f.tts)), path.resolve(fs.realpathSync(f.tts)));
+    } finally {
+      jobs._resetJobCtxForTest();
+      restore();
+    }
+  });
+
+  test("the owner's direct paths resolve as before", () => {
+    jobs._setJobCtxForTest(ownerCtx);
+    try {
+      assert.equal(path.resolve(jobs.resolveAssetPath(f.theirs)), path.resolve(f.theirs));
+    } finally {
+      jobs._resetJobCtxForTest();
+    }
+  });
+
+  test("auto background never picks a pool item whose id is not a plain name", async () => {
+    fs.writeFileSync(path.join(userDir, "library.json"), JSON.stringify({ items: [{ id: f.theirs, tags: ["peace"] }] }));
+    const cap = captureFfmpegReports(path.join(root, "reports-pathid"));
+    jobs._setJobCtxForTest(ctx);
+    try {
+      await assert.rejects(
+        () => jobs._executeJobForTest({ id: "job_pathid", type: "render_video", payload: { autoBackground: true, lines: ["Peace be with you"], durationSec: 2 } }),
+        (err) => !/PATH_OUTSIDE_MEDIA/.test(String(err?.message)),
+        "the item is skipped, not picked and then refused",
+      );
+    } finally {
+      jobs._resetJobCtxForTest();
+      cap.stop();
+      restore();
+    }
+    const readSecret = cap.commands().filter((c) => c.tokens.some((t) => path.resolve(t) === path.resolve(f.theirs)));
+    assert.deepEqual(readSecret, []);
+  });
+});
+
+describe("a remote input the job downloaded itself", () => {
+  test("its cached copy in the shared cache is used, not refused as outside the caller's folder", { skip: !spawnFfmpegOk() && "ffmpeg not installed" }, async () => {
+    // A cache hit needs no network: the host does not resolve, and a lookup
+    // that merely fails is not a refusal (remoteCache.vetBeforeCacheUse).
+    const url = "https://stock.invalid/voice.mp3";
+    const cacheDir = path.join(OUT, "cache", "remote-bg");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const hash = crypto.createHash("sha1").update(url).digest("hex").slice(0, 16);
+    const cached = path.join(cacheDir, `${hash}.mp3`);
+    spawnSync(FF_BIN, ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=1", cached]);
+    jobs._setJobCtxForTest(ctx);
+    try {
+      await jobs._executeJobForTest({ id: "job_cached", type: "render_waveform", payload: { audioPath: url, lines: ["x"] } });
+    } catch (err) {
+      assert.doesNotMatch(String(err?.message), /PATH_OUTSIDE_MEDIA/);
     } finally {
       jobs._resetJobCtxForTest();
     }
