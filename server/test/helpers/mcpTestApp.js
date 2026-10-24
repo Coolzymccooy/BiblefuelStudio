@@ -35,6 +35,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: postizRouter } = await import("../../src/routes/postiz.js");
   const { default: renderRouter, isQuotaFreeRenderRequest } = await import("../../src/routes/render.js");
   const { default: socialRouter } = await import("../../src/routes/social.js");
+  const { default: storyRouter, isQuotaFreeStoryRequest } = await import("../../src/routes/story.js");
   const { default: agentKeysRouter } = await import("../../src/routes/agentKeys.js");
   const { quota } = await import("../../src/middleware/quota.js");
   const { default: scriptsRouter } = await import("../../src/routes/scripts.js");
@@ -65,6 +66,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/postiz", requireAuth, withUserScope, requireVerifiedEmail, postizRouter);
   app.use("/api/render", requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeRenderRequest }), renderRouter);
   app.use("/api/social", requireAuth, withUserScope, requireVerifiedEmail, socialRouter);
+  app.use("/api/story", requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeStoryRequest }), storyRouter);
   app.use("/api/scripts", requireAuth, withUserScope, requireVerifiedEmail, quota("scripts"), scriptsRouter);
   app.use("/api/bible", requireAuth, withUserScope, bibleRouter);
   app.use("/api/tts", requireAuth, withUserScope, requireVerifiedEmail, quota("tts"), ttsRouter);
