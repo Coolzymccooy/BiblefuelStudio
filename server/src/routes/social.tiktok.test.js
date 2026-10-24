@@ -259,6 +259,64 @@ describe("posting and disconnecting", () => {
   });
 });
 
+describe("POST /post destination=tiktok", () => {
+  let sent = [];
+  // Zernio's posts endpoint. Anything else (a Make webhook) is recorded and refused.
+  function stubPosts(answer) {
+    sent = [];
+    _setZernioFetch(async (url, init = {}) => {
+      sent.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null, auth: init.headers?.Authorization });
+      if (String(url) === "https://zernio.com/api/v1/posts") return new Response(JSON.stringify(answer[1]), { status: answer[0] });
+      return new Response("{}", { status: 404 });
+    });
+  }
+  const connectAdmin = () => writeSocialStore(dirOf(admin), {
+    ...readSocialStore(dirOf(admin)),
+    zernio: { profileId: "prof_admin2", tiktok: { accountId: "acct_a2", username: "graceposts" } },
+    // A local port nothing listens on: were it fired, the attempt is recorded below and nothing leaves the machine.
+    webhooks: [{ id: "wh1", name: "Make", url: "http://127.0.0.1:9/make", enabled: true }],
+  });
+  const published = { post: { _id: "post_1", status: "published", platforms: [{ platform: "tiktok", status: "published" }] } };
+
+  test("posts the video straight to the caller's own TikTok, now, and not to their Make webhook", async () => {
+    connectAdmin();
+    stubPosts([200, published]);
+    const res = await request(app(admin)).post("/api/social/post")
+      .send({ destination: "tiktok", caption: "The Lost Lamb\nLuke 15:4", title: "The Lost Lamb", videoUrl: "/outputs/cartoons/c1/film.mp4" })
+      .expect(200);
+    assert.equal(res.body.ok, true);
+    assert.deepEqual(res.body.results, [{ destination: "tiktok", ok: true, error: "", draft: false }]);
+    assert.equal(sent.length, 1, "only Zernio is called");
+    const hook = readSocialStore(dirOf(admin)).webhooks.find((w) => w.id === "wh1");
+    assert.equal(hook.lastSuccessAt || hook.lastFailureAt || "", "", "the Make webhook is not fired");
+    assert.equal(sent[0].url, "https://zernio.com/api/v1/posts");
+    assert.equal(sent[0].auth, "Bearer sk_test_server_key_000");
+    assert.equal(sent[0].body.publishNow, true);
+    assert.equal(sent[0].body.platforms[0].accountId, "acct_a2");
+    assert.match(sent[0].body.mediaItems[0].url, /^https?:\/\/[^/]+\/outputs\/cartoons\/c1\/film\.mp4$/);
+  });
+
+  test("a caller with no TikTok connected is told to connect it, and nothing is sent", async () => {
+    writeSocialStore(dirOf(regular), { ...readSocialStore(dirOf(regular)), zernio: {} });
+    stubPosts([200, published]);
+    const res = await request(app(regular)).post("/api/social/post")
+      .send({ destination: "tiktok", caption: "c", videoUrl: "/outputs/a.mp4" })
+      .expect(400);
+    assert.match(res.body.error, /Connect TikTok in Settings/);
+    assert.equal(sent.length, 0);
+  });
+
+  test("a post TikTok rejects comes back as an error with Zernio's reason", async () => {
+    connectAdmin();
+    stubPosts([207, { post: { _id: "post_2", status: "failed", platforms: [{ platform: "tiktok", status: "failed", errorMessage: "Video is too short" }] } }]);
+    const res = await request(app(admin)).post("/api/social/post")
+      .send({ destination: "tiktok", caption: "c", videoUrl: "/outputs/a.mp4" })
+      .expect(400);
+    assert.equal(res.body.ok, false);
+    assert.match(res.body.error, /Video is too short/);
+  });
+});
+
 describe("bring your own Zernio key", () => {
   const OWN_KEY = "sk_own_user_key_1234abcd";
   const reset = (user) => writeSocialStore(dirOf(user), { ...readSocialStore(dirOf(user)), zernio: {} });

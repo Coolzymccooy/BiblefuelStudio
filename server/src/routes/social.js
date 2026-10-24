@@ -29,7 +29,7 @@ import { confineToDir } from "../lib/confinePath.js";
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
 import { DATA_DIR, OUTPUT_DIR, isOwnerCtx, resolveScopeDirs } from "../lib/paths.js";
-import { ensureZernioProfile, tiktokConnectUrl, findTikTokAccount, disconnectZernioAccount, tiktokAccountFor, tiktokTargetFor, zernioApiKey, cleanZernioKey, listOwnTikTokAccounts, ownKeyCanPost } from "../lib/social/zernioConnect.js";
+import { ensureZernioProfile, tiktokConnectUrl, findTikTokAccount, disconnectZernioAccount, tiktokAccountFor, tiktokTargetFor, zernioApiKey, zernioFetch, cleanZernioKey, listOwnTikTokAccounts, ownKeyCanPost } from "../lib/social/zernioConnect.js";
 
 const router = Router();
 const scheduleTasks = new Map();
@@ -200,7 +200,7 @@ async function publishToZernioTikTok({ caption, videoUrl, title, accountId, apiK
   }
 
   const send = async (draft) => {
-    const resp = await fetch("https://zernio.com/api/v1/posts", {
+    const resp = await zernioFetch("https://zernio.com/api/v1/posts", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -420,6 +420,27 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   return { ok: success, partial, results, videoUrl: mediaUrl, title: resolvedTitle, make, zernio };
 }
 
+/**
+ * TikTok only: the caller's own TikTok through Zernio (tiktokTargetFor), and
+ * none of their Make or Zapier webhooks, which the "webhook" destination
+ * would also fire (the operator's Make scenario uploads to YouTube). Posted
+ * now, falling back to a Creator Inbox draft at capacity, exactly as the
+ * webhook destination's TikTok leg does. A failure throws, so the caller
+ * sees Zernio's reason.
+ */
+async function postToTikTok({ caption, videoUrl, title }, req, store) {
+  const target = tiktokTargetFor(req?.ctx, store);
+  if (!target) throw new Error("Connect TikTok in Settings first, then post again.");
+  const mediaUrl = toAbsolutePublicUrl(req, videoUrl);
+  if (!/^https?:\/\//i.test(mediaUrl)) {
+    throw new Error(`videoUrl must be absolute or resolvable: ${videoUrl}`);
+  }
+  const resolvedTitle = String(title || "").trim().slice(0, 100) || deriveCleanTitle(caption);
+  const zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle, accountId: target.accountId, apiKey: target.apiKey });
+  const draft = zernio.deliveredAsDraft === true;
+  return { ok: true, partial: false, results: [{ destination: "tiktok", ok: true, error: "", draft }], videoUrl: mediaUrl, title: resolvedTitle, zernio };
+}
+
 async function postToBuffer({ caption, videoUrl, profileIds }, req, store) {
   const mediaUrl = toAbsolutePublicUrl(req, videoUrl);
   if (!/^https?:\/\//i.test(mediaUrl)) {
@@ -575,8 +596,12 @@ export async function dispatchPost(payload, req) {
     return postToYoutube(payload, req, store);
   }
 
-  if (destination === "instagram" || destination === "tiktok") {
-    throw new Error("Direct API posting for Instagram/TikTok is not implemented. Use Webhook (Make/Zapier) or Buffer.");
+  if (destination === "tiktok") {
+    return postToTikTok({ caption, videoUrl, title: payload?.title }, req, store);
+  }
+
+  if (destination === "instagram") {
+    throw new Error("Direct API posting for Instagram is not implemented. Use Webhook (Make/Zapier) or Buffer.");
   }
 
   throw new Error("Unknown destination");

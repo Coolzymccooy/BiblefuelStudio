@@ -6,7 +6,8 @@
  * film; the server's NOT_READY blockers are listed, and its render warnings (a shot
  * made from an out-of-date frame) are shown without stopping the render.
  * A finished film offers the video, a download, the post caption with Copy,
- * and YouTube publishing with the clips' poster frames as thumbnails.
+ * YouTube publishing with the clips' poster frames as thumbnails, and TikTok
+ * publishing to the account connected in Settings.
  */
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Check, Clapperboard, Copy, Download, Square } from 'lucide-react';
@@ -20,6 +21,7 @@ import { Field } from '../ui/Field';
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { YoutubePublishPanel } from '../share/YoutubePublishPanel';
+import { TikTokPostPanel } from '../share/TikTokPostPanel';
 import { postCaption, posterOptions, secs } from './film';
 
 interface Props {
@@ -197,6 +199,7 @@ function Result({ project }: { project: CartoonProject }) {
           initial={{ title: project.meta.title, description: caption, thumbnailTitle: false }}
           thumbnailOptions={posterOptions(project.shots)}
         />
+        <TikTokPostPanel key={`tiktok:${render.url}`} videoUrl={render.url} caption={caption} title={project.meta.title} />
       </div>
     </div>
   );

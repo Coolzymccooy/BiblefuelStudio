@@ -21,6 +21,11 @@ export function _setZernioFetch(fn) {
   fetchImpl = fn || defaultFetch;
 }
 
+/** Every Zernio request goes through here, so the test seam covers posting too. */
+export function zernioFetch(...args) {
+  return fetchImpl(...args);
+}
+
 export function zernioApiKey() {
   return String(process.env.ZERNIO_API_KEY || "").trim();
 }

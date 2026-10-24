@@ -17,6 +17,10 @@ const youtubeProps = vi.fn();
 vi.mock('../../share/YoutubePublishPanel', () => ({
   YoutubePublishPanel: (props: unknown) => { youtubeProps(props); return <div>YouTube panel</div>; },
 }));
+const tiktokProps = vi.fn();
+vi.mock('../../share/TikTokPostPanel', () => ({
+  TikTokPostPanel: (props: unknown) => { tiktokProps(props); return <div>TikTok panel</div>; },
+}));
 
 import { cartoonApi } from '../../../lib/cartoonApi';
 import { ApiError } from '../../../lib/apiError';
@@ -116,7 +120,7 @@ describe('FinishStep', () => {
     await waitFor(() => expect(cartoonApi.cancelRender).toHaveBeenCalledWith('c1'));
   });
 
-  it('a finished film offers the video, a download, the post caption and YouTube', async () => {
+  it('a finished film offers the video, a download, the post caption, YouTube and TikTok', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
     render(<Harness initial={project({ render: done })} />);
@@ -131,5 +135,6 @@ describe('FinishStep', () => {
       initial: { title: 'The Lost Lamb', description: caption, thumbnailTitle: false },
       thumbnailOptions: [{ label: 'Shot 1', path: '/outputs/c1.jpg' }, { label: 'Shot 3', path: '/outputs/c3.jpg' }],
     }));
+    expect(tiktokProps).toHaveBeenCalledWith({ videoUrl: done.url, caption, title: 'The Lost Lamb' });
   });
 });
