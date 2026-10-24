@@ -20,6 +20,17 @@ import { getPlanForUser } from "../lib/userPlan.js";
  * aren't orphaned. Everyone else, other super-admins included, resolves to a
  * per-user dir under DATA_DIR/users/<userId>/.
  */
+/**
+ * The plan a user's requests run under: single-tenant grants the operator's own
+ * tier; otherwise the user's stored plan. The MCP context reads it the same way.
+ *
+ * @param {object} user the JWT payload
+ * @param {string} [dataDir] the user's data folder (resolved when omitted)
+ */
+export function planForUser(user, dataDir = resolveScopeDirs(user).dataDir) {
+  return isSingleTenant() ? "super_admin" : getPlanForUser(user, dataDir);
+}
+
 export function withUserScope(req, res, next) {
   const user = req.user;
   if (!user || !user.sub) {
@@ -36,8 +47,7 @@ export function withUserScope(req, res, next) {
     userId: user.sub,
     email: user.email || "",
     role: admin ? "super_admin" : "user",
-    // Single-tenant grants the operator's own tier; otherwise read the plan.
-    plan: isSingleTenant() ? "super_admin" : getPlanForUser(user, dataDir),
+    plan: planForUser(user, dataDir),
     dataDir,
     outputDir,
     isSuperAdmin: admin,
