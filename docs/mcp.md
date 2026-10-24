@@ -102,15 +102,15 @@ Every call passes the same checks, in this order:
 
 | Tool | What it does |
 |---|---|
-| `whoami` | Who you act as, your plan, remaining quota, the key's daily caps and publish permission. Call it first. |
+| `whoami` | Who you act as, your plan, remaining plan `quota`, this key's daily `caps`, your account's `accountCaps` (all your keys together) and the publish permission. Call it first. |
 | `capabilities` | What this server can do right now: ffmpeg, which providers are configured, vocal removal, AI video. |
 | `media_list` | `{ kind: "audio" or "video" }`. Your files, newest first, each with `name`, `path`, `size`, `mtime`. |
-| `media_import_url` | `{ url, kind?, filename? }`. Download a public file into your media. `kind` is `audio` (default), `video` or `image`. |
+| `media_import_url` | `{ url, kind?, filename? }`. Download a public file into your media. `kind` is `audio` (default), `video` or `image`. One daily `imports`, spent even when the download fails. |
 | `media_trim` | `{ inputPath, startSec, endSec }`. Cut a file into a new file. The original stays. |
 | `transcribe` | `{ mediaPath }`. Words with `startMs` and `endMs`, plus `durationMs`. Counts against your daily render quota. |
 | `jobs_list` | `{ limit? }`. Your recent queued render jobs, newest first. |
 | `jobs_get` | `{ id }`. One queued job as a job handle. |
-| `jobs_retry` | `{ id }`. Re-queue a finished or failed job. Returns a new job. Counts as one render. |
+| `jobs_retry` | `{ id }`. Re-queue a finished or failed job. Returns a new job. One daily render. A render (`render_video`, `render_waveform`) or posting job (`campaign_auto_post`) also spends one plan `render` quota (`QUOTA_EXCEEDED` before any cap is spent). A posting job needs publish consent and also costs one daily publish; a render that the user's auto-publish would post costs one daily publish with consent, and without consent is queued so it never posts. |
 | `jobs_wait` | `{ kind, id, projectId?, timeoutSec? }`. Wait for any background job. See the next section. |
 | `scripts_generate` | Short Bible video scripts (hook, verse, reflection, call to action, hashtags). Every field optional. Counts against the plan's `scripts` quota. |
 | `bible_lookup` | `{ mode: "verse" or "parse" or "translations", reference?, translation? }`. Verse text, reference parsing, or the translation list. Free. |
@@ -124,18 +124,18 @@ Every call passes the same checks, in this order:
 | `music_remove_vocals` | `{ id, quality? }`. Start vocal removal on a track. Returns a job handle of kind `instrumental`. Takes minutes. One daily render. |
 | `music_instrumental_decide` | `{ jobId, decision: "keep" or "discard" }`. Settle a finished (or cancel a running) vocal removal. |
 | `backgrounds_search` | `{ source: "pexels" or "pixabay", query, limit? }`. Stock background videos (no photos). Results are not saved yet. |
-| `library_items` | `{ action: "list" or "download" or "add" or "remove" or "categories", ... }`. Your saved backgrounds. A library id works as a background in the render tools. |
+| `library_items` | `{ action: "list" or "download" or "add" or "remove" or "categories", ... }`. Your saved backgrounds. A library id works as a background in the render tools. `download` is one daily `imports`, spent even when it fails. |
 | `images_generate` | `{ lines, aspect?, count? }`. AI stills from text lines. Returns `path` and `url` per image. One daily `images` per image. |
 | `visual_library` | `{ action: "list" or "similar" or "import" or "update" or "remove", ... }`. Paid AI clips. Super-admin keys only; other keys do not see it. |
 | `branding` | `{ action: "get" or "set", enabled?, position?, size?, opacity? }`. The logo drawn on your rendered videos. |
 | `render_short` | `{ lines, backgrounds? or autoBackground?, audioPath?, musicPath?, ... }`. A short captioned video. Job handle of kind `job`. One daily render (plus four `images` with `autoBackground`). |
-| `render_captioned` | `{ videoPath }` or `{ audioPath, backgrounds }`, plus `words` from `transcribe`. Word-by-word captions. Handle of kind `captioned`. One daily render. |
+| `render_captioned` | `{ videoPath }` or `{ audioPath, backgrounds }`, plus `words` from `transcribe`. Word-by-word captions. Handle of kind `captioned`. One daily render and one plan `render` quota. |
 | `render_cancel` | `{ id }`. Stop a running `render_captioned` job. |
 | `social_status` | Where you can publish: YouTube, playlists, auto-publish destinations, Buffer profiles, saved webhooks and schedules. No secrets. Free. |
 | `publish_youtube` | `{ videoPath, title, ... }`. Upload to the connected channel. Handle of kind `publish`. Needs publish consent; one daily publish. |
 | `publish_post` | `{ destination: "webhook" or "buffer", videoPath, caption, ... }`. Post to a saved webhook (and TikTok when connected) or Buffer. Needs publish consent; one daily publish. |
 | `youtube_thumbnail` | `{ videoId, thumbnailPath }`. Replace a YouTube video's thumbnail. Needs publish consent; no daily publish. |
-| `schedules` | `{ action: "list" or "create" or "remove", ... }`. Recurring posts. `create` and `remove` need publish consent; `create` is one daily publish. |
+| `schedules` | `{ action: "list" or "create" or "remove", ... }`. Recurring posts, at most hourly. `create` and `remove` need publish consent; `create` is one daily publish (at most 5 agent-made schedules per account); `remove` only removes a schedule an agent created. |
 | `autopublish_run` | One-click Auto-Publish: script, voice, render and post in one job (kind `job`). Needs publish consent; one daily render and one daily publish. |
 
 More tools arrive in later slices. The Pipelines section shows where each fits.
@@ -362,7 +362,7 @@ Two limits apply, and the lower one wins.
 | `publishes` | Publishing calls, a schedule created, and a render that the user's auto-publish will post | 3 |
 | `imports` | Files stored on the server from a URL: `media_import_url` and `library_items` `download` | 20 |
 
-A call that would cross a cap is refused before anything runs, so nothing is spent. The error is `MCP_CAP_REACHED` with `bucket`, `scope`, `used`, `limit` and `resetsAt` (an ISO time, the next midnight UTC). `scope` is `key` when this key's own cap is reached, and `user` when your account's shared cap is reached across all your agents. Stop, tell the user, and retry after `resetsAt`.
+A call that would cross a cap is refused before anything runs, so nothing is spent. When the app itself refuses a call that was charged (an HTTP 4xx answer, such as `QUOTA_EXCEEDED`, a bad input or an account that is not connected), the caps it spent are given back on the key and the account, except `imports`: an import attempt always counts. A server error (5xx) or a dropped connection keeps the charge, because the work may have started. A cap refusal's error is `MCP_CAP_REACHED` with `bucket`, `scope`, `used`, `limit` and `resetsAt` (an ISO time, the next midnight UTC). `scope` is `key` when this key's own cap is reached, and `user` when your account's shared cap is reached across all your agents. Stop, tell the user, and retry after `resetsAt`.
 
 `whoami` returns `caps` (this key) and `accountCaps` (all your keys together), each with `used`, `limit` and `remaining` for each bucket. Read it before starting a long plan. The server operator sets the ceilings with `MCP_DAILY_RENDERS`, `MCP_DAILY_AI_VIDEO_USD`, `MCP_DAILY_IMAGES`, `MCP_DAILY_TTS`, `MCP_DAILY_PUBLISHES` and `MCP_DAILY_IMPORTS`. The key owner can set lower numbers for one key under **Daily limits** on **Settings, Connected agents**.
 

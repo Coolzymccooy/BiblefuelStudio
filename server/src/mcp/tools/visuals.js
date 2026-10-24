@@ -147,7 +147,7 @@ const libraryItems = {
     "Your saved background videos. A library id (the id of an item here, for example pexels_123) is accepted as a background by the render tools, so this is where backgrounds come from. " +
     "action list: items with id, previewUrl, image, durationSec and categories; filter with category, limit is 1 to 200 (default 50). " +
     "action categories: the category names you can tag with. " +
-    "action download: save a backgrounds_search result (source and sourceId; query tags it by mood, durationSec is optional); the clip is stored on the server and counts against the daily imports cap (one per call); takes a few seconds, returns the item whose id you pass as a background. " +
+    "action download: save a backgrounds_search result (source and sourceId; query tags it by mood, durationSec is optional); the clip is stored on the server and counts against the daily imports cap (one per call, even if the download fails); takes a few seconds, returns the item whose id you pass as a background. " +
     "action add: put a video from your media folder (mediaPath from media_list or media_import_url) in the library, with optional title, categories and durationSec; returns its new id. " +
     "action remove: delete the item with that id from the library (the video file is kept; removing an id that is not there still succeeds). Free.",
   inputSchema: {
