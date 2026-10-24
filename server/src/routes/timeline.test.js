@@ -7,11 +7,16 @@ import os from 'os';
 import path from 'path';
 import timelineRouter, { _resetTimelineRenderJobsForTest, _setTimelineRendererForTest } from './timeline.js';
 
+// The caller's own output folder, holding the footage the test project
+// uses: /render reads only the caller's own files (#112).
+const OUTPUT = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-route-out-'));
+fs.writeFileSync(path.join(OUTPUT, 'main.mp4'), 'x');
+
 function app(ctx = {}) {
   const a = express();
   a.use(express.json());
   a.use((req, _res, next) => {
-    req.ctx = { userId: 'test-user', dataDir: ctx.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-route-data-')) };
+    req.ctx = { userId: 'test-user', dataDir: ctx.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-route-data-')), outputDir: OUTPUT };
     next();
   });
   a.use('/api/timeline', timelineRouter);
@@ -26,7 +31,7 @@ function projectWithClip() {
     aspect: '16:9',
     targetDurationSec: 270,
     assets: {
-      'asset-video': { id: 'asset-video', kind: 'video', source: 'upload', label: 'Main footage', path: 'uploads/main.mp4', durationSec: 30 },
+      'asset-video': { id: 'asset-video', kind: 'video', source: 'upload', label: 'Main footage', path: '/outputs/main.mp4', durationSec: 30 },
     },
     scenes: [],
     tracks: [

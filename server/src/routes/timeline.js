@@ -7,8 +7,6 @@ import { fileURLToPath } from 'url';
 import { buildTimelineRenderPlan } from '../lib/timelineRender/planner.js';
 import { renderTimelineProof } from '../lib/timelineRender/proofRenderer.js';
 import { resolveProjectAssets } from '../lib/timelineRender/resolveProjectAssets.js';
-import { resolveAssetPath } from './jobs.js';
-import { resolveOutputAlias } from '../lib/mediaThumb.js';
 import { OUTPUT_DIR } from '../lib/paths.js';
 import { spawn } from 'child_process';
 import { downsamplePeaks, peaksCacheKey, PEAK_BUCKETS } from '../lib/audioPeaks.js';
@@ -17,6 +15,8 @@ import { brandLogoFor } from '../lib/branding.js';
 import { confineUserPath, isSharedTtsFile, sendUserPathError, UserPathError } from '../lib/userPathScope.js';
 import { resolveLibraryTrack } from '../lib/musicLibrary.js';
 import { resolveTenantTrack } from '../lib/musicLibraryStore.js';
+import { readLibrary } from '../lib/library.js';
+import { isUrlLike } from '../lib/inputUrl.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -273,6 +273,40 @@ function resolveMusicRef(raw, dataDir) {
   return null;
 }
 
+const TIMELINE_FILE_SCOPE = { allowShared: isSharedTtsFile };
+
+/** Does the value name a path or URL rather than a saved library item id? */
+function looksLikeAssetPath(value) {
+  return path.isAbsolute(value) || value.includes('/') || value.includes('\\') || value.includes('\0') || isUrlLike(value);
+}
+
+/** The media a saved library item points at: its best stock link or a local path. */
+function libraryItemLink(item) {
+  if (Array.isArray(item.files) && item.files.length > 0) {
+    const sorted = item.files.slice().sort((a, b) => (b.width || 0) - (a.width || 0));
+    const hd = sorted.find((file) => file.quality === 'hd') || sorted[0];
+    if (hd?.link) return String(hd.link).trim();
+  }
+  return String(item.previewUrl || item.url || '').trim();
+}
+
+/**
+ * One timeline asset path, as media the caller may use (#112). Returns the
+ * value the renderer should read, null for a missing music ref, and throws a
+ * UserPathError for anything outside the caller's scope. Stock https links
+ * are returned as-is: the renderer localises them through the SSRF guard.
+ */
+function scopeTimelineAsset(raw, ctx) {
+  const music = resolveMusicRef(raw, ctx?.dataDir);
+  if (music) return music;
+  if (/^(library|mylib):/.test(raw)) return null;
+  if (looksLikeAssetPath(raw)) return confineUserPath(raw, ctx, TIMELINE_FILE_SCOPE);
+  const item = ctx?.dataDir ? readLibrary(ctx.dataDir).items.find((x) => String(x.id) === raw) : null;
+  const link = item ? libraryItemLink(item) : '';
+  if (!link) throw new UserPathError('FILE_NOT_FOUND', 400, `Asset not found: ${raw}`);
+  return /^https?:\/\//i.test(link) ? link : confineUserPath(link, ctx, TIMELINE_FILE_SCOPE);
+}
+
 router.get('/peaks', async (req, res) => {
   try {
     const raw = String(req.query?.path || '').trim();
@@ -352,14 +386,14 @@ router.get('/projects/:projectId', (req, res) => {
 // action that costs one.
 router.post('/render', quota('render'), (req, res) => {
   try {
-    // Library ids (from 'Send backgrounds to B-roll') become real media here.
+    // Every asset path becomes media the caller may use (#112): their own
+    // file, a shared voice file, bundled or saved music, or a library id
+    // (from 'Send backgrounds to B-roll'). Stock https footage is kept for
+    // the renderer to localise. Anything else throws a UserPathError, so
+    // nothing is queued.
     const project = resolveProjectAssets(req.body?.project, {
-      exists: (v) => { try { return fs.existsSync(resolveOutputAlias(v)); } catch { return false; } },
-      // Scope library lookups to THIS user's data dir. Without it the helper
-      // falls back to the global DATA_DIR (there is no job context in a
-      // request), so a tenant's 'Send backgrounds to B-roll' either found
-      // nothing or picked up an item belonging to someone else.
-      resolve: (v) => { try { return resolveAssetPath(v, req.ctx?.dataDir); } catch { return null; } },
+      exists: () => false,
+      resolve: (v) => scopeTimelineAsset(v, req.ctx),
     });
     const plan = buildTimelineRenderPlan(project, {
       quality: req.body?.quality || req.body?.project?.renderSettings?.quality || 'proof_720p',
@@ -417,6 +451,7 @@ router.post('/render', quota('render'), (req, res) => {
 
     return res.status(202).json(serializeJob(job));
   } catch (e) {
+    if (sendUserPathError(res, e)) return;
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
