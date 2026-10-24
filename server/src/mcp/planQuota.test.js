@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderQuotaRefusal } from "./planQuota.js";
+import { renderQuotaRefusal, planQuotaRefusal } from "./planQuota.js";
 import { fakeMcpCtx } from "../../test/helpers/fakeMcpCtx.js";
 
 const usage = (render) => ({ ok: true, usage: { day: "2026-10-24", plan: "free", buckets: { render } } });
@@ -24,4 +24,19 @@ test("renderQuotaRefusal passes when renders remain, on unlimited plans, and whe
   assert.equal(await renderQuotaRefusal(unreadable.ctx), null);
   const broken = fakeMcpCtx({ "GET /api/billing/usage": new TypeError("bug") });
   await assert.rejects(() => renderQuotaRefusal(broken.ctx), TypeError);
+});
+
+test("planQuotaRefusal checks the named plan bucket (tts, imageGen) the same way", async () => {
+  const body = { ok: true, usage: { plan: "free", buckets: {
+    render: { used: 0, limit: 5, unlimited: false, remaining: 5 },
+    tts: { used: 10, limit: 10, unlimited: false, remaining: 0 },
+    imageGen: { used: 1, limit: 5, unlimited: false, remaining: 4 },
+  } } };
+  const { ctx } = fakeMcpCtx({ "GET /api/billing/usage": body });
+  const tts = await planQuotaRefusal(ctx, "tts");
+  assert.equal(tts.structuredContent.error, "QUOTA_EXCEEDED");
+  assert.equal(tts.structuredContent.bucket, "tts");
+  assert.match(tts.content[0].text, /voice/);
+  assert.equal(await planQuotaRefusal(ctx, "imageGen"), null);
+  assert.equal(await renderQuotaRefusal(ctx), null);
 });
