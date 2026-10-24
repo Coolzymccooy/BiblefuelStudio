@@ -414,6 +414,9 @@ async function runImagesStage(ctx, projectId, opts = {}) {
     pending.push(i);
   }
   writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
+  // The workers' writes keep the live run's status: the copy read above may
+  // say ready_to_render (a forced re-run), which would read finished early.
+  const live = { ...project, status: STORY_STATUS.GENERATING_IMAGES };
 
   const timeoutMs = imageStageTimeoutMs();
   const style = String(project.style || "");
@@ -457,7 +460,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
           imageReuseScore: reused.score,
           ...NO_SCENE_VIDEO,
         };
-        writeProject(ctx.dataDir, { ...project, scenes, heartbeatAt: Date.now() });
+        writeProject(ctx.dataDir, { ...live, scenes, heartbeatAt: Date.now() });
         continue;
       }
 
@@ -497,7 +500,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
       } else {
         scenes[i] = { ...scenes[i], imageStatus: "error", imageError: shortImageError(result?.error) };
       }
-      writeProject(ctx.dataDir, { ...project, scenes, heartbeatAt: Date.now() });
+      writeProject(ctx.dataDir, { ...live, scenes, heartbeatAt: Date.now() });
     }
   };
 

@@ -83,3 +83,34 @@ test("a retried images run shows the failed scenes as generating at once, not th
   const done = await waitFor(project.projectId, (p) => p.status === "ready_to_render");
   assert.equal(done.scenes[1].imageStatus, "done");
 });
+
+test("a forced images re-run on a ready project reads generating_images until its last picture is in", async () => {
+  const project = createProject(dataDir, { title: "Force" });
+  writeProject(dataDir, {
+    ...project,
+    status: "ready_to_render",
+    scenes: [
+      sceneAt(1, { imageStatus: "done", imagePath: "/one.png" }),
+      sceneAt(2, { imageStatus: "done", imagePath: "/two.png" }),
+    ],
+  });
+  _setImageLibraryImpl({ find: async () => [], mark: () => {}, register: async () => null });
+  // The first picture comes back at once; the second is held, so the run is live between them.
+  const held = new Promise((resolve) => { release = () => resolve({ ok: true, path: "/new2.png", publicUrl: null }); });
+  let calls = 0;
+  _setImageGenImpl(async () => (++calls === 1 ? { ok: true, path: "/new1.png", publicUrl: null } : held));
+  process.env.STORY_IMAGE_CONCURRENCY = "1";
+  try {
+    const res = await call("post", "/:id/images", { params: { id: project.projectId }, body: { force: true } });
+    assert.equal(res.payload.ok, true, JSON.stringify(res.payload));
+    const midway = await waitFor(project.projectId, (p) => p.scenes[0].imagePath === "/new1.png");
+    assert.equal(midway.scenes[0].imageStatus, "done");
+    assert.equal(midway.scenes[1].imageStatus, "generating");
+    assert.equal(midway.status, "generating_images", "a worker's write keeps the live run's status");
+    release();
+    const done = await waitFor(project.projectId, (p) => p.status === "ready_to_render" && p.scenes[1].imagePath === "/new2.png");
+    assert.equal(done.status, "ready_to_render");
+  } finally {
+    delete process.env.STORY_IMAGE_CONCURRENCY;
+  }
+});
