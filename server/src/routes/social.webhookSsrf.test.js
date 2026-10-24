@@ -12,7 +12,7 @@ import fs from "fs";
 import http from "http";
 import os from "os";
 import path from "path";
-import socialRouter, { _setLookupImpl, _resetLookupImpl } from "./social.js";
+import socialRouter, { _setLookupImpl, _resetLookupImpl, _setUnvettedHostsForTests } from "./social.js";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 
 const hits = new Map();
@@ -152,12 +152,37 @@ describe("webhook delivery re-vets the URL", () => {
     assert.equal(totalHits(), 0);
   });
 
-  test("a hook that vets as public may not redirect the POST onward", async () => {
-    // The stub lookup calls "localhost" public, so the request reaches the
-    // fixture; its 302 must not be followed to /inner.
+  // "hook.test" does not exist in real DNS. The stub lookup answers 127.0.0.1
+  // and the test seam lets that one name past the public-address check, so a
+  // request only reaches the fixture if its socket is pinned to the address
+  // the delivery vetted.
+  function reachableHook() {
+    let lookups = 0;
+    _setLookupImpl(async () => { lookups += 1; return { address: "127.0.0.1", family: 4 }; });
+    _setUnvettedHostsForTests(["hook.test"]);
+    return { lookups: () => lookups };
+  }
+
+  test("delivery is pinned to the address it vetted: one lookup, and the socket goes there", async () => {
     const { a, dataDir } = app();
-    _setLookupImpl(publicLookup);
-    storeHook(dataDir, `http://localhost:${port}/bounce`);
+    const dns = reachableHook();
+    storeHook(dataDir, `http://hook.test:${port}/hook`);
+    const res = await request(a).post("/api/social/webhooks/wh1/test");
+    assert.equal(res.body.ok, true, JSON.stringify(res.body));
+    assert.equal(hits.get("/hook"), 1);
+    assert.equal(dns.lookups(), 1, "the connection must not resolve the name again");
+
+    const post = await request(a).post("/api/social/post")
+      .send({ destination: "webhook", caption: "hi", videoUrl: "https://cdn.example.com/v.mp4" });
+    assert.equal(post.status, 200, JSON.stringify(post.body));
+    assert.equal(hits.get("/hook"), 2);
+    assert.equal(dns.lookups(), 2);
+  });
+
+  test("a hook that vets as public may not redirect the POST onward", async () => {
+    const { a, dataDir } = app();
+    reachableHook();
+    storeHook(dataDir, `http://hook.test:${port}/bounce`);
     const res = await request(a).post("/api/social/webhooks/wh1/test");
     assert.equal(res.body.ok, false);
     assert.equal(hits.get("/bounce"), 1);

@@ -14,7 +14,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { isPublicAddress, downloadPublicUrl, assertPublicHttpUrl, isUrlGuardError, urlGuardMessage } from "./safeDownload.js";
+import { isPublicAddress, downloadPublicUrl, assertPublicHttpUrl, isUrlGuardError, urlGuardMessage, fetchPublic } from "./safeDownload.js";
 
 const FAKE_HOST = "public.test";
 const loopbackLookup = async () => ({ address: "127.0.0.1", family: 4 });
@@ -298,5 +298,52 @@ describe("guard error helpers", () => {
     const msg = urlGuardMessage(Object.assign(new Error("URL_PRIVATE"), { code: "URL_PRIVATE" }));
     assert.match(msg, /^URL_PRIVATE: [A-Z].+\.$/);
     assert.equal(urlGuardMessage(new Error("HTTP 500")), null);
+  });
+});
+
+describe("fetchPublic (pinned request for a URL that is only POSTed to)", () => {
+  test("the socket goes to the address that was vetted, whatever DNS says later", async () => {
+    let seen = null;
+    const fetchImpl = async (href, init) => { seen = { href, init }; return { status: 200, ok: true }; };
+    const res = await fetchPublic("https://hook.example.com/x", { method: "POST", body: "{}" }, {
+      lookup: async () => ({ address: "93.184.216.34", family: 4 }),
+      fetchImpl,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(seen.href, "https://hook.example.com/x");
+    assert.equal(seen.init.method, "POST");
+    assert.equal(seen.init.redirect, "manual");
+    // The agent's own lookup answers with the vetted address for ANY name, so a
+    // second (rebinding) DNS answer is never consulted for the connection.
+    const agent = typeof seen.init.agent === "function" ? seen.init.agent(new URL(seen.href)) : seen.init.agent;
+    const answer = await new Promise((resolve) => agent.options.lookup("hook.example.com", {}, (_e, address, family) => resolve({ address, family })));
+    assert.deepEqual(answer, { address: "93.184.216.34", family: 4 });
+    const all = await new Promise((resolve) => agent.options.lookup("hook.example.com", { all: true }, (_e, list) => resolve(list)));
+    assert.deepEqual(all, [{ address: "93.184.216.34", family: 4 }]);
+  });
+
+  test("a real request is pinned: an unresolvable name still reaches the vetted address", async () => {
+    const res = await fetchPublic(url("/ok"), { method: "POST", body: "{}" }, reachable());
+    assert.equal(res.status, 200);
+  });
+
+  test("a redirect is returned, not followed", async () => {
+    lookupCalls = [];
+    const res = await fetchPublic(url("/chain"), { method: "POST" }, reachable());
+    assert.equal(res.status, 302);
+    assert.deepEqual(lookupCalls, [FAKE_HOST]);
+  });
+
+  test("private hosts and other schemes are refused before connecting", async () => {
+    let fetched = false;
+    const fetchImpl = async () => { fetched = true; return { status: 200 }; };
+    await assert.rejects(fetchPublic(`http://127.0.0.1:${port}/ok`, {}, { fetchImpl }), { code: "URL_PRIVATE" });
+    await assert.rejects(fetchPublic("http://hook.internal/x", {}, { fetchImpl, lookup: async () => ({ address: "10.0.0.9", family: 4 }) }), { code: "URL_PRIVATE" });
+    await assert.rejects(fetchPublic("ftp://hook.example.com/x", {}, { fetchImpl }), { code: "URL_SCHEME" });
+    assert.equal(fetched, false);
+  });
+
+  test("a hook that never answers is aborted after timeoutMs", async () => {
+    await assert.rejects(fetchPublic(url("/stall"), { method: "POST" }, reachable({ timeoutMs: 80 })).then((r) => r.text()), (err) => err?.name === "AbortError" || /abort/i.test(String(err?.message)));
   });
 });

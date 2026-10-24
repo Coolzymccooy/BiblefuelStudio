@@ -23,7 +23,7 @@ import { startPublishJob, getPublishJob, _resetPublishJobs as resetPublishJobs }
 import { readProject, writeProject, publishedEntry, withPublished } from "../lib/ambient/projectStore.js";
 import os from "os";
 import { confineToDir } from "../lib/confinePath.js";
-import { downloadPublicUrl, assertPublicHttpUrl, isUrlGuardError, urlGuardMessage } from "../lib/safeDownload.js";
+import { downloadPublicUrl, assertPublicHttpUrl, fetchPublic, isUrlGuardError, urlGuardMessage } from "../lib/safeDownload.js";
 import { MAX_INPUT_MB } from "../lib/backgroundLimits.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
@@ -43,9 +43,26 @@ export function _resetFetchImpl() { _fetch = fetch; }
 // Injectable DNS lookup for the SSRF guards (video download, webhooks), so
 // tests can call a made-up hostname public or private. Unset = real DNS.
 let _lookup = null;
+let _unvettedHosts = [];
 export function _setLookupImpl(impl) { _lookup = impl; }
-export function _resetLookupImpl() { _lookup = null; }
+/** Test seam only: names whose (stubbed) address skips the public check. */
+export function _setUnvettedHostsForTests(hosts) { _unvettedHosts = [...hosts]; }
+export function _resetLookupImpl() { _lookup = null; _unvettedHosts = []; }
 const lookupOpts = () => (_lookup ? { lookup: _lookup } : {});
+
+/**
+ * POST JSON to a user's webhook. fetchPublic vets the host at delivery (DNS
+ * can change after the hook was saved), pins the socket to the vetted address
+ * so a rebinding answer cannot redirect it, and returns redirects unfollowed.
+ */
+function postToWebhookUrl(url, payload, signal) {
+  return fetchPublic(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  }, { ...lookupOpts(), ...(_unvettedHosts.length ? { unvettedHostsForTests: _unvettedHosts } : {}) });
+}
 
 // A remote video for upload: capped like every other input, with a deadline
 // long enough for a 200 MB file (a stalled body still dies on the idle timer).
@@ -58,9 +75,9 @@ function videoFetchError(err) {
 }
 
 /**
- * Vet a webhook URL (http(s), public addresses only). DNS can change after a
- * hook is saved, so delivery calls this again. Resolves the refusal message,
- * or null when the URL may be used.
+ * Vet a webhook URL when it is saved (http(s), every address public).
+ * Delivery vets again, and pins, through postToWebhookUrl. Resolves the
+ * refusal message, or null when the URL may be used.
  */
 async function webhookUrlRefusal(url) {
   try {
@@ -375,14 +392,7 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   const resolvedTitle = String(title || "").trim().slice(0, 100) || deriveCleanTitle(caption);
 
   let make = null;
-  const refusal = url ? await webhookUrlRefusal(url) : null;
-  if (refusal) {
-    console.warn(`[SOCIAL] webhook delivery skipped: ${refusal}`);
-    const msg = `Webhook refused: ${refusal}`;
-    recordWebhookDelivery(req?.ctx?.dataDir, target?.id, { ok: false, error: msg });
-    if (!zernioConfigured) throw new Error(msg);
-    make = { ok: false, error: msg };
-  } else if (url) {
+  if (url) {
     // Fire-and-forget downstream: we only wait long enough for Make/Zapier
     // to acknowledge the trigger (the 2xx). We do NOT wait for the
     // downstream platform work (TikTok upload, IG processing, etc.) —
@@ -391,20 +401,13 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), WEBHOOK_DISPATCH_TIMEOUT_MS);
     try {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: resolvedTitle,
-          caption,
-          videoUrl: mediaUrl,
-          source: "biblefuel-studio",
-          sentAt: new Date().toISOString(),
-        }),
-        signal: ctrl.signal,
-        // A public hook must not bounce the POST to an internal address.
-        redirect: "manual",
-      });
+      const resp = await postToWebhookUrl(url, {
+        title: resolvedTitle,
+        caption,
+        videoUrl: mediaUrl,
+        source: "biblefuel-studio",
+        sentAt: new Date().toISOString(),
+      }, ctrl.signal);
       clearTimeout(timer);
       if (!resp.ok) {
         const err = await resp.text().catch(() => "");
@@ -418,8 +421,10 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
       }
     } catch (err) {
       clearTimeout(timer);
+      const refused = urlGuardMessage(err);
+      if (refused) console.warn(`[SOCIAL] webhook delivery skipped: ${refused}`);
       const aborted = String(err?.message || "").toLowerCase().includes("abort");
-      const msg = aborted
+      const msg = refused ? `Webhook refused: ${refused}` : aborted
         ? `Webhook took longer than ${WEBHOOK_DISPATCH_TIMEOUT_MS / 1000}s to acknowledge — your Make/Zapier scenario may be doing too much work synchronously`
         : `Webhook dispatch error: ${String(err?.message || err).slice(0, 300)}`;
       recordWebhookDelivery(req?.ctx?.dataDir, target?.id, { ok: false, error: msg });
@@ -1472,13 +1477,6 @@ router.post("/webhooks/:id/test", async (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const hook = (store.webhooks || []).find((w) => w.id === id);
   if (!hook?.url) return res.status(404).json({ ok: false, error: "webhook not found" });
-  // Re-vetted at delivery: DNS can change after the hook was saved.
-  const refusal = await webhookUrlRefusal(hook.url);
-  if (refusal) {
-    console.warn(`[SOCIAL] webhook test skipped for ${id}: ${refusal}`);
-    recordWebhookDelivery(req.ctx.dataDir, id, { ok: false, error: refusal });
-    return res.json({ ok: false, error: refusal });
-  }
 
   // Sample payload mirrors what the campaign worker actually sends so the
   // user's Make/Zapier scenario can be designed against it. The `__test`
@@ -1499,13 +1497,8 @@ router.post("/webhooks/:id/test", async (req, res) => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10_000);
   try {
-    const resp = await fetch(hook.url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(sample),
-      signal: ctrl.signal,
-      redirect: "manual",
-    });
+    // Re-vetted (and pinned) at delivery: DNS can change after saving.
+    const resp = await postToWebhookUrl(hook.url, sample, ctrl.signal);
     clearTimeout(timer);
     const bodyText = await resp.text().catch(() => "");
     if (resp.ok) {
@@ -1517,6 +1510,12 @@ router.post("/webhooks/:id/test", async (req, res) => {
     return res.json({ ok: false, status: resp.status, error: errMsg, sample });
   } catch (err) {
     clearTimeout(timer);
+    const refused = urlGuardMessage(err);
+    if (refused) {
+      console.warn(`[SOCIAL] webhook test skipped for ${id}: ${refused}`);
+      recordWebhookDelivery(req.ctx.dataDir, id, { ok: false, error: refused });
+      return res.json({ ok: false, error: refused });
+    }
     const msg = String(err?.message || err);
     const friendly = msg.includes("abort")
       ? "Webhook took longer than 10 seconds to respond. Your Make/Zapier scenario may be doing too much work synchronously — make it asynchronous."

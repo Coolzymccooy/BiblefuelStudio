@@ -214,6 +214,48 @@ export async function assertPublicHttpUrl(url, { lookup = dns.promises.lookup } 
   return parsed;
 }
 
+/**
+ * One request (a webhook POST, say) to a user-supplied URL, with the same
+ * guards as downloadPublicUrl minus the body handling: http(s) only, the host
+ * resolved and vetted by us, the socket PINNED to that vetted address (so a
+ * DNS answer that changes after the check cannot redirect the connection),
+ * redirects returned rather than followed, and an overall deadline.
+ *
+ * Refusals throw coded errors (URL_SCHEME, URL_PRIVATE). The deadline aborts
+ * the request (an AbortError), including a body still being read.
+ *
+ * @param {string} url
+ * @param {object} [init] fetch init (method, headers, body, signal); `redirect`
+ *   and `agent` are always overridden.
+ * @param {{
+ *   lookup?: (host: string) => Promise<{ address: string, family: number }>,
+ *   fetchImpl?: typeof fetch,
+ *   timeoutMs?: number,
+ *   unvettedHostsForTests?: Iterable<string>,
+ * }} [opts] `unvettedHostsForTests` is a test seam; production must never set it.
+ * @returns {Promise<Response>}
+ */
+export async function fetchPublic(url, init = {}, opts = {}) {
+  const {
+    lookup = dns.promises.lookup,
+    fetchImpl = fetch,
+    timeoutMs = 15_000,
+    unvettedHostsForTests = [],
+  } = opts;
+  const parsed = parseHttpUrl(String(url ?? ""));
+  const { address, family } = await resolveVettedAddress(parsed, lookup, new Set(unvettedHostsForTests));
+  const agent = pinnedAgentFor(address, family, parsed.protocol);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (timer.unref) timer.unref();
+  if (init.signal) {
+    if (init.signal.aborted) controller.abort();
+    else init.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  return fetchImpl(parsed.href, { ...init, redirect: "manual", signal: controller.signal, agent: () => agent });
+}
+
 function byteCounter(maxBytes, onCount) {
   let total = 0;
   return new Transform({
