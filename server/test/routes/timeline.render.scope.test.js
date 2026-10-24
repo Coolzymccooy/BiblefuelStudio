@@ -23,7 +23,7 @@ const { default: request } = await import("supertest");
 const timelineModule = await import("../../src/routes/timeline.js");
 const timelineRouter = timelineModule.default;
 const { _resetTimelineRenderJobsForTest, _setTimelineRendererForTest } = timelineModule;
-const { buildProofRenderCommand } = await import("../../src/lib/timelineRender/proofRenderer.js");
+const { buildProofRenderCommand, renderTimelineProof } = await import("../../src/lib/timelineRender/proofRenderer.js");
 
 const userDir = path.join(process.env.DATA_DIR, "users", "me");
 const mine = path.join(userDir, "outputs");
@@ -219,6 +219,60 @@ describe("/api/timeline/render asset scope", () => {
     const refused = await request(appFor(ctx)).post("/api/timeline/render").send({ project: other });
     assert.equal(refused.status, 403, JSON.stringify(refused.body));
     assert.equal(refused.body.error, "PATH_OUTSIDE_MEDIA");
+  });
+
+  test("a non-owner's https main clip, B-roll and music render from the renderer's own download cache, and no other cache file (R48)", async () => {
+    // The renderer downloads https media into OUTPUT_DIR/cache/remote-bg (outside the caller's
+    // folder); the stub below stands in for that download and for ffmpeg.
+    const cacheDir = path.join(process.env.OUTPUT_DIR, "cache", "remote-bg");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const planted = path.join(cacheDir, "someone-elses.mp4");
+    fs.writeFileSync(planted, "x");
+    const localise = async (url) => {
+      const file = path.join(cacheDir, `${Buffer.from(url).toString("hex").slice(-24)}${path.extname(new URL(url).pathname)}`);
+      fs.writeFileSync(file, "x");
+      return file;
+    };
+    const runs = [];
+    let jobOpts = null;
+    _setTimelineRendererForTest(async (plan, opts) => {
+      jobOpts = opts;
+      renders.push(plan);
+      return renderTimelineProof(plan, { ...opts, localise, runner: async (args) => { runs.push(args); return { ok: true, stderr: "" }; } });
+    });
+    const inputsOf = (args) => args.filter((_, i) => args[i - 1] === "-i").map((p) => path.resolve(p));
+    const remote = (name, kind) => ({ id: name, kind, source: "upload", label: name, path: `https://media.example.com/${name}.${kind === "music" ? "mp3" : "mp4"}`, durationSec: 5 });
+    const body = project("https://media.example.com/main.mp4");
+    body.assets.b = remote("broll", "broll");
+    body.assets.m = remote("bed", "music");
+    body.tracks.push(
+      { id: "tb", kind: "broll", label: "B-roll", clips: [{ id: "cb", assetId: "b", startSec: 1, durationSec: 3 }] },
+      { id: "tm", kind: "music", label: "Music", clips: [{ id: "cm", assetId: "m", startSec: 0, durationSec: 5 }] },
+    );
+    const res = await request(appFor(ctx)).post("/api/timeline/render").send({ project: body });
+    assert.equal(res.status, 202, JSON.stringify(res.body));
+    for (let i = 0; i < 100 && runs.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(runs.length, 1, "the render never reached ffmpeg");
+    const inputs = inputsOf(runs[0]);
+    for (const url of ["https://media.example.com/main.mp4", "https://media.example.com/broll.mp4", "https://media.example.com/bed.mp3"]) {
+      assert.ok(inputs.includes(path.resolve(await localise(url))), `${url} missing from ${inputs}`);
+    }
+    // A cache file this render did not download itself is refused, by the route...
+    const named = project(planted);
+    const refused = await request(appFor(ctx)).post("/api/timeline/render").send({ project: named });
+    assert.equal(refused.status, 403, JSON.stringify(refused.body));
+    assert.equal(refused.body.error, "PATH_OUTSIDE_MEDIA");
+    // ...and by the renderer, when a plan carries it next to a clip it did download.
+    const plantedPlan = {
+      ...renders[0],
+      tracks: [...renders[0].tracks, { id: "tp", kind: "broll", label: "Planted", clips: [{ id: "cp", path: planted, startSec: 2, durationSec: 2 }] }]
+        .filter((t) => t.id !== "tb"),
+    };
+    runs.length = 0;
+    const result = await renderTimelineProof(plantedPlan, { ...jobOpts, outputPath: path.join(mine, "planted.mp4"), localise, runner: async (args) => { runs.push(args); return { ok: true, stderr: "" }; } });
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.ok(!inputsOf(runs[0]).includes(path.resolve(planted)), `planted cache file reached ffmpeg: ${inputsOf(runs[0])}`);
+    assert.ok(inputsOf(runs[0]).includes(path.resolve(await localise("https://media.example.com/main.mp4"))));
   });
 
   test("the owner still renders files in the global output folder", async () => {
