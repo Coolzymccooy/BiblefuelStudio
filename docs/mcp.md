@@ -123,6 +123,11 @@ Every call passes the same checks, in this order:
 | `music_library` | `{ source? }`. Bundled tracks and your own, each with `id`, `ref`, `durationSec` and licence. |
 | `music_remove_vocals` | `{ id, quality? }`. Start vocal removal on a track. Returns a job handle of kind `instrumental`. Takes minutes. One daily render. |
 | `music_instrumental_decide` | `{ jobId, decision: "keep" or "discard" }`. Settle a finished (or cancel a running) vocal removal. |
+| `backgrounds_search` | `{ source: "pexels" or "pixabay", query, limit? }`. Stock background videos (no photos). Results are not saved yet. |
+| `library_items` | `{ action: "list" or "download" or "add" or "remove" or "categories", ... }`. Your saved backgrounds. A library id works as a background in the render tools. |
+| `images_generate` | `{ lines, aspect?, count? }`. AI stills from text lines. Returns `path` and `url` per image. One daily `images` per image. |
+| `visual_library` | `{ action: "list" or "similar" or "import" or "update" or "remove", ... }`. Paid AI clips. Super-admin keys only; other keys do not see it. |
+| `branding` | `{ action: "get" or "set", enabled?, position?, size?, opacity? }`. The logo drawn on your rendered videos. |
 
 More tools arrive in later slices. The Pipelines section shows where each fits.
 
@@ -250,9 +255,13 @@ Stuck or finished jobs: `jobs_list`, `jobs_get`, `jobs_retry`, then `jobs_wait`.
 
 These tools read and write files in your media folder only. `audio_process`, `audio_advanced` and `voice_clone` refuse a path outside it with `PATH_OUTSIDE_MEDIA` and do not accept URLs: bring a file in with `media_import_url` first. The only exception is a voice file another `voice_synthesize` call just wrote. `audio_advanced` cannot draw a waveform image.
 
-### Backgrounds and images (coming)
+### Backgrounds and images (available now)
 
-`backgrounds_search`, `library_items`, `images_generate`, `visual_library`.
+1. `backgrounds_search { source, query, limit? }` looks for stock background **videos** on Pexels or Pixabay (there is no photo search). Each result has `id`, `previewUrl`, `image`, `durationSec`, `width`, `height` and `libraryId`. Searching is free and needs the provider key on the server. A search the Christian-library filter does not allow is refused.
+2. Results are not in your library. `library_items { action: "download", source, sourceId, query? }` saves one (a few seconds) and returns the item. Its `id` (for example `pexels_123`) is a **library id**, and the render tools accept a library id as a background.
+3. `library_items` also does `list` (filter with `category`), `categories` (the tag names), `add { mediaPath, title?, categories? }` (a video from your media folder; URLs and paths outside it are refused with `PATH_OUTSIDE_MEDIA`) and `remove { id }`.
+4. `images_generate { lines, aspect?, count? }` makes AI stills, one per line, up to four. Each image costs one daily `images` cap unit and one unit of the plan quota `imageGen`, and takes several seconds. Returns `images: [{ path, url }]`. `NOT_CONFIGURED` means this server has no image provider.
+5. `visual_library` (super-admin keys only) lists (`list`), finds near-duplicate prompts (`similar`), tags and rates (`update`), deletes (`remove`, `force` if a video uses the clip) and `import`s a clip made elsewhere. Re-rolling a clip spends money and is not offered.
 
 ### Story video (coming)
 
@@ -301,9 +310,9 @@ These tools read and write files in your media folder only. `audio_process`, `au
 3. `jobs_wait { kind: "instrumental", id }`, repeated until `status` is `done`. The instrumental is saved to your music library as soon as it is finished.
 4. `music_instrumental_decide { jobId, decision }`. `keep` returns the saved track; `discard` removes the track and its file (it also cancels a job that is still running).
 
-### Branding (coming)
+### Branding (available now)
 
-`branding` with `action` of `get` or `set`.
+`branding { action: "get" }` shows whether the logo overlay is on, its corner, size and opacity, and whether a logo is uploaded. `branding { action: "set", enabled?, position?, size?, opacity? }` changes only the fields you pass. Turning it on fails until a logo exists; the logo image itself is uploaded in the app, not through MCP.
 
 ### Publishing (coming)
 
