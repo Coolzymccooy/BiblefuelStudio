@@ -105,6 +105,24 @@ test("low disk cleans up first, then alerts if it is still low", async () => {
   assert.deepEqual(ok.alerts, []);
 });
 
+test("with two volumes, a small disk low in GB is reported low even when the big one has a smaller share free", async () => {
+  const GB = 1024 ** 3;
+  const dataDir = tmp("mt-data-");
+  const outputDir = tmp("mt-out-");
+  // outputs: 15 GB free of 100 (15 %, fine); data: 1 GB free of 5 (20 %, but under 2 GB).
+  const sizes = { [outputDir]: [15, 100], [dataDir]: [1, 5] };
+  const statfs = (dir) => {
+    const [free, total] = sizes[dir];
+    return { bsize: 1024, blocks: (total * GB) / 1024, bavail: (free * GB) / 1024 };
+  };
+  const alerts = [];
+  const m = createMaintenance({ dataDir, outputDir, env: {}, log: quiet, alert: (kind) => alerts.push(kind), statfs });
+  const disk = await m.checkDisk();
+  assert.equal(disk.low, true, "health reports the low disk");
+  assert.equal(disk.totalGb, 5);
+  assert.deepEqual(alerts, ["disk-low"]);
+});
+
 test("start() sets unref'd timers that stop() clears", () => {
   const { m } = rig();
   const made = [];

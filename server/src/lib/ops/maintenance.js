@@ -26,7 +26,7 @@ export function backupsEnabled(env = process.env) {
   return env.NODE_ENV === "production" || ["true", "1", "yes", "on"].includes(flag);
 }
 
-export function createMaintenance({ dataDir, outputDir, alert, backupTarget = null, env = process.env, now = () => Date.now(), log = console }) {
+export function createMaintenance({ dataDir, outputDir, alert, backupTarget = null, env = process.env, now = () => Date.now(), log = console, statfs = undefined }) {
   const stateFile = path.join(dataDir, STATE_FILE);
   const readState = () => {
     try {
@@ -60,14 +60,19 @@ export function createMaintenance({ dataDir, outputDir, alert, backupTarget = nu
 
   const checkDisk = () => once("disk", async () => {
     const dirs = [...new Set([outputDir, dataDir])];
-    const readings = dirs.map((d) => ({ dir: d, s: diskStatus(d, { env }) })).filter((x) => x.s);
+    const readings = dirs.map((d) => ({ dir: d, s: diskStatus(d, { env, statfs }) })).filter((x) => x.s);
     if (!readings.length) return null;
-    // Every volume is checked: a big disk low by percentage counts as much as a small one.
-    const worstOf = (list) => list.reduce((a, b) => (b.s.freePercent < a.s.freePercent ? b : a));
+    // Every volume is checked. The one reported is a low one if any is low
+    // (a small disk can be low in GB while holding the larger share free),
+    // else the one with the smallest share free.
+    const worstOf = (list) => list.reduce((a, b) => {
+      if (a.s.low !== b.s.low) return b.s.low ? b : a;
+      return b.s.freePercent < a.s.freePercent ? b : a;
+    });
     status.disk = worstOf(readings).s;
     if (!readings.some((r) => r.s.low)) return status.disk;
     await cleanup();
-    const after = readings.map((r) => ({ dir: r.dir, s: diskStatus(r.dir, { env }) || r.s }));
+    const after = readings.map((r) => ({ dir: r.dir, s: diskStatus(r.dir, { env, statfs }) || r.s }));
     status.disk = worstOf(after).s;
     for (const { dir, s: d } of after.filter((r) => r.s.low)) {
       alert("disk-low", `Disk nearly full: ${d.freeGb} GB free of ${d.totalGb} GB`,

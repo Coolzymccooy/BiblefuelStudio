@@ -117,6 +117,11 @@ test("outputs are copied once, changes are copied again, throwaway files never, 
   assert.equal((await restoreOutputs({ target, toDir: restored })).files, 5);
   assert.equal(fs.readFileSync(path.join(restored, "owner/story/p1/video.mp4"), "utf8"), "E".repeat(120));
   assert.equal(fs.readFileSync(path.join(restored, "users/u1/moment.mp4"), "utf8"), "D".repeat(100));
+
+  // Run again over the same folder: refused before anything is copied.
+  fs.writeFileSync(path.join(restored, "owner/story/p1/video.mp4"), "NEWER");
+  await assert.rejects(restoreOutputs({ target, toDir: restored }), /not empty/);
+  assert.equal(fs.readFileSync(path.join(restored, "owner/story/p1/video.mp4"), "utf8"), "NEWER", "a newer file is not overwritten");
 });
 
 test("a record that vanishes mid-backup, or a name starting with @, does not fail the night", async () => {

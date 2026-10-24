@@ -200,10 +200,13 @@ export async function restoreDataBackup({ target, toDir, date = null, tmpDir = o
   return { key, files: dataBackupFiles(toDir).length };
 }
 
-/** Copy every backed-up output file under `toDir/<owner|users/id>/...`. */
+/** Copy every backed-up output file under `toDir/<owner|users/id>/...`, into an empty folder only. */
 export async function restoreOutputs({ target, toDir }) {
   let files = 0;
   const root = path.resolve(toDir);
+  // Same rule as the data restore: never copy older backups over files that are there now.
+  fs.mkdirSync(root, { recursive: true });
+  if (fs.readdirSync(root).length) throw new Error(`${root} is not empty; restore into an empty folder and move it into place.`);
   for (const key of await target.list(OUTPUTS_PREFIX)) {
     const dest = path.resolve(root, key.slice(OUTPUTS_PREFIX.length));
     if (!dest.startsWith(root + path.sep)) continue;
