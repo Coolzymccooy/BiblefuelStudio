@@ -12,8 +12,9 @@ import os from "node:os";
 import path from "node:path";
 import express from "express";
 import request from "supertest";
-import mediaRouter from "./media.js";
-import { _setDownloader, _resetDownloader } from "./mediaImportUrl.js";
+import { spawnSync } from "node:child_process";
+import mediaRouter, { isPlayableVideo } from "./media.js";
+import { _setDownloader, _resetDownloader, _setHeadroomCheck, _resetHeadroomCheck } from "./mediaImportUrl.js";
 
 /** PCM16 mono WAV of silence, `seconds` long. */
 function silentWav(seconds, rate = 8000) {
@@ -56,6 +57,8 @@ const post = (body) => request(app).post("/api/media/import-url").send(body);
 
 beforeEach(() => {
   calls = [];
+  // The real check reads this machine's free space; each test chooses it.
+  _setHeadroomCheck(() => ({ ok: true, availableBytes: null }));
   outDir = fs.mkdtempSync(path.join(os.tmpdir(), "bf-import-url-"));
   app = express();
   app.use(express.json());
@@ -65,6 +68,7 @@ beforeEach(() => {
 
 afterEach(() => {
   _resetDownloader();
+  _resetHeadroomCheck();
   fs.rmSync(outDir, { recursive: true, force: true });
 });
 
@@ -211,5 +215,127 @@ describe("POST /api/media/import-url", () => {
       assert.equal(res.body.error, code);
     }
     assert.equal(calls.length, 0);
+  });
+});
+
+describe("POST /api/media/import-url — disk, concurrency and content checks", () => {
+  test("no room for MAX_INPUT_MB answers 507 DISK_FULL before any download", async () => {
+    const asked = [];
+    _setHeadroomCheck((dir, bytes) => { asked.push(bytes); return { ok: false, error: "Not enough disk space" }; });
+    _setDownloader(serving(WAV_BYTES, "audio/wav"));
+    const res = await post({ url: "https://cdn.example.com/talk.wav" });
+    assert.equal(res.status, 507);
+    assert.deepEqual(res.body, { ok: false, error: "DISK_FULL", message: "Not enough disk space" });
+    assert.deepEqual(asked, [200 * 1024 * 1024]);
+    assert.equal(calls.length, 0, "nothing was downloaded");
+    assert.deepEqual(fs.readdirSync(outDir), []);
+  });
+
+  test("the disk is checked again for the downloaded size before the rename", async () => {
+    const asked = [];
+    _setHeadroomCheck((dir, bytes) => {
+      asked.push(bytes);
+      return asked.length === 1 ? { ok: true } : { ok: false, error: "disk filled meanwhile" };
+    });
+    _setDownloader(serving(WAV_BYTES, "audio/wav"));
+    const res = await post({ url: "https://cdn.example.com/talk.wav" });
+    assert.equal(res.status, 507);
+    assert.equal(res.body.error, "DISK_FULL");
+    assert.deepEqual(asked, [200 * 1024 * 1024, WAV_BYTES.length]);
+    assert.deepEqual(fs.readdirSync(outDir), [], "the downloaded part is removed");
+  });
+
+  test("a third concurrent import for one user answers 429 IMPORT_BUSY", async () => {
+    const releases = [];
+    _setDownloader(async (url, dest) => {
+      calls.push({ url });
+      await new Promise((resolve) => releases.push(resolve));
+      fs.writeFileSync(dest, WAV_BYTES);
+      return { bytes: WAV_BYTES.length, contentType: "audio/wav", finalUrl: url };
+    });
+    const first = post({ url: "https://cdn.example.com/1.wav" }).then((r) => r);
+    const second = post({ url: "https://cdn.example.com/2.wav" }).then((r) => r);
+    while (calls.length < 2) await new Promise((r) => setTimeout(r, 5));
+
+    const third = await post({ url: "https://cdn.example.com/3.wav" });
+    assert.equal(third.status, 429);
+    assert.deepEqual(third.body, {
+      ok: false,
+      error: "IMPORT_BUSY",
+      message: "two imports are already running; wait for one to finish",
+    });
+    assert.equal(calls.length, 2, "the third import never started a download");
+
+    releases.forEach((release) => release());
+    assert.equal((await first).status, 200);
+    assert.equal((await second).status, 200);
+
+    // Both slots are released once the imports finish.
+    _setDownloader(serving(WAV_BYTES, "audio/wav"));
+    const later = await post({ url: "https://cdn.example.com/4.wav" });
+    assert.equal(later.status, 200, JSON.stringify(later.body));
+  });
+
+  test("a failed import releases its slot", async () => {
+    _setDownloader(failing("URL_TIMEOUT"));
+    for (let i = 0; i < 3; i++) {
+      const res = await post({ url: "https://cdn.example.com/slow.wav" });
+      assert.equal(res.status, 504, `attempt ${i + 1}`);
+    }
+  });
+
+  test("an .html hint with an audio content type is refused and removed", async () => {
+    _setDownloader(serving(Buffer.from("<script>alert(1)</script>".repeat(80)), "audio/x-unknown"));
+    const res = await post({ url: "https://cdn.example.com/x", filename: "page.html" });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, "UNSUPPORTED_TYPE");
+    assert.ok(res.body.message);
+    assert.deepEqual(fs.readdirSync(outDir), []);
+  });
+
+  test("an image hint outside jpg/png/webp/gif is refused", async () => {
+    _setDownloader(serving(JPEG_BYTES, "application/octet-stream"));
+    const res = await post({ url: "https://cdn.example.com/x.svg", kind: "image" });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, "UNSUPPORTED_TYPE");
+    assert.deepEqual(fs.readdirSync(outDir), []);
+  });
+
+  test("a .jpeg hint still imports as an image", async () => {
+    _setDownloader(serving(JPEG_BYTES, "application/octet-stream"));
+    const res = await post({ url: "https://cdn.example.com/photo.jpeg", kind: "image" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.match(res.body.file, /\.jpg$/);
+  });
+
+  test("a video that fails the ffprobe check is refused and removed", async () => {
+    _setDownloader(serving(Buffer.from("not a video at all ".repeat(200)), "video/mp4"));
+    const res = await post({ url: "https://cdn.example.com/clip.mp4", kind: "video" });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, "UNSUPPORTED_TYPE");
+    assert.deepEqual(fs.readdirSync(outDir), []);
+  });
+});
+
+describe("isPlayableVideo", () => {
+  test("finds the video stream in a real clip and rejects audio-only and junk", (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bf-probe-video-"));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const clip = path.join(dir, "clip.mp4");
+    const made = spawnSync(process.env.FFMPEG_PATH?.trim() || "ffmpeg", [
+      "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=10:duration=1",
+      "-pix_fmt", "yuv420p", clip,
+    ], { timeout: 30_000 });
+    if (made.status !== 0) return t.skip("ffmpeg unavailable");
+    assert.equal(isPlayableVideo(clip), true);
+
+    const wav = path.join(dir, "talk.mp4");
+    fs.writeFileSync(wav, WAV_BYTES);
+    assert.equal(isPlayableVideo(wav), false, "audio under a video name has no video stream");
+
+    const junk = path.join(dir, "junk.mp4");
+    fs.writeFileSync(junk, Buffer.alloc(4096, 0x41));
+    assert.equal(isPlayableVideo(junk), false);
+    assert.equal(isPlayableVideo(path.join(dir, "missing.mp4")), false);
   });
 });

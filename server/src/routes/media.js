@@ -77,6 +77,30 @@ function probeDurationSec(filePath) {
   return Number.isFinite(value) ? value : null;
 }
 
+/**
+ * True when ffprobe finds a video stream in the file: a header read, bounded
+ * like probeDurationSec. Used where a video arrives from outside (URL import)
+ * and nothing downstream would otherwise reject a disguised document.
+ */
+export function isPlayableVideo(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.size || stat.size < 1024) return false;
+  } catch {
+    return false;
+  }
+  const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+  const result = spawnSync(ffprobe, [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=codec_type",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    filePath,
+  ], { encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL" });
+  if (result.status !== 0) return false;
+  return String(result.stdout || "").trim().split(/\s+/).includes("video");
+}
+
 function isPlayableAudio(filePath) {
   try {
     const stat = fs.statSync(filePath);
@@ -728,7 +752,7 @@ router.post("/upload-source-video", async (req, res) => {
 // Pull a file from a public URL (agent/MCP path). Mounted here, after the
 // helpers it needs are initialised: videoMimeToExt is a const further up the
 // file than /upload-audio, so mounting there would hit its temporal dead zone.
-router.post("/import-url", createImportUrlHandler({ processReceivedAudio, audioMimeToExt, videoMimeToExt, startVideoProxyGeneration, finaliseImageFile }));
+router.post("/import-url", createImportUrlHandler({ processReceivedAudio, audioMimeToExt, videoMimeToExt, startVideoProxyGeneration, finaliseImageFile, isPlayableVideo }));
 
 // Background-clip upload — accepts video (mp4/mov/webm) OR image (jpg/png/webp).
 // Both land in outputDir and are referenced by their local path from the
