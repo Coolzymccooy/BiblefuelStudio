@@ -208,7 +208,12 @@ export interface ShelfCharacter {
   createdAt: number;
 }
 
-export interface CartoonMonth { spentUsd: number; capUsd: number }
+export interface CartoonMonth {
+  spentUsd: number;
+  capUsd: number;
+  /** Held for clips ordered but not yet settled; counts against the cap. */
+  reservedUsd?: number;
+}
 
 /** The fields PATCH /api/cartoon/:id accepts; anything else is ignored by the server. */
 export interface CartoonEdit {

@@ -9,12 +9,14 @@ import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { useAuth } from '../hooks/useAuth';
-import type { CartoonProject } from '../lib/cartoonTypes';
+import type { CartoonMonth, CartoonProject } from '../lib/cartoonTypes';
 import { CARTOON_STEPS, furthestStep, reachableSteps, type CartoonStepId } from '../components/cartoon/steps';
 import { ScriptStep } from '../components/cartoon/ScriptStep';
 import { CastStep } from '../components/cartoon/CastStep';
 import { StyleStep } from '../components/cartoon/StyleStep';
 import { ShotListStep } from '../components/cartoon/ShotListStep';
+import { FilmStep } from '../components/cartoon/FilmStep';
+import { FinishStep } from '../components/cartoon/FinishStep';
 import { useCartoonProject } from '../components/cartoon/useCartoonProject';
 
 function StepNav({ open, active, onSelect }: { open: CartoonStepId[]; active: CartoonStepId; onSelect: (id: CartoonStepId) => void }) {
@@ -52,6 +54,10 @@ function StepNav({ open, active, onSelect }: { open: CartoonStepId[]; active: Ca
 interface PanelProps {
   step: CartoonStepId;
   project: CartoonProject | null;
+  /** This month's AI video spend against the cap, for the Film step's price line. */
+  month: CartoonMonth | null;
+  /** False when AI video is not set up on this server. */
+  seedance: boolean;
   /** Applies a project an action returned. */
   onSaved: (p: CartoonProject) => void;
   /** The Script step's Next: apply, then open Cast once it can be reached. */
@@ -59,7 +65,7 @@ interface PanelProps {
   onGo: (step: CartoonStepId) => void;
 }
 
-function StepPanel({ step, project, onSaved, onScriptSaved, onGo }: PanelProps) {
+function StepPanel({ step, project, month, seedance, onSaved, onScriptSaved, onGo }: PanelProps) {
   const info = CARTOON_STEPS.find((s) => s.id === step) ?? CARTOON_STEPS[0];
   return (
     <section aria-labelledby="cartoon-step-heading" className="space-y-4">
@@ -73,12 +79,22 @@ function StepPanel({ step, project, onSaved, onScriptSaved, onGo }: PanelProps) 
       {step === 'shots' && project && (
         <ShotListStep project={project} onSaved={onSaved} onNext={() => onGo('film')} onGoCast={() => onGo('cast')} />
       )}
-      {/* TODO(Task 17): the Film and Finish steps render here. */}
+      {step === 'film' && project && (
+        <FilmStep project={project} month={month} seedance={seedance} onSaved={onSaved} onNext={() => onGo('finish')} />
+      )}
+      {step === 'finish' && project && <FinishStep project={project} onSaved={onSaved} />}
     </section>
   );
 }
 
-function Shell({ project, onSaved }: { project: CartoonProject | null; onSaved?: (p: CartoonProject) => void }) {
+interface ShellProps {
+  project: CartoonProject | null;
+  month?: CartoonMonth | null;
+  seedance?: boolean;
+  onSaved?: (p: CartoonProject) => void;
+}
+
+function Shell({ project, month = null, seedance = true, onSaved }: ShellProps) {
   const [chosen, setChosen] = useState<CartoonStepId>(() => furthestStep(project));
   const open = reachableSteps(project);
   // An edit or a poll can close a step (a new style needs the portraits approved again):
@@ -106,13 +122,13 @@ function Shell({ project, onSaved }: { project: CartoonProject | null; onSaved?:
         />
       </div>
       <StepNav open={open} active={active} onSelect={setChosen} />
-      <StepPanel step={active} project={project} onSaved={saved} onScriptSaved={scriptSaved} onGo={go} />
+      <StepPanel step={active} project={project} month={month} seedance={seedance} onSaved={saved} onScriptSaved={scriptSaved} onGo={go} />
     </div>
   );
 }
 
 function SavedCartoon({ id }: { id: string }) {
-  const { project, error, apply } = useCartoonProject(id);
+  const { project, month, seedance, error, apply } = useCartoonProject(id);
   if (error && !project) {
     return (
       <div className="space-y-3">
@@ -124,7 +140,7 @@ function SavedCartoon({ id }: { id: string }) {
     );
   }
   if (!project) return <p className="text-help">Loading…</p>;
-  return <Shell project={project} onSaved={apply} />;
+  return <Shell project={project} month={month} seedance={seedance} onSaved={apply} />;
 }
 
 /** Cartoon mode under Scene script. Super admins only, like Scene script itself. */
