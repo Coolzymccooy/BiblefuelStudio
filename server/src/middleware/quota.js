@@ -70,12 +70,16 @@ export function consumeQuota(ctx, bucket, amount = 1) {
  * @param {{ dataDir?: string, plan?: string } | null | undefined} ctx
  * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
  * @param {number} [amount=1]
+ * @param {{ day?: string }} [options] `day`: the UTC day the units were spent on. When the
+ *   counter has since rolled over to another day, that day's count is not touched.
  */
-export function refundQuota(ctx, bucket, amount = 1) {
+export function refundQuota(ctx, bucket, amount = 1, { day } = {}) {
   if (!ctx?.dataDir) return;
   const limit = (QUOTAS[ctx.plan] || QUOTAS.free)[bucket];
   if (limit === -1) return;
-  const used = Number(readUsage(ctx.dataDir).counts[bucket] || 0);
+  const usage = readUsage(ctx.dataDir);
+  if (day && usage.day !== day) return;
+  const used = Number(usage.counts[bucket] || 0);
   const back = Math.min(used, Math.max(0, Math.floor(Number(amount) || 0)));
   if (back > 0) incrementUsage(ctx.dataDir, bucket, -back);
 }
@@ -88,10 +92,12 @@ export function refundQuota(ctx, bucket, amount = 1) {
  */
 function refundOnFailure(req, res, bucket) {
   let refunded = false;
+  // The unit was spent on today's counter; a failure after midnight UTC gives nothing back.
+  const day = req.ctx?.dataDir ? readUsage(req.ctx.dataDir).day : undefined;
   const refund = () => {
     if (refunded) return;
     refunded = true;
-    refundQuota(req.ctx, bucket);
+    refundQuota(req.ctx, bucket, 1, { day });
   };
   res.locals.refundQuota = refund;
   // Every response goes through writeHead (res.json and res.end call it implicitly).
