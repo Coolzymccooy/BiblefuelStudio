@@ -10,6 +10,7 @@
 
 import { toHandle, toPercent, text } from "./jobHandle.js";
 import { SONG_NORMALISERS } from "./songJobs.js";
+import { sceneState } from "./sceneJob.js";
 
 const POLL_MS = 3000;
 const MIN_TIMEOUT_SEC = 1;
@@ -237,6 +238,36 @@ function fromAmbient(payload, ctx) {
   );
 }
 
+// ---- scene scripts and long-form ---------------------------------------------
+
+function fromScene(payload, ctx) {
+  const project = payload?.project || {};
+  const { rawStatus, percent, phase, error, file, stages, blockers } = sceneState(project);
+  const handle = toHandle({ kind: "scene", id: project.id, rawStatus, percent: toPercent(percent), phase, file, url: file, error }, ctx);
+  return { ...handle, stages, ...(blockers ? { blockers } : {}) };
+}
+
+const NARRATION_RESTARTED =
+  "The server restarted while the script was being narrated. Call longform_narrate again (chunks already narrated are reused).";
+
+/** A long-form project is a story project with a narration stage before the story pipeline. */
+function fromLongform(payload, ctx) {
+  const project = payload?.project || {};
+  const status = String(project.status || "");
+  const progress = project.longform?.progress || {};
+  if (status === "narrating") {
+    const total = Number(progress.total) || 0;
+    const percent = total > 0 ? Math.round(((Number(progress.done) || 0) / total) * 100) : null;
+    const stopped = progress.alive === false;
+    return toHandle({
+      kind: "longform", id: project.projectId, rawStatus: stopped ? "failed" : "running", percent: toPercent(percent),
+      phase: "narrating", error: stopped ? NARRATION_RESTARTED : null,
+    }, ctx);
+  }
+  if (status === "draft_script") return toHandle({ kind: "longform", id: project.projectId, rawStatus: "done", phase: status }, ctx);
+  return { ...fromStory(payload, ctx), kind: "longform" };
+}
+
 function fromTimeline(payload, ctx) {
   const p = payload || {};
   return toHandle(
@@ -270,6 +301,8 @@ export const NORMALISERS = {
   story: { route: routeFor("/api/story/"), normalise: fromStory },
   ambient: { route: routeFor("/api/ambient/"), normalise: fromAmbient },
   ...SONG_NORMALISERS,
+  scene: { route: routeFor("/api/scene-script/"), normalise: fromScene },
+  longform: { route: routeFor("/api/story/"), normalise: fromLongform },
   timeline: { route: routeFor("/api/timeline/render/"), normalise: fromTimeline },
   instrumental: { route: routeFor("/api/music/instrumental/"), normalise: fromInstrumental },
   publish: { route: routeFor("/api/social/youtube/publish/"), normalise: fromPublish },
