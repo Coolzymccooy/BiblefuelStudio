@@ -159,6 +159,13 @@ test("story_settings music takes a library ref or a confined file, and null clea
   ]);
 });
 
+test("story_settings music with only volume sends no path, so the route keeps the current bed", async () => {
+  const { ctx, calls } = ctxWith({ "PATCH /api/story/p1/music": { ok: true, project: PROJECT() } });
+  await byName.story_settings.handler(ctx, { id: "p1", music: { volume: 0.2 } });
+  assert.deepEqual(calls.map((c) => c.opts.body), [{ volume: 0.2 }]);
+  assert.equal(Object.hasOwn(calls[0].opts.body, "path"), false);
+});
+
 test("story_settings refuses a music path outside the media folder before changing anything", async () => {
   const dir = fs.mkdtempSync(path.join(testApp.dataDir, "scenes-media-"));
   _setScopeForTests(async () => ({ outputDir: dir, sharedDir: path.join(dir, "none") }));

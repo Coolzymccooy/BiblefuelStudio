@@ -1387,8 +1387,11 @@ router.patch("/:id/music", (req, res) => {
   try {
     const project = readProject(req.ctx.dataDir, req.params.id);
     if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    // A body without `path` changes only volume or ducking and keeps the stored
+    // bed (it was checked when stored, and render checks it again); null clears it.
+    const keepPath = !Object.hasOwn(req.body || {}, "path");
     const raw = req.body?.path ? String(req.body.path).trim() : "";
-    let path = null;
+    let path = keepPath ? (project.music?.path ?? null) : null;
     if (raw) {
       // A ref is stored as the ref (it resolves again at render); a file as its checked real path.
       try {

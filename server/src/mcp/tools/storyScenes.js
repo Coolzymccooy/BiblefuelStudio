@@ -85,7 +85,7 @@ const captionsSchema = z.object({
 });
 
 const musicSchema = z.object({
-  path: z.string().max(1000).nullable().optional().describe("A music_library ref (library:... or mylib:...) or a file in your media folder; null removes the music."),
+  path: z.string().max(1000).nullable().optional().describe("A music_library ref (library:... or mylib:...) or a file in your media folder; null removes the music. Leave it out to change only volume or autoDuck and keep the current music."),
   volume: z.number().min(0).max(1).optional().describe("Music volume, 0 to 1 (default 0.3)."),
   autoDuck: z.boolean().optional().describe("Lower the music under the voice (default true)."),
 });
