@@ -92,15 +92,37 @@ test("timeline_project save confines every asset path and stores the real path i
   assert.equal((await byName.timeline_project.handler(ctx, { action: "save" })).structuredContent.error, "BAD_INPUT");
 });
 
-test("timeline_project save refuses an asset outside the media folder, a URL or a library id, naming the asset", async () => {
-  mediaWith("clip.mp4");
-  for (const bad of ["/etc/passwd", "https://example.com/a.mp4", "12345"]) {
+test("timeline_project save refuses an asset outside the media folder, a URL or a stock file path, naming the asset", async () => {
+  const dir = mediaWith("clip.mp4");
+  // A path-shaped value still goes through the media rule, a downloaded stock file's path included (R55).
+  const shared = fs.realpathSync(fs.mkdtempSync(path.join(testApp.dataDir, "timeline-shared-")));
+  fs.writeFileSync(path.join(shared, "pexels-123.mp4"), "x");
+  _setScopeForTests(async () => ({ outputDir: dir, sharedDir: shared }));
+  for (const bad of ["/etc/passwd", "https://example.com/a.mp4", path.join(shared, "pexels-123.mp4")]) {
     const { ctx, calls } = ctxWith();
     const result = await byName.timeline_project.handler(ctx, { action: "save", project: videoProject(bad) });
     assert.equal(result.structuredContent.error, "PATH_OUTSIDE_MEDIA", bad);
     assert.match(result.structuredContent.message, /Clip/);
+    assert.match(result.structuredContent.message, /a library id from library_items \(for example pexels_123\)/);
+    assert.doesNotMatch(result.structuredContent.message, /library_items download, then use the path/);
     assert.equal(calls.length, 0);
   }
+});
+
+test("timeline_project save and timeline_render pass a saved library item id through to the route unchanged (R58)", async () => {
+  mediaWith("clip.mp4");
+  const project = videoProject("pexels_123");
+  const saved = ctxWith({ "PUT /api/timeline/projects/tl_1": { ok: true, project } });
+  assert.ok(!(await byName.timeline_project.handler(saved.ctx, { action: "save", project })).isError);
+  assert.deepEqual(saved.calls[0].opts.body, { project });
+  const rendered = ctxWith({ "POST /api/timeline/render": QUEUED });
+  const result = await byName.timeline_render.handler(rendered.ctx, { project });
+  assert.ok(!result.isError, JSON.stringify(result.structuredContent));
+  assert.deepEqual(rendered.calls.find((c) => c.path === "/api/timeline/render").opts.body.project, project);
+  for (const tool of [byName.timeline_project, byName.timeline_render]) {
+    assert.doesNotMatch(tool.description, /library item ids? (are|is) refused|library item ids, and other paths are refused/, tool.name);
+  }
+  assert.match(byName.timeline_project.description, /a library id from library_items \(for example pexels_123\)/);
 });
 
 test("timeline_project save keeps library music refs and confines a proxy path too", async () => {

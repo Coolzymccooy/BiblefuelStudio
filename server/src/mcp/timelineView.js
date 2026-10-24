@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { fail } from "./toolResult.js";
 import { resolveMediaInput } from "./mediaPath.js";
+import { LIBRARY_ID } from "./tools/render.js";
 
 /**
  * Shared pieces of the Timeline tools (tools/timeline.js): the project's shape
@@ -23,7 +24,7 @@ const assetSchema = z.object({
   kind: z.enum(ASSET_KINDS).describe("video, audio, image, caption or effect."),
   source: z.string().max(40).optional().describe("upload, library, imagegen, chatterbox, fish, system..."),
   label: z.string().max(200).optional(),
-  path: z.string().max(1000).optional().describe("A file in your media folder, or a library:/mylib: music ref."),
+  path: z.string().max(1000).optional().describe("A file in your media folder, a library id from library_items (for example pexels_123), or a library:/mylib: music ref."),
   proxyPath: z.string().max(1000).optional(),
   durationSec: z.number().min(0).optional(),
   prompt: z.string().max(5000).optional().describe("A voiceover's words, for a chatterbox or fish asset without a path."),
@@ -73,16 +74,21 @@ export function summaryView(project) {
   };
 }
 
-/** One asset path the agent may use: a music ref as given, else a file confined to the media folder. */
+/**
+ * One asset path the agent may use: a music ref or a saved library item id as given (R58: the route's
+ * scopeTimelineAsset resolves the id in the caller's own library and confines what it names), else a
+ * file confined to the media folder. A library id has no dots, slashes or colons, so it never names a file.
+ */
 async function confinedValue(ctx, value) {
-  if (MUSIC_REF.test(value.trim())) return { path: value.trim() };
+  const trimmed = value.trim();
+  if (MUSIC_REF.test(trimmed) || LIBRARY_ID.test(trimmed)) return { path: trimmed };
   return resolveMediaInput(ctx, value);
 }
 
 function assetRefusal(id, asset, refusal) {
   const { error, message } = refusal.structuredContent;
   const name = asset.label ? `"${asset.label}" (${id})` : id;
-  return fail(error, `Asset ${name}: ${message} URLs and library item ids are not accepted here: bring the file in with media_import_url or library_items download, then use the path it returns.`);
+  return fail(error, `Asset ${name}: ${message} URLs are not accepted here: for stock footage use a library id from library_items (for example pexels_123); bring any other file in with media_import_url and use the path it returns.`);
 }
 
 /**

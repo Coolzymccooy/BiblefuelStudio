@@ -35,7 +35,7 @@ const timelineProject = {
   description:
     "Timeline: a multi-lane editor. A project has assets (by id: kind video, audio, image, caption or effect; a path, or for a chatterbox or fish voiceover a prompt to speak) and tracks (lanes of kind video, broll, voiceover, music, captions or effects), each with clips { id, assetId, startSec, durationSec, text? for captions }. aspect 16:9, 9:16 or 1:1. " +
     "action list: your projects, newest first (counts only). get { id }: one whole project. save { project }: create or replace a project (the whole object, with id and title); the app's Timeline page opens it too. " +
-    "Every asset path must be a file in your media folder (media_import_url, media_list or another tool's output) or a library:/mylib: music ref from music_library; URLs, library item ids and other paths are refused. " +
+    "Every asset path must be a file in your media folder (media_import_url, media_list or another tool's output), a library id from library_items (for example pexels_123) for stock footage, or a library:/mylib: music ref from music_library; URLs and other paths are refused. " +
     "Next: timeline_render. Free: no daily cap or plan quota is spent.",
   inputSchema: {
     action: z.enum(["list", "get", "save"]).describe("list, get or save."),
