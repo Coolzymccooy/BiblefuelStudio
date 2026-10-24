@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { writeJsonAtomic } from "./atomicFile.js";
 
 /**
  * Per-user Chatterbox cloned-voice registry.
@@ -51,7 +52,7 @@ function readSync(dataDir) {
 
 function writeSync(dataDir, record) {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(voicesFilePath(dataDir), JSON.stringify(record, null, 2));
+  writeJsonAtomic(voicesFilePath(dataDir), record);
 }
 
 // Per-process write serializer so add/remove from different requests don't

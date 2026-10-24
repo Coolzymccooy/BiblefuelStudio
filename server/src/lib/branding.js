@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { writeJsonAtomic } from "./atomicFile.js";
 
 /**
  * Per-account branding: a logo drawn in the corner of every video rendered.
@@ -51,7 +52,7 @@ export function writeBranding(dataDir, patch) {
   fs.mkdirSync(dataDir, { recursive: true });
   const { hasLogo, ...current } = readBranding(dataDir);
   const next = clean({ ...current, ...patch });
-  fs.writeFileSync(settingsFile(dataDir), JSON.stringify(next, null, 2));
+  writeJsonAtomic(settingsFile(dataDir), next);
   return { ...next, hasLogo };
 }
 

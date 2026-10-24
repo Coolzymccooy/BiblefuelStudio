@@ -14,6 +14,7 @@ import { spawn } from 'child_process';
 import { downsamplePeaks, peaksCacheKey, PEAK_BUCKETS } from '../lib/audioPeaks.js';
 import { quota } from '../middleware/quota.js';
 import { brandLogoFor } from '../lib/branding.js';
+import { writeFileAtomic } from "../lib/atomicFile.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -316,7 +317,7 @@ router.get('/peaks', async (req, res) => {
     const peaks = await extractPeaks(abs);
     // Cache write failure must not fail the request — the trace still draws.
     try {
-      fs.writeFileSync(cacheFile, JSON.stringify({ peaks }));
+      writeFileAtomic(cacheFile, JSON.stringify({ peaks }));
     } catch { /* read-only volume, or full disk */ }
 
     return res.json({ ok: true, peaks, buckets: peaks.length, cached: false });
