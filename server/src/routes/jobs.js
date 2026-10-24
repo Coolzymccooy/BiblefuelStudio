@@ -26,6 +26,8 @@ import { brandLogoFor, logoOverlay, withLogoVf } from "../lib/branding.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 import { pickScriptType } from "../lib/highPerformerProfile.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
+import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
+import { isRemoteUrl } from "../lib/downloadInput.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { resolveLibraryTrack, defaultTrackRef } from "../lib/musicLibrary.js";
@@ -535,13 +537,39 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
   });
 }
 
+/**
+ * `payload` with every remote audio/music (and, with `background: true`, the
+ * single background) replaced by a local copy. ffmpeg would fetch a URL input
+ * itself with no SSRF check; localiseInput goes through the guard, so a
+ * private or metadata address fails the job here. Values that resolve to a
+ * local file or a library id are left exactly as given.
+ */
+async function localiseJobInputs(payload, { background = false } = {}) {
+  const fields = [["audioPath", "audio"], ["musicPath", "music"]];
+  if (background) fields.push(["backgroundPath", "background"]);
+  let next = payload || {};
+  for (const [field, what] of fields) {
+    const resolved = resolveAssetPath(next[field]);
+    if (!isRemoteUrl(resolved)) continue;
+    let local;
+    try {
+      local = await localiseInput(resolved);
+    } catch (err) {
+      throw new Error(remoteInputFailure(err, what).error);
+    }
+    next = { ...next, [field]: local };
+  }
+  return next;
+}
+
 async function executeJob(job) {
   if (!ensureFfmpegAvailable()) {
     throw new Error("FFmpeg not available on server");
   }
   logMemory(`job:${job.type}:start`);
   if (job.type === "render_waveform") {
-    const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = job.payload || {};
+    const payload = await localiseJobInputs(job.payload, { background: true });
+    const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = payload;
     const resolvedBackground = resolveAssetPath(backgroundPath);
     const resolvedAudio = resolveAssetPath(audioPath);
     const resolvedMusic = resolveAssetPath(musicPath);
@@ -734,6 +762,9 @@ async function renderVideoCore(payload, jobId) {
   if (payload?.autoBackground && noExplicitBg) {
     payload = await applyAutoBackground(payload);
   }
+  // Backgrounds (single and scenes) are localised further down via
+  // ensureLocalPath; voice and music are localised here.
+  payload = await localiseJobInputs(payload);
   const hasWords = Array.isArray(payload?.words) && payload.words.length > 0;
   const hasScenes = Array.isArray(payload?.scenes) && payload.scenes.length > 0;
   if (hasWords || hasScenes) {
