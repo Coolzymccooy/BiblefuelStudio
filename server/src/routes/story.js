@@ -235,7 +235,7 @@ async function transcribeStage(ctx, projectId, mediaPath) {
   });
 }
 
-async function segmentStage(ctx, projectId) {
+async function segmentStage(ctx, projectId, { maxScenes } = {}) {
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
   if (project.scenes?.length) {
@@ -245,7 +245,7 @@ async function segmentStage(ctx, projectId) {
   if (!words.length) throw new Error("no transcript to segment");
   const scenes = await segmentScenes({
     words, style: project.style, cast: project.cast || [],
-    targetSec: project.scene?.targetSceneSec, maxScenes: project.scene?.maxScenes,
+    targetSec: project.scene?.targetSceneSec, maxScenes: maxScenes ?? project.scene?.maxScenes,
   });
   return writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 }
@@ -502,10 +502,13 @@ async function runImagesStage(ctx, projectId, opts = {}) {
   return writeProject(ctx.dataDir, { ...project, scenes, status: allDone ? STORY_STATUS.READY_TO_RENDER : STORY_STATUS.GENERATING_IMAGES });
 }
 
-/** Run the whole pipeline server-side. Awaitable; the route fires it detached. */
-export async function runStoryPipeline(ctx, projectId, mediaPath) {
+/**
+ * Run the whole pipeline server-side. Awaitable; the route fires it detached.
+ * `maxScenes` caps this run's segmentation only (an agent's charged picture count, R44).
+ */
+export async function runStoryPipeline(ctx, projectId, mediaPath, { maxScenes } = {}) {
   await transcribeStage(ctx, projectId, mediaPath);
-  await segmentStage(ctx, projectId);
+  await segmentStage(ctx, projectId, { maxScenes });
   await imagesStage(ctx, projectId);
 }
 
@@ -675,6 +678,16 @@ const CANCEL_PATH = /^\/[^/]+\/(?:animate\/)?cancel$/;
 export function isQuotaFreeStoryRequest(req) {
   return req?.method === "POST" && CANCEL_PATH.test(String(req?.path || ""));
 }
+
+// The most scenes one /process or /resegment run may cut (R44): agents pass the
+// picture count they were charged for. Absent keeps the project's own policy.
+const MAX_SCENES_LIMIT = 60;
+function maxScenesFrom(body) {
+  const raw = body?.maxScenes;
+  if (raw === undefined) return { ok: true, value: undefined };
+  return Number.isInteger(raw) && raw >= 1 && raw <= MAX_SCENES_LIMIT ? { ok: true, value: raw } : { ok: false };
+}
+const BAD_MAX_SCENES = Object.freeze({ ok: false, error: `maxScenes must be a whole number from 1 to ${MAX_SCENES_LIMIT}` });
 
 const router = Router();
 const VIDEO_EXT = new Set([".mp4", ".mov", ".webm", ".m4v"]);
@@ -1135,6 +1148,8 @@ router.post("/:id/cancel", (req, res) => {
 router.post("/:id/process", (req, res) => {
   const existing = readProject(req.ctx.dataDir, req.params.id);
   if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
+  const limit = maxScenesFrom(req.body);
+  if (!limit.ok) return res.status(400).json(BAD_MAX_SCENES);
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
   // The pictures are about to start by themselves (an AI music video's prompts
   // are being written): Resume must not start a second run. It only undoes a
@@ -1165,7 +1180,7 @@ router.post("/:id/process", (req, res) => {
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
   cancelledProjects.delete(id);
-  runStoryPipeline(ctx, id, guard.path).catch((e) => {
+  runStoryPipeline(ctx, id, guard.path, { maxScenes: limit.value }).catch((e) => {
     try {
       const fresh = readProject(ctx.dataDir, id);
       if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
@@ -1181,6 +1196,8 @@ router.post("/:id/process", (req, res) => {
 router.post("/:id/resegment", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  const limit = maxScenesFrom(req.body);
+  if (!limit.ok) return res.status(400).json(BAD_MAX_SCENES);
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
   if (preparingProjects.has(req.params.id)) return res.status(409).json(PREPARING_REFUSAL);
   if (!project.transcript?.words?.length) {
@@ -1209,7 +1226,7 @@ router.post("/:id/resegment", (req, res) => {
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
   cancelledProjects.delete(id);
-  runStoryPipeline(ctx, id, audioPath).catch((e) => {
+  runStoryPipeline(ctx, id, audioPath, { maxScenes: limit.value }).catch((e) => {
     try {
       const fresh = readProject(ctx.dataDir, id);
       if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });

@@ -21,16 +21,21 @@ export const SCENE_ID = z.string().trim().regex(/^[\w-]{1,80}$/, "a scene id fro
 const TARGET_SCENE_SEC = 8;
 const DEFAULT_MAX_SCENES = 60;
 const MIN_MAX_SCENES = 8;
+// The most scenes an agent's run may ask for (the routes' maxScenes limit, R44): the charge never passes it.
+export const SCENE_LIMIT = 60;
 
 function maxScenes(scene) {
   const own = Number(scene?.maxScenes);
-  if (Number.isFinite(own) && own >= 1) return Math.round(own);
-  return Math.max(MIN_MAX_SCENES, Number(process.env.STORY_MAX_SCENES) || DEFAULT_MAX_SCENES);
+  const cap = Number.isFinite(own) && own >= 1
+    ? Math.round(own)
+    : Math.max(MIN_MAX_SCENES, Number(process.env.STORY_MAX_SCENES) || DEFAULT_MAX_SCENES);
+  return Math.min(SCENE_LIMIT, cap);
 }
 
 /**
  * How many scenes (so how many pictures) the segmenter will make for this much speech, as it
- * sizes them. An estimate: the AI split it asks for may land a scene or two either side.
+ * sizes them, at most 60. The tools charge this and send it to the route as maxScenes (R44), so the
+ * segmenter never cuts more scenes than were paid for; it may cut fewer.
  * @param {number} durationMs
  * @param {{ targetSceneSec?: number, maxScenes?: number } | null} [scene] the project's scene policy
  */

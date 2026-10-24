@@ -26,6 +26,10 @@ test("estimateSceneCount follows the project's own scene policy and the server's
   assert.equal(estimateSceneCount(100_000, { maxScenes: 4 }), 4);
   process.env.STORY_MAX_SCENES = "20";
   assert.equal(estimateSceneCount(60 * 60 * 1000), 20);
+  // The routes accept at most 60 as a scene limit, so the charge never passes it either.
+  process.env.STORY_MAX_SCENES = "100";
+  assert.equal(estimateSceneCount(60 * 60 * 1000), 60);
+  assert.equal(estimateSceneCount(60 * 60 * 1000, { maxScenes: 90 }), 60);
 });
 
 test("missingImageCount counts scenes without a finished picture; force counts them all", () => {

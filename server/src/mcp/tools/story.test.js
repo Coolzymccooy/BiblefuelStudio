@@ -73,6 +73,9 @@ test("descriptions name the job kind, the costs and the resegment warning", () =
   assert.match(byName.story_render.description, /every scene needs a picture/i);
   assert.match(byName.story_render.description, /never posts/i);
   assert.match(byName.story_process.description, /images/);
+  for (const name of ["story_process", "story_step"]) {
+    assert.match(byName[name].description, /no more scenes than were charged/i, name);
+  }
 });
 
 // ---- story_project ----
@@ -192,6 +195,7 @@ test("story_process on a project with scenes charges the scenes missing a pictur
   const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": { ok: true, project }, "POST /api/story/p1/process": { ok: true } });
   const result = await byName.story_process.handler(ctx, { id: "p1", mediaPath: path.join(dir, "talk.mp3") });
   assert.deepEqual(routesCalled(calls), ["GET /api/story/p1", "GET /api/billing/usage", "POST /api/story/p1/process"]);
+  // The scenes exist, so nothing is segmented and no scene limit is sent.
   assert.deepEqual(calls[2].opts.body, { mediaPath: path.join(dir, "talk.mp3") });
   assert.deepEqual(chargeCalls, [{ images: 2 }]);
   assert.equal(result.structuredContent.kind, "story");
@@ -202,19 +206,22 @@ test("story_process on a project with scenes charges the scenes missing a pictur
 test("story_process on an imported script estimates from the transcript", async () => {
   const dir = mediaWith("talk.mp3");
   const project = PROJECT({ transcript: { words: [{ text: "a", startMs: 0, endMs: 40_000 }] } });
-  const { ctx, chargeCalls } = ctxWith({ "GET /api/story/p1": { ok: true, project }, "POST /api/story/p1/process": { ok: true } });
+  const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": { ok: true, project }, "POST /api/story/p1/process": { ok: true } });
   await byName.story_process.handler(ctx, { id: "p1", mediaPath: path.join(dir, "talk.mp3") });
   assert.deepEqual(chargeCalls, [{ images: 5 }]);
+  // R44: the charged estimate is the most scenes the segmenter may cut.
+  assert.deepEqual(calls[2].opts.body, { mediaPath: path.join(dir, "talk.mp3"), maxScenes: 5 });
 });
 
 test("story_process on fresh media reads its length to estimate the pictures", async () => {
   const dir = mediaWith("talk.mp3");
   const probed = [];
   _setDurationProbeForTests(async (file) => { probed.push(file); return 160; });
-  const { ctx, chargeCalls } = ctxWith({ "GET /api/story/p1": { ok: true, project: PROJECT({ status: "draft" }) }, "POST /api/story/p1/process": { ok: true } });
+  const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": { ok: true, project: PROJECT({ status: "draft" }) }, "POST /api/story/p1/process": { ok: true } });
   await byName.story_process.handler(ctx, { id: "p1", mediaPath: path.join(dir, "talk.mp3") });
   assert.deepEqual(probed, [path.join(dir, "talk.mp3")]);
   assert.deepEqual(chargeCalls, [{ images: 20 }]);
+  assert.deepEqual(calls[2].opts.body, { mediaPath: path.join(dir, "talk.mp3"), maxScenes: 20 });
 });
 
 test("story_process refuses media whose length cannot be read, charging nothing", async () => {
@@ -283,6 +290,7 @@ test("story_step resegment charges a fresh picture for every new scene", async (
   const result = await byName.story_step.handler(ctx, { id: "p1", step: "resegment" });
   assert.deepEqual(routesCalled(calls), ["GET /api/story/p1", "GET /api/billing/usage", "POST /api/story/p1/resegment"]);
   assert.deepEqual(chargeCalls, [{ images: 3 }]);
+  assert.deepEqual(calls[2].opts.body, { maxScenes: 3 });
   assert.equal(result.structuredContent.phase, "segmenting");
 });
 

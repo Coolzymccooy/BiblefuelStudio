@@ -133,17 +133,22 @@ const storyImportScript = {
 
 // ---- story_process -----------------------------------------------------------
 
-/** How many pictures /process will make: the scenes it has, else the scenes its narration will be cut into. */
+/**
+ * How many pictures /process will make: the scenes it has, else the scenes its narration will be cut
+ * into (then also sent as maxScenes, so the segmenter cuts no more than were charged, R44).
+ */
 async function processPictures(project, mediaPath) {
   if (Array.isArray(project.scenes) && project.scenes.length) return { images: missingImageCount(project) };
   const known = knownDurationMs(project);
-  if (known) return { images: estimateSceneCount(known, project.scene) };
+  if (known) return estimated(estimateSceneCount(known, project.scene));
   const seconds = await probeDurationSec(mediaPath);
   if (!(Number(seconds) > 0)) {
     return { refusal: fail("MEDIA_UNREADABLE", "The length of that media file could not be read. Check it plays, or trim it with media_trim, then try again.") };
   }
-  return { images: estimateSceneCount(seconds * 1000, project.scene) };
+  return estimated(estimateSceneCount(seconds * 1000, project.scene));
 }
+
+const estimated = (images) => ({ images, maxScenes: images > 0 ? images : undefined });
 
 async function processStory(ctx, { id, mediaPath }) {
   const media = await resolveMediaInput(ctx, mediaPath);
@@ -155,7 +160,8 @@ async function processStory(ctx, { id, mediaPath }) {
   if (counted.refusal) return counted.refusal;
   const refused = await chargePictures(ctx, counted.images);
   if (refused) return refused;
-  const response = await ctx.api.call("POST", `${projectPath(id)}/process`, { body: { mediaPath: media.path } });
+  const body = defined({ mediaPath: media.path, maxScenes: counted.maxScenes });
+  const response = await ctx.api.call("POST", `${projectPath(id)}/process`, { body });
   // The pictures were already about to start by themselves: this call started nothing new.
   if (response?.preparing && counted.images > 0) {
     await ctx.refundCap({ images: counted.images });
@@ -170,7 +176,7 @@ const storyProcess = {
   description:
     "Run the whole story pipeline on a recording, in the background: transcribe mediaPath (an audio or video file in your media folder; URLs and other paths are refused), cut it into scenes and make one AI picture per scene. " +
     "Also resumes a project that stopped (pictures that failed are made again). Returns a handle of kind story: call jobs_wait with kind story and the project id. done with phase ready_to_render means every scene has a picture; failed says how many scenes have none (often the daily image quota: retry later with story_step images). " +
-    "Costs daily images for the pictures it will make, charged up front: the scenes still without a picture, or for a new recording about one per 8 seconds of speech, at most 60 (estimated from the file's length). Plus one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up). " +
+    "Costs daily images for the pictures it will make, charged up front: the scenes still without a picture, or for a new recording about one per 8 seconds of speech, at most 60 (estimated from the file's length); a new recording is cut into no more scenes than were charged. Plus one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up). " +
     "Takes a few minutes. Next: story_settings, then story_render.",
   inputSchema: {
     id: STORY_ID.describe("The project id from story_project create."),
@@ -196,7 +202,7 @@ async function resegment(ctx, id) {
   const images = estimateSceneCount(knownDurationMs(project), project.scene);
   const refused = await chargePictures(ctx, images);
   if (refused) return refused;
-  await ctx.api.call("POST", `${projectPath(id)}/resegment`);
+  await ctx.api.call("POST", `${projectPath(id)}/resegment`, { body: { maxScenes: images } });
   return ok({ ...startedHandle(id, "segmenting"), imagesCharged: images });
 }
 
@@ -220,7 +226,7 @@ const storyStep = {
   description:
     "Run one step of a story project. segment: cut the transcript into scenes, each with a picture prompt (waits for the answer, up to about half a minute; free of daily caps). Then edit prompts with story_scene_update if you like. " +
     "images: make the picture of every scene that has none (force: true remakes them all), in the background; returns a handle of kind story for jobs_wait (done with phase ready_to_render when every scene has one). Costs one daily images per picture it makes, charged up front. " +
-    "resegment discards the scenes and EVERY existing picture (they are deleted and cost image quota to make again), cuts the transcript again and makes new pictures; returns a handle of kind story. Costs daily images for every new scene, about one per 8 seconds of narration. " +
+    "resegment discards the scenes and EVERY existing picture (they are deleted and cost image quota to make again), cuts the transcript again and makes new pictures; returns a handle of kind story. Costs daily images for every new scene, about one per 8 seconds of narration, at most 60, charged up front; it cuts no more scenes than were charged. " +
     "images and resegment check the plan's render quota first (QUOTA_EXCEEDED). " + PLAN_QUOTA_NOTE,
   inputSchema: {
     id: STORY_ID.describe("The project id."),
