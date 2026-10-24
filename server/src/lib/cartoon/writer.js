@@ -73,6 +73,7 @@ function buildPrompt({ theme, cast, styleLabel, verseInfo, problems, previous })
     "- Use at least one Scene: change, and give each Scene: a place and a camera note after a comma.",
     "- Each Cast entry has a vivid look (age, skin, hair, clothing colours, one distinctive detail) and a short voice descriptor after Voice:, such as \"bright and eager, a young boy\". A character who never speaks may omit the voice.",
     "- Warm, reverent and suitable for a family audience. Original modern dialogue in everyday language, never a copy of Bible wording.",
+    "- Never name a film studio, brand or trademark anywhere: not in the title, the looks, the voices, the lines or the notes. Describe the look in plain words instead.",
     `- The Style: line must be exactly "Style: ${styleLabel}".`,
     "- Output only the script, with no commentary and no code fence.",
   ];
@@ -135,6 +136,18 @@ function filmProblems(parsed) {
   return problems;
 }
 
+/**
+ * A studio's trademark (spec section 3) never reaches BibleFuel's own text:
+ * the title, looks and voices go into every prompt, the title and the post.
+ * Checked in code, anywhere in the draft, rather than trusted to the prompt.
+ */
+const STUDIO_NAME_RE = /pixar/i;
+const STUDIO_NAME_ALL_RE = /pixar/gi;
+const STUDIO_PROBLEM = "The script names a film studio. Remove every studio or brand name from the title, looks, voices, lines and notes, and describe the look in plain words.";
+
+/** The draft as it may be quoted back to the model: a studio's name is never repeated in a prompt. */
+const withoutStudioName = (draft) => String(draft).replace(STUDIO_NAME_ALL_RE, "[studio name]");
+
 function jesusProblems(parsed, verseText) {
   return unquotedJesusLines(parsed, verseText).map(
     (item) => `Jesus (or the Lord or God) says "${item.text}", which is not quoted exactly from the verse. Remove it or replace it with words copied exactly from the verse text; Jesus and God never get invented words.`,
@@ -156,6 +169,7 @@ async function judgeDraft(reply, { verseInfo, styleLabel, lookup }) {
   if (draft === "") return { problems: ["The reply was empty."], draft };
   const parsed = parseCartoonScript(draft);
   const problems = filmProblems(parsed);
+  if (STUDIO_NAME_RE.test(draft)) problems.push(STUDIO_PROBLEM);
 
   let verse = verseInfo;
   if (!verse) {
@@ -208,8 +222,9 @@ export async function writeCartoonScript(request, { llm = defaultLlmComplete, lo
     }
     const judged = await judgeDraft(reply, { verseInfo, styleLabel, lookup });
     if (judged.problems.length === 0) return { ok: true, markdown: judged.markdown, verseText: judged.verseText };
-    problems = judged.problems;
-    previous = judged.draft;
+    // Reasons can quote the draft's own lines, so both are cleaned before they reach the next prompt.
+    problems = judged.problems.map(withoutStudioName);
+    previous = withoutStudioName(judged.draft);
   }
   return { ...failure("WRITE_FAILED", WRITE_FAILED_MESSAGE), reasons: problems };
 }

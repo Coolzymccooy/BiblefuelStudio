@@ -71,6 +71,36 @@ test("the prompt carries the format example, the rules and the verse text", asyn
   assert.ok(!/pixar/i.test(prompt));
 });
 
+test("the prompt forbids naming any studio or brand", async () => {
+  const llm = llmReplies(LAMB);
+  await writeCartoonScript({ verse: "Luke 15:4" }, { llm, lookup: lookupOk() });
+  assert.match(llm.prompts[0], /never name a film studio, brand or trademark/i);
+});
+
+test("a draft that names the studio anywhere is retried, and the retry prompt never repeats the name", async () => {
+  const named = {
+    title: LAMB.replace("# The Lost Lamb", "# The Lost Lamb, Pixar style"),
+    look: LAMB.replace(/(- Eli: )/, "$1a Pixar-style boy, "),
+    voice: LAMB.replace(/Voice: ([^\n]*)/, "Voice: $1 like a PIXAR hero"),
+    line: LAMB.replace(/Eli: "([^"]*)"/, 'Eli: "$1 Like in Pixar films!"'),
+    note: LAMB.replace(/(Scene: [^\n,]*)/, "$1 in pixar lighting"),
+  };
+  for (const [where, draft] of Object.entries(named)) {
+    assert.match(draft, /pixar/i, `${where} fixture names it`);
+    const llm = llmReplies(draft, LAMB);
+    const result = await writeCartoonScript({ verse: "Luke 15:4" }, { llm, lookup: lookupOk() });
+    assert.equal(result.ok, true, where);
+    assert.equal(llm.prompts.length, 2, `${where} was retried`);
+    assert.match(llm.prompts[1], /names a film studio/, where);
+    assert.ok(!/pixar/i.test(llm.prompts[1]), `${where}: the retry prompt repeats the name`);
+    assert.ok(!/pixar/i.test(result.markdown), where);
+  }
+  const stubborn = llmReplies(named.title, named.title);
+  const failed = await writeCartoonScript({ verse: "Luke 15:4" }, { llm: stubborn, lookup: lookupOk() });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, "WRITE_FAILED");
+});
+
 test("rewrites Verse: to the looked-up reference and Style: to the chosen label", async () => {
   const result = await writeCartoonScript(
     { verse: "luke 15 v4", style: "clay" },
