@@ -16,6 +16,7 @@ const ENV_NAMES = [
   "MCP_DAILY_IMAGES",
   "MCP_DAILY_TTS",
   "MCP_DAILY_PUBLISHES",
+  "MCP_DAILY_IMPORTS",
 ];
 
 function clearEnv() {
@@ -45,7 +46,11 @@ test("ceilings read env with the spec defaults", () => {
     images: 30,
     tts: 30,
     publishes: 3,
+    imports: 20,
   });
+  process.env.MCP_DAILY_IMPORTS = "7";
+  assert.equal(caps.ceilings().imports, 7);
+  delete process.env.MCP_DAILY_IMPORTS;
   process.env.MCP_DAILY_RENDERS = "4";
   process.env.MCP_DAILY_AI_VIDEO_USD = "0.5";
   assert.equal(caps.ceilings().renders, 4);
@@ -153,4 +158,169 @@ test("capsSummary reports used, limit and remaining; unknown bucket throws", asy
   assert.deepEqual(summary.tts, { used: 2, limit: 5, remaining: 3 });
   assert.deepEqual(summary.renders, { used: 0, limit: 10, remaining: 10 });
   await assert.rejects(() => caps.charge("k_1", key, "nope"), /caps: unknown bucket nope/);
+});
+
+test("two keys of one user together cannot exceed the ceiling (scope user)", async () => {
+  process.env.MCP_DAILY_RENDERS = "3";
+  const keyA = { id: "k_a", userId: "u_1", caps: {} };
+  const keyB = { id: "k_b", userId: "u_1", caps: {} };
+  assert.equal((await caps.charge("k_a", keyA, "renders")).ok, true);
+  assert.equal((await caps.charge("k_a", keyA, "renders")).ok, true);
+  assert.equal((await caps.charge("k_b", keyB, "renders")).ok, true);
+  const before = fs.readFileSync(usageFile, "utf-8");
+  const refused = await caps.charge("k_b", keyB, "renders");
+  assert.deepEqual(refused, {
+    ok: false,
+    scope: "user",
+    used: 3,
+    limit: 3,
+    resetsAt: "2026-01-02T00:00:00.000Z",
+  });
+  assert.equal(fs.readFileSync(usageFile, "utf-8"), before, "a refusal writes neither counter");
+  assert.equal(caps.readKeyUsage("k_b").counts.renders, 1);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 3);
+});
+
+test("another user's keys do not share the account counter", async () => {
+  process.env.MCP_DAILY_RENDERS = "1";
+  assert.equal((await caps.charge("k_a", { id: "k_a", userId: "u_1", caps: {} }, "renders")).ok, true);
+  assert.equal((await caps.charge("k_z", { id: "k_z", userId: "u_2", caps: {} }, "renders")).ok, true);
+});
+
+test("a lower per-key cap still refuses first with scope key", async () => {
+  process.env.MCP_DAILY_RENDERS = "2";
+  const low = { id: "k_low", userId: "u_1", caps: { renders: 1 } };
+  const other = { id: "k_other", userId: "u_1", caps: {} };
+  assert.equal((await caps.charge("k_low", low, "renders")).ok, true);
+  const keyRefusal = await caps.charge("k_low", low, "renders");
+  assert.equal(keyRefusal.ok, false);
+  assert.equal(keyRefusal.scope, "key");
+  assert.equal(keyRefusal.limit, 1);
+
+  // Both counters full: the key's own cap is still the one reported.
+  assert.equal((await caps.charge("k_other", other, "renders")).ok, true);
+  const both = await caps.charge("k_low", low, "renders");
+  assert.equal(both.scope, "key");
+  assert.equal(both.used, 1);
+  assert.equal(both.limit, 1);
+});
+
+test("a key-scope refusal reports scope key on a plain key cap", async () => {
+  const key = keyWith({ tts: 1 });
+  await caps.charge("k_1", key, "tts");
+  assert.equal((await caps.charge("k_1", key, "tts")).scope, "key");
+});
+
+test("the account counter rolls over at UTC midnight", async () => {
+  process.env.MCP_DAILY_PUBLISHES = "1";
+  const keyA = { id: "k_a", userId: "u_1", caps: {} };
+  const keyB = { id: "k_b", userId: "u_1", caps: {} };
+  assert.equal((await caps.charge("k_a", keyA, "publishes")).ok, true);
+  assert.equal((await caps.charge("k_b", keyB, "publishes")).scope, "user");
+  caps._setClock(() => "2026-01-02");
+  assert.equal(caps.readUserUsage("u_1").counts.publishes, 0);
+  assert.equal((await caps.charge("k_b", keyB, "publishes")).ok, true);
+  assert.equal(caps.readUserUsage("u_1").counts.publishes, 1);
+});
+
+test("accountCapsSummary reports the account's use against the ceilings", async () => {
+  process.env.MCP_DAILY_TTS = "4";
+  await caps.charge("k_a", { id: "k_a", userId: "u_1", caps: { tts: 1 } }, "tts");
+  await caps.charge("k_b", { id: "k_b", userId: "u_1", caps: {} }, "tts", 2);
+  const summary = caps.accountCapsSummary("u_1");
+  assert.deepEqual(summary.tts, { used: 3, limit: 4, remaining: 1 });
+  assert.deepEqual(summary.renders, { used: 0, limit: 10, remaining: 10 });
+  assert.deepEqual(caps.capsSummary("k_b", { id: "k_b", userId: "u_1", caps: {} }).tts, { used: 2, limit: 4, remaining: 2 });
+});
+
+test("chargeAll charges every bucket at once", async () => {
+  const key = keyWith({});
+  const result = await caps.chargeAll("k_1", key, { renders: 1, publishes: 1 });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.used, { renders: 1, publishes: 1 });
+  assert.deepEqual(result.limits, { renders: 10, publishes: 3 });
+  assert.equal(caps.readKeyUsage("k_1").counts.renders, 1);
+  assert.equal(caps.readKeyUsage("k_1").counts.publishes, 1);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 1);
+  assert.equal(caps.readUserUsage("u_1").counts.publishes, 1);
+});
+
+test("chargeAll refused on its second bucket (key scope) writes neither bucket", async () => {
+  const key = keyWith({ publishes: 1 });
+  await caps.charge("k_1", key, "publishes");
+  const before = fs.readFileSync(usageFile, "utf-8");
+  const refused = await caps.chargeAll("k_1", key, { renders: 1, publishes: 1 });
+  assert.deepEqual(refused, {
+    ok: false,
+    bucket: "publishes",
+    scope: "key",
+    used: 1,
+    limit: 1,
+    resetsAt: "2026-01-02T00:00:00.000Z",
+  });
+  assert.equal(fs.readFileSync(usageFile, "utf-8"), before);
+  assert.equal(caps.readKeyUsage("k_1").counts.renders, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 0);
+});
+
+test("chargeAll refused on its second bucket (user scope) writes neither bucket", async () => {
+  process.env.MCP_DAILY_PUBLISHES = "1";
+  await caps.charge("k_a", { id: "k_a", userId: "u_1", caps: {} }, "publishes");
+  const keyB = { id: "k_b", userId: "u_1", caps: {} };
+  const before = fs.readFileSync(usageFile, "utf-8");
+  const refused = await caps.chargeAll("k_b", keyB, { renders: 1, publishes: 1 });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.bucket, "publishes");
+  assert.equal(refused.scope, "user");
+  assert.equal(fs.readFileSync(usageFile, "utf-8"), before);
+  assert.equal(caps.readKeyUsage("k_b").counts.renders, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 0);
+});
+
+test("chargeAll validates every bucket and amount before charging", async () => {
+  const key = keyWith({});
+  await assert.rejects(() => caps.chargeAll("k_1", key, { renders: 1, nope: 1 }), /caps: unknown bucket nope/);
+  await assert.rejects(() => caps.chargeAll("k_1", key, { renders: 1, images: 0 }), /caps: invalid amount 0/);
+  await assert.rejects(() => caps.chargeAll("k_1", key, {}), /caps: nothing to charge/);
+  assert.equal(caps.readKeyUsage("k_1").counts.renders, 0);
+});
+
+test("refundAll gives back every bucket on the key and the account counters", async () => {
+  const key = keyWith({});
+  await caps.chargeAll("k_1", key, { renders: 2, publishes: 1 });
+  await caps.refundAll("k_1", key, { renders: 1, publishes: 1 });
+  assert.equal(caps.readKeyUsage("k_1").counts.renders, 1);
+  assert.equal(caps.readKeyUsage("k_1").counts.publishes, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 1);
+  assert.equal(caps.readUserUsage("u_1").counts.publishes, 0);
+});
+
+test("refundAll never takes a counter below zero", async () => {
+  const key = keyWith({});
+  await caps.chargeAll("k_1", key, { aiVideoUsd: 0.3 });
+  await caps.refundAll("k_1", key, { aiVideoUsd: 1, renders: 2 });
+  assert.equal(caps.readKeyUsage("k_1").counts.aiVideoUsd, 0);
+  assert.equal(caps.readKeyUsage("k_1").counts.renders, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.aiVideoUsd, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 0);
+});
+
+test("refundAll runs on the same queue as chargeAll (concurrent charges and refunds net out)", async () => {
+  const key = keyWith({});
+  const calls = [];
+  for (let i = 0; i < 5; i += 1) {
+    calls.push(caps.chargeAll("k_1", key, { renders: 1 }));
+    calls.push(caps.refundAll("k_1", key, { renders: 1 }));
+  }
+  await Promise.all(calls);
+  assert.equal(caps.readKeyUsage("k_1").counts.renders, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 0);
+});
+
+test("refundAll validates buckets and amounts; an empty refund is a no-op", async () => {
+  const key = keyWith({});
+  await assert.rejects(() => caps.refundAll("k_1", key, { nope: 1 }), /caps: unknown bucket nope/);
+  await assert.rejects(() => caps.refundAll("k_1", key, { renders: -1 }), /caps: invalid amount -1/);
+  await caps.refundAll("k_1", key, {});
+  assert.equal(fs.existsSync(usageFile), false);
 });

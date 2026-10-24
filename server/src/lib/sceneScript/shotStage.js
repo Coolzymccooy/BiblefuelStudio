@@ -283,6 +283,15 @@ async function runShots(ctx, id, ids, runOpts) {
   await Promise.allSettled(Array.from({ length: Math.min(SHOT_CONCURRENCY, ids.length) }, worker));
 }
 
+/** Records the end of a shots run (best-effort: the project may have been deleted meanwhile). */
+function recordRunEnd(ctx, id, cancelled) {
+  try {
+    updateProject(ctx.dataDir, id, (p) => ({ ...p, shotsRun: { ...(p.shotsRun || {}), finishedAt: Date.now(), cancelled } }));
+  } catch (e) {
+    console.warn(`[scene-script] shots ${id}: could not record the run's end: ${e?.message || e}`);
+  }
+}
+
 /**
  * Queue the chosen shots (all shots with no clip when only is absent) and
  * order them in the background. Every paid clip is held on the ledger first,
@@ -310,6 +319,8 @@ export function startShots(ctx, id, { only, ledgerDir, deps } = {}) {
   try {
     written = updateProject(ctx.dataDir, id, (p) => ({
       ...p,
+      // When this run started and ended, and whether it was stopped: the agent job handle reads it.
+      shotsRun: { startedAt: Date.now(), finishedAt: null, cancelled: false },
       shots: p.shots.map((s) => (refetch.has(s.id)
         ? { ...s, clip: { ...s.clip, status: "generating", error: null } }
         : picked.has(s.id)
@@ -324,12 +335,16 @@ export function startShots(ctx, id, { only, ledgerDir, deps } = {}) {
   cancels.delete(id);
   runShots(ctx, id, [...picked], { ledgerDir, deps: { ...defaultDeps, ...deps } })
     .catch((e) => console.warn(`[scene-script] shots ${id} failed: ${e?.message || e}`))
-    .finally(() => endRun(id, ledgerDir));
+    .finally(() => endRun(ctx, id, ledgerDir));
   return written;
 }
 
-/** A run is over: release what is left of its hold, then let the script be ordered or edited again. */
-function endRun(id, ledgerDir) {
+/**
+ * A run is over: record its end for the agent's job handle, release what is
+ * left of its hold, then let the script be ordered or edited again.
+ */
+function endRun(ctx, id, ledgerDir) {
+  recordRunEnd(ctx, id, cancels.has(id));
   try {
     releaseSpend(ledgerDir, shotsHoldKey(id));
   } catch (e) {

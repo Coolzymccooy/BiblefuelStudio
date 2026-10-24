@@ -30,6 +30,9 @@ export function _setClock(fn) {
 
 const dayOf = (date) => date.toISOString().slice(0, 10);
 
+/** Today as the activity log sees it ("YYYY-MM-DD", UTC; follows the test clock). */
+export const activityToday = () => dayOf(clock());
+
 export function redactInput(input, depth = 0) {
   if (typeof input === "string") {
     return input.length > MAX_TEXT ? `${input.slice(0, MAX_TEXT)}…` : input;
@@ -111,32 +114,94 @@ function parseLines(name) {
   return entries;
 }
 
-export function readActivity({ userId, keyId, from, to, limit = DEFAULT_LIMIT } = {}) {
+const clampLimit = (limit) =>
+  Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), MAX_LIMIT) : DEFAULT_LIMIT;
+
+const matches = ({ userId, keyId, tool, ok }) => (e) =>
+  (userId === undefined || e.userId === userId) &&
+  (keyId === undefined || e.keyId === keyId) &&
+  (tool === undefined || e.tool === tool) &&
+  (ok === undefined || e.ok === ok);
+
+/** Every entry in the day range that matches the filters, newest first. */
+function matchingEntries({ from, to, ...filters }) {
   const toDay = to || dayOf(clock());
   const fromDay = from || dayOf(new Date(new Date(`${toDay}T00:00:00Z`).getTime() - 30 * DAY_MS));
-  const max = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), MAX_LIMIT) : DEFAULT_LIMIT;
-
   return listDayFiles()
     .filter(({ day }) => day >= fromDay && day <= toDay)
     .flatMap(({ name }) => parseLines(name))
-    .filter((e) => (userId === undefined || e.userId === userId) && (keyId === undefined || e.keyId === keyId))
-    .sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0))
-    .slice(0, max);
+    .filter(matches(filters))
+    .sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+}
+
+/**
+ * @param {{ userId?: string, keyId?: string, tool?: string, ok?: boolean, from?: string, to?: string, limit?: number }} filters
+ *   from/to are inclusive UTC days ("YYYY-MM-DD"); to defaults to today, from to 30 days before it.
+ */
+export function readActivity({ limit = DEFAULT_LIMIT, ...filters } = {}) {
+  return matchingEntries(filters).slice(0, clampLimit(limit));
+}
+
+function tally(counts, name, entry) {
+  const prev = counts[name] || { calls: 0, errors: 0 };
+  return { ...counts, [name]: { calls: prev.calls + 1, errors: prev.errors + (entry.ok ? 0 : 1) } };
+}
+
+const UNKNOWN_USER = "unknown";
+
+/** userId -> email, from the first row of each user that carries one (null when none does). */
+function emailsOf(entries) {
+  return entries.reduce((emails, e) => {
+    if (!e.userId) return emails;
+    if (emails[e.userId]) return emails;
+    return { ...emails, [e.userId]: e.email || null };
+  }, {});
+}
+
+/**
+ * Calls and errors per tool and per user id (key events carry no email, so the
+ * id keeps one user's tool calls and key events in one row), plus `emails`: userId -> email or null.
+ */
+export function summariseActivity(entries) {
+  const counts = entries.reduce(
+    (acc, e) => ({
+      byTool: tally(acc.byTool, e.tool, e),
+      byUser: tally(acc.byUser, e.userId || UNKNOWN_USER, e),
+    }),
+    { byTool: {}, byUser: {} },
+  );
+  return { ...counts, emails: emailsOf(entries) };
+}
+
+/**
+ * The admin view: the newest `limit` rows, plus counts and the total over
+ * every matching entry (not just the rows returned). `all` is every match, for CSV export.
+ */
+export function queryActivity({ limit = DEFAULT_LIMIT, ...filters } = {}) {
+  const all = matchingEntries(filters);
+  return { rows: all.slice(0, clampLimit(limit)), counts: summariseActivity(all), total: all.length, all };
+}
+
+// A spreadsheet runs a cell that starts with one of these as a formula (CSV injection, #107).
+const FORMULA_START = /^[=+\-@\t\r]/;
+
+function csvSafe(value) {
+  return typeof value === "string" && FORMULA_START.test(value) ? `'${value}` : value;
 }
 
 export function activityCsv(entries) {
   const rows = entries.map((e) => ({
     ts: e.ts,
-    keyId: e.keyId,
-    keyName: e.keyName,
-    userId: e.userId,
-    email: e.email,
-    tool: e.tool,
+    keyId: csvSafe(e.keyId),
+    keyName: csvSafe(e.keyName),
+    userId: csvSafe(e.userId),
+    email: csvSafe(e.email),
+    tool: csvSafe(e.tool),
     ok: e.ok,
-    error: e.error,
+    error: csvSafe(e.error),
     ms: e.ms,
-    jobKind: e.job?.kind ?? "",
-    jobId: e.job?.id ?? "",
+    jobKind: csvSafe(e.job?.kind ?? ""),
+    jobId: csvSafe(e.job?.id ?? ""),
   }));
   return stringify(rows, { header: true, columns: CSV_COLUMNS, cast: { boolean: String } });
 }

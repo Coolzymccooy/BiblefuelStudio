@@ -138,4 +138,22 @@ describe("scene script render stage", () => {
     assert.equal(r.render.status, "error");
     assert.match(r.render.error, /restart/);
   });
+
+  // From master (a6a54d02): the agent's scene handle reads when a run started and ended.
+  test("a failed render keeps when it started and records when it ended", async () => {
+    const p = voicedProject();
+    const marked = startRender(ctx, p.id, { deps: deps({ render: async () => { throw new Error("no renderer"); } }) });
+    const startedAt = marked.render.startedAt;
+    await until(() => isRendering(p.id));
+    const render = readProject(ctx.dataDir, p.id).render;
+    assert.equal(render.status, "error");
+    assert.equal(render.startedAt, startedAt);
+    assert.ok(render.finishedAt >= startedAt);
+  });
+
+  test("a render a restart interrupted keeps when it started", () => {
+    const recovered = recoverInterruptedRender({ id: "gone", render: { status: "rendering", startedAt: 123, progress: 40 } });
+    assert.equal(recovered.render.status, "error");
+    assert.equal(recovered.render.startedAt, 123);
+  });
 });

@@ -3,12 +3,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { catalogue } from "./registry.js";
 
 /**
  * Keeps the agent tools honest: every router the app mounts under /api must be
  * reachable by some MCP tool (its `routes`), or be deliberately excluded.
- * Slice 1 maps only part of the app, so PENDING lists the rest and may only
- * ever shrink.
+ * Slices 1-4 mapped every creation router; only cartoon (shipped ahead of its
+ * tools) is pending. A new router needs a tool, a reason to exclude it, or a
+ * PENDING entry before it ships. The
+ * whole catalogue stays at 75 tools or fewer (fold rather than add).
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,13 +24,12 @@ const EXCLUDED = [
   "stems-worker", "firebase", "abi", "postiz", "issues", "mcp",
 ];
 
-// Creation routers no tool covers yet. This shrinks as slices 2-4 land: when a
-// tool maps a router, delete it from here (the second assertion enforces it).
-const PENDING = [
-  "ambient", "audio", "audio-adv", "bible", "branding", "cartoon", "gumroad", "imagegen",
-  "library", "longform", "lyric-video", "moments", "pexels", "pixabay", "queue",
-  "scene-script", "scripts", "series", "tts", "transcripts", "visual-library",
-];
+// Creation routers no tool covers yet. Cartoon mode ships its router before its
+// agent tools; when a tool maps it, delete it from here (an assertion enforces it).
+const PENDING = ["cartoon"];
+
+// The most tools the catalogue may hold (tool-authoring.md).
+const MAX_TOOLS = 75;
 
 /** Every `app.use("/api/<name>"` mount in index.js, with either quote style. */
 function mountedPrefixes() {
@@ -71,6 +73,12 @@ test("PENDING lists only routers that are still unmapped", async () => {
   assert.deepEqual(stale, [], `remove from PENDING (mapped, excluded or no longer mounted): ${stale.join(", ")}`);
 });
 
+test(`the catalogue holds at most ${MAX_TOOLS} tools`, () => {
+  const count = catalogue().length;
+  assert.ok(count > 0, "the catalogue loaded no tools");
+  assert.ok(count <= MAX_TOOLS, `the catalogue has ${count} tools, more than ${MAX_TOOLS}: fold rather than add`);
+});
+
 test("EXCLUDED names are all mounted routers", () => {
   const mounted = mountedPrefixes();
   const unknown = EXCLUDED.filter((name) => !mounted.includes(name));
@@ -83,5 +91,18 @@ test("the account routers agents must never act on carry refuseAgentCalls", () =
     const mount = lines.find((l) => l.startsWith(`app.use("/api/${name}"`) || l.startsWith(`app.use('/api/${name}'`));
     assert.ok(mount, `/api/${name} is mounted`);
     assert.match(mount, /refuseAgentCalls/, `/api/${name} mount carries refuseAgentCalls`);
+  }
+});
+
+test("jobs_cancel declares the router of every kind it can cancel, and render_cancel is folded into it (#121)", async () => {
+  const { CANCEL_ROUTES } = await import("./jobCancel.js");
+  const { NORMALISERS } = await import("./jobs.js");
+  const names = catalogue().map((def) => def.name);
+  assert.equal(names.includes("render_cancel"), false, "render_cancel is folded into jobs_cancel");
+  const jobsCancel = catalogue().find((def) => def.name === "jobs_cancel");
+  assert.ok(jobsCancel, "jobs_cancel is in the catalogue");
+  for (const kind of Object.keys(CANCEL_ROUTES)) {
+    const router = /^\/api\/[a-z0-9-]+/.exec(NORMALISERS[kind].route("x1", "p1"))[0];
+    assert.ok(jobsCancel.routes.includes(router), `jobs_cancel routes lack ${router} (kind ${kind})`);
   }
 });

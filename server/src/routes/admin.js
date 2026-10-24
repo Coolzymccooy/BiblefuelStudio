@@ -5,6 +5,7 @@ import { readUsage, resetUsage } from "../lib/usageStore.js";
 import { readUserPlan } from "../lib/userPlanStore.js";
 import { isSuperAdmin } from "../lib/userPlan.js";
 import { getIssuesStore } from "../lib/issuesStore.js";
+import agentActivityRouter from "./adminAgentActivity.js";
 
 /**
  * Factory: returns the admin router.
@@ -226,6 +227,9 @@ router.post("/issues/:id/reopen", async (req, res) => {
     res.status(code).json({ ok: false, error: msg });
   }
 });
+
+// GET /api/admin/agent-activity: every agent call across all users.
+router.use("/agent-activity", agentActivityRouter);
 
   return router;
 }

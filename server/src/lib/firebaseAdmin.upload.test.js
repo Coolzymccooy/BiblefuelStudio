@@ -6,7 +6,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildUserUploadPath, isOwnUploadPath } from "./firebaseAdmin.js";
+import { buildUserUploadPath, buildUserOutputPrefix, isOwnUploadPath } from "./firebaseAdmin.js";
 
 describe("buildUserUploadPath", () => {
   test("namespaces under uploads/<userId>/ and keeps a sanitized filename", () => {
@@ -58,5 +58,22 @@ describe("isOwnUploadPath", () => {
     assert.equal(isOwnUploadPath("", uid), false);
     assert.equal(isOwnUploadPath("uploads/u_123/x.mp3", ""), false);
     assert.equal(isOwnUploadPath(`uploads/u_123/${"a".repeat(600)}.mp3`, uid), false);
+  });
+});
+
+describe("buildUserOutputPrefix", () => {
+  test("puts a user's published outputs under their own uploads/<userId>/ folder", () => {
+    assert.equal(buildUserOutputPrefix("u_abc-123"), "uploads/u_abc-123/outputs");
+  });
+
+  test("a slashed/dotted userId cannot leave its folder", () => {
+    const prefix = buildUserOutputPrefix("../them/x");
+    assert.ok(!prefix.includes(".."), prefix);
+    assert.equal(prefix.split("/").length, 3, prefix);
+    assert.ok(isOwnUploadPath(`${prefix}/file.mp4`, "../them/x"));
+  });
+
+  test("throws without a user id", () => {
+    assert.throws(() => buildUserOutputPrefix(""));
   });
 });

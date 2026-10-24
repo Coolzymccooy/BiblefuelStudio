@@ -3,8 +3,9 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn } from "child_process";
-import { resolveOutputAlias } from "../lib/mediaThumb.js";
 import { addMp3HeaderInPlace } from "../lib/mp3Header.js";
+import { confineUserPath, isSharedTtsFile, sendUserPathError } from "../lib/userPathScope.js";
+import { localInput } from "../lib/videoInputGuard.js";
 
 const router = Router();
 
@@ -37,9 +38,13 @@ const router = Router();
  */
 router.post("/process", async (req, res) => {
   try {
-    const inputPath = resolveOutputAlias(String(req.body?.inputPath || "").trim());
-    if (!inputPath || !fs.existsSync(inputPath)) {
-      return res.status(400).json({ ok: false, error: "inputPath missing or not found" });
+    // The caller's own file, or a shared voice file a TTS provider wrote (#112).
+    let inputPath;
+    try {
+      inputPath = confineUserPath(req.body?.inputPath, req.ctx, { allowShared: isSharedTtsFile });
+    } catch (err) {
+      if (sendUserPathError(res, err)) return;
+      throw err;
     }
 
     const preset = String(req.body?.preset || "clean_voice");
@@ -187,7 +192,7 @@ router.post("/process", async (req, res) => {
     if (lufs != null) {
       const measureArgs = ["-y"];
       if (cfg.trim?.startSec != null) measureArgs.push("-ss", String(Number(cfg.trim.startSec) || 0));
-      measureArgs.push("-i", inputPath);
+      measureArgs.push(...localInput(inputPath));
       if (cfg.trim?.durationSec != null) measureArgs.push("-t", String(Number(cfg.trim.durationSec) || 0));
 
       const measureChain = [
@@ -268,7 +273,7 @@ router.post("/process", async (req, res) => {
 
     const args = ["-y"];
     if (cfg.trim?.startSec != null) args.push("-ss", String(Number(cfg.trim.startSec) || 0));
-    args.push("-i", inputPath);
+    args.push(...localInput(inputPath));
     if (cfg.trim?.durationSec != null) args.push("-t", String(Number(cfg.trim.durationSec) || 0));
     if (finalFilters.length > 0) args.push("-af", finalFilters.join(","));
     args.push("-vn", "-c:a", "libmp3lame", "-b:a", "192k", outFile);

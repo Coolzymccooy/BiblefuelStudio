@@ -5,6 +5,10 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { OUTPUT_DIR } from '../paths.js';
+import { localiseInput } from '../remoteInputs.js';
+import { urlGuardMessage } from '../safeDownload.js';
+import { isUrlLike } from '../inputUrl.js';
+import { localInput } from '../videoInputGuard.js';
 import { get as getVoiceProvider } from '../voice/index.js';
 import {
   escapeDrawText, escapeFontPath, fontFileFor, resolveTypographyPreset,
@@ -68,22 +72,53 @@ export function resolveTimelineAssetPath(rawPath, opts = {}) {
   const value = String(rawPath).replace(/\\/g, '/');
 
   if (/^https?:\/\//i.test(value)) return value;
+  // Any other URL form (`tcp:`, `http:/host` ...) is not a file here.
+  if (isUrlLike(value)) return null;
+
+  const shared = sharedGlobalFile(outputDir, opts.allowShared, opts.localised);
 
   let resolved;
-  if (value.startsWith('/outputs/')) {
-    resolved = path.resolve(outputDir, value.slice('/outputs/'.length));
-    return isSubPath(resolved, outputDir) ? resolved : null;
-  }
-  if (value.startsWith('outputs/')) {
-    resolved = path.resolve(outputDir, value.slice('outputs/'.length));
+  const alias = value.startsWith('/outputs/') ? '/outputs/' : value.startsWith('outputs/') ? 'outputs/' : null;
+  if (alias) {
+    const rel = value.slice(alias.length);
+    resolved = path.resolve(outputDir, rel);
+    // Like confineUserPath: the caller's own file first, then a shared one in the global folder.
+    const global = path.resolve(OUTPUT_DIR, rel);
+    if (!fs.existsSync(resolved) && shared(global)) return global;
     return isSubPath(resolved, outputDir) ? resolved : null;
   }
   if (path.isAbsolute(rawPath)) {
     resolved = path.resolve(rawPath);
-    return (isSubPath(resolved, serverRoot) || isSubPath(resolved, outputDir)) ? resolved : null;
+    if (isSubPath(resolved, outputDir)) return resolved;
+    if (shared.applies(resolved)) return shared(resolved) ? resolved : null;
+    return isSubPath(resolved, serverRoot) ? resolved : null;
   }
   resolved = path.resolve(serverRoot, value);
+  if (shared.applies(resolved) && !shared(resolved)) return null;
   return isSubPath(resolved, serverRoot) ? resolved : null;
+}
+
+/**
+ * Which files in the global OUTPUT_DIR a render may read (R48). The owner's
+ * outputs ARE the global folder, so nothing extra applies. Anyone else's render
+ * is rooted in their own outputs and may read a global file only when
+ * `allowShared` accepts it: the shared voice, stock and own generated-image
+ * files #112 lets the route through, and the files this render's own localise
+ * step downloaded for its https clips (the remote cache sits in the global
+ * folder). Any other global file is refused, even when the global folder sits
+ * inside the server root, and even when it is another file in that cache.
+ *
+ * @param {string} outputDir the render's own output folder
+ * @param {((absPath: string) => boolean)|undefined} allowShared
+ * @param {Set<string>|undefined} localised resolved paths this render downloaded
+ */
+function sharedGlobalFile(outputDir, allowShared, localised) {
+  const globalDir = path.resolve(OUTPUT_DIR);
+  const applies = (abs) => outputDir !== globalDir && isSubPath(abs, globalDir);
+  const own = (abs) => Boolean(localised?.has(path.resolve(abs)));
+  const accept = (abs) => applies(abs) && (own(abs) || (typeof allowShared === 'function' && Boolean(allowShared(abs))));
+  accept.applies = applies;
+  return accept;
 }
 
 // Media lives on the ASSET; clips reference it by assetId. These used to read
@@ -317,7 +352,7 @@ export function buildProofRenderCommand(plan, opts = {}) {
   const height = plan.aspect === '9:16' ? 1280 : plan.aspect === '1:1' ? 720 : 720;
   const duration = Math.max(1, Math.min(300, Number(plan.durationSec || main.durationSec || 8)));
 
-  const args = ['-y', '-hide_banner', '-loglevel', 'warning', '-i', mainPath];
+  const args = ['-y', '-hide_banner', '-loglevel', 'warning', ...localInput(mainPath)];
   for (const clip of broll) {
     // A still image decodes to ONE frame at t=0 and carries no timeline, so
     // `enable='between(t,...)'` on the overlay never matched and the image
@@ -331,11 +366,11 @@ export function buildProofRenderCommand(plan, opts = {}) {
       // never appeared. The enable expression alone decides when it shows.
       args.push('-loop', '1', '-t', String(duration));
     }
-    args.push('-i', clip.resolvedPath);
+    args.push(...localInput(clip.resolvedPath));
   }
-  for (const clip of voiceovers) args.push('-i', clip.resolvedPath);
+  for (const clip of voiceovers) args.push(...localInput(clip.resolvedPath));
   // Loop the bed so a short track still covers a long recap.
-  if (music) args.push('-stream_loop', '-1', '-i', music.resolvedPath);
+  if (music) args.push('-stream_loop', '-1', ...localInput(music.resolvedPath));
 
   const videoParts = [];
   videoParts.push(
@@ -587,10 +622,50 @@ export function runFfmpeg(args, opts = {}) {
   });
 }
 
+/**
+ * A copy of `plan` in which every clip whose media is a remote URL (on the
+ * clip or on its asset) carries a local copy as `clip.path`, which
+ * clipMediaPath prefers. ffmpeg would otherwise fetch the URL itself with no
+ * SSRF check. Only media a clip actually references is downloaded.
+ * @param {object} plan
+ * @param {(value: string) => Promise<string>} [localise]
+ * @param {Set<string>} [produced] receives the resolved path of every local copy made
+ */
+export async function localiseRemoteMedia(plan, localise = localiseInput, produced = null) {
+  const tracks = [];
+  for (const track of plan?.tracks || []) {
+    const clips = [];
+    for (const clip of track.clips || []) {
+      const media = clipMediaPath(clip, plan);
+      if (!isUrlLike(media)) { clips.push(clip); continue; }
+      const local = await localise(media);
+      if (produced && local && !isUrlLike(local)) produced.add(path.resolve(local));
+      clips.push({ ...clip, path: local });
+    }
+    tracks.push({ ...track, clips });
+  }
+  return { ...plan, tracks };
+}
+
+/** The localised plan, and the set of files that step downloaded for it (R48). */
+async function localisePlanOrFail(plan, localise) {
+  try {
+    const localised = new Set();
+    return { ok: true, plan: await localiseRemoteMedia(plan, localise, localised), localised };
+  } catch (err) {
+    return { ok: false, error: urlGuardMessage(err) || `Could not fetch timeline media: ${err?.message || err}` };
+  }
+}
+
 export async function renderTimelineProof(plan, opts = {}) {
-  const prepared = await prepareVoiceoverAssets(plan, opts);
-  if (!prepared.ok) return prepared;
-  let command = buildProofRenderCommand(prepared.plan, opts);
+  const voiced = await prepareVoiceoverAssets(plan, opts);
+  if (!voiced.ok) return voiced;
+  const localised = await localisePlanOrFail(voiced.plan, opts.localise);
+  if (!localised.ok) return { ...localised, generatedVoiceovers: voiced.generatedVoiceovers };
+  const prepared = { ...voiced, plan: localised.plan };
+  // Only this render's own downloads are let in from the shared remote cache.
+  const buildOpts = { ...opts, localised: localised.localised };
+  let command = buildProofRenderCommand(prepared.plan, buildOpts);
   if (!command.ok) return command;
   fs.mkdirSync(path.dirname(command.outputPath), { recursive: true });
   try {
@@ -599,7 +674,7 @@ export async function renderTimelineProof(plan, opts = {}) {
     console.warn(`[CAPTIONS] studio fallback: ${err?.message || err}`);
     removeSideFiles(command.sideFiles);
     command = buildProofRenderCommand(prepared.plan, {
-      ...opts,
+      ...buildOpts,
       typographyPreset: resolveLook(opts.typographyPreset).fallbackPreset,
     });
     if (!command.ok) return command;

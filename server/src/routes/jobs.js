@@ -7,6 +7,8 @@ import { readLibrary } from "../lib/library.js";
 import { consumeQuota } from "../middleware/quota.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
 import { isOwnerCtx } from "../lib/paths.js";
+import { assertLibraryItemInScope, assertPayloadPathsInScope, resolveOutputAliasForCtx, scopeMediaInput } from "../lib/mediaInputScope.js";
+import { sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 import { tiktokAccountFor } from "../lib/social/zernioConnect.js";
 import { generateScripts } from "../lib/generateScripts.js";
 import { synthesizeTts } from "../lib/ttsOrchestrator.js";
@@ -26,6 +28,9 @@ import { brandLogoFor, logoOverlay, withLogoVf } from "../lib/branding.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 import { pickScriptType } from "../lib/highPerformerProfile.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
+import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
+import { isRemoteUrl } from "../lib/downloadInput.js";
+import { LOCAL_PROTOCOL_GUARD, localInput } from "../lib/videoInputGuard.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { resolveLibraryTrack, defaultTrackRef } from "../lib/musicLibrary.js";
@@ -40,7 +45,6 @@ let ffmpegOk = false;
 const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
 const JOBS_RETENTION = Math.max(50, Number(process.env.JOBS_RETENTION || 500));
 const JOB_EXEC_TIMEOUT_SEC = Math.max(30, Number(process.env.JOB_EXEC_TIMEOUT_SEC || 600));
-const STALE_RUNNING_JOB_MINUTES = Math.max(1, Number(process.env.STALE_RUNNING_JOB_MINUTES || 45));
 
 function ensureFfmpegAvailable() {
   if (ffmpegChecked) return ffmpegOk;
@@ -63,7 +67,7 @@ function probeAudioMaxVolume(filePath) {
     // We do silence the banner/stats lines to keep stderr small.
     const proc = spawn(ffmpeg, [
       "-hide_banner", "-nostats",
-      "-i", filePath,
+      ...localInput(filePath),
       "-af", "volumedetect",
       "-vn", "-f", "null", "-",
     ]);
@@ -86,6 +90,7 @@ function probeAudioDuration(filePath) {
       "-v", "error",
       "-show_entries", "format=duration",
       "-of", "default=noprint_wrappers=1:nokey=1",
+      ...LOCAL_PROTOCOL_GUARD,
       filePath,
     ]);
     let out = "";
@@ -102,6 +107,21 @@ function probeAudioDuration(filePath) {
   });
 }
 
+/**
+ * The render's result with `durationSec`, the finished video's real length (#121): a voice
+ * track sets the length, not the durationSec asked for. A failed probe leaves it out.
+ */
+async function withVideoLength(result) {
+  if (!result?.outFile) return result;
+  try {
+    const seconds = await probeAudioDuration(result.outFile);
+    return { ...result, durationSec: Math.round(seconds * 100) / 100 };
+  } catch (err) {
+    console.warn(`[RENDER] could not read the finished video's length: ${err?.message || err}`);
+    return result;
+  }
+}
+
 function clampDuration(value) {
   const n = Number(value || 20);
   if (Number.isNaN(n)) return 20;
@@ -109,7 +129,7 @@ function clampDuration(value) {
 }
 
 function isFileTooLarge(p) {
-  if (!p || p.startsWith('http')) return false;
+  if (!p || isRemoteUrl(p)) return false;
   try {
     const stat = fs.statSync(p);
     return stat.size > MAX_INPUT_MB * 1024 * 1024;
@@ -139,6 +159,10 @@ export function _setJobCtxForTest(ctx) { currentJobCtx = ctx; }
 export function _resetJobCtxForTest() { currentJobCtx = null; }
 // Test-only: run a render the way the worker does, without the queue.
 export function _executeJobForTest(job) { return executeJob(job); }
+// What the worker runs for a job; tests swap in a fake renderer to drive the completion path.
+let executeJobImpl = (job) => executeJob(job);
+/** Test seam: the worker runs `fn(job)` instead of the real renderer. Pass null to restore. */
+export function _setExecuteJobForTests(fn) { executeJobImpl = typeof fn === "function" ? fn : (job) => executeJob(job); }
 export function _renderVideoCoreForTest(payload, jobId) { return renderVideoCore(payload, jobId); }
 
 // Monotonic counter backing the script-type rotation. Persisted per-tenant so
@@ -324,6 +348,8 @@ function updateJob(id, patch) {
   store = loadJobs(); // Reload to ensure freshness
   const j = store.jobs.find(x => x.id === id);
   if (!j) return null;
+  // A cancelled job stays cancelled (#121): the worker's late writes for it (progress, done, failed) are dropped.
+  if (j.status === "cancelled") return j;
   Object.assign(j, patch);
   saveJobs(store);
   return j;
@@ -347,6 +373,57 @@ function safeUpdateJob(id, patch) {
  * tenant's library and either misses the user's own item or matches a
  * different tenant's item that happens to share an id.
  */
+/**
+ * The job now running: its ctx and the local copies it downloaded through the
+ * SSRF guard (localiseJobInputs). Those copies sit in the shared remote cache,
+ * outside every account's folder, and are resolved again later in the same
+ * run. They count as the server's own only for that run's ctx object: a
+ * request handler (or another job) builds a fresh ctx, so it never matches.
+ * Set when a job starts, cleared when the worker finishes it.
+ */
+let currentJobRun = null;
+
+const JOB_CANCELLED = "Job cancelled";
+
+/**
+ * Stops the job this process is running, when it is `jobId` (#121): its ffmpeg is killed and no
+ * further ffmpeg starts for it, so the render fails at once (the job already reads cancelled).
+ */
+function stopRunningJob(jobId) {
+  const run = currentJobRun;
+  if (!run || run.jobId !== jobId) return;
+  run.cancelled = true;
+  try { run.ffmpeg?.kill("SIGTERM"); } catch {}
+}
+
+/** Did the running job, under this very ctx, download `file` itself? */
+function isOwnJobDownload(file) {
+  return Boolean(currentJobRun && currentJobRun.ctx === currentJobCtx && currentJobRun.made.has(path.resolve(file)));
+}
+
+/** A non-owner's local input, held to their scope (#112); a refusal fails the job. */
+function confineJobInput(value) {
+  try {
+    return scopeMediaInput(value, currentJobCtx);
+  } catch (err) {
+    if (err instanceof UserPathError) throw new Error(`${err.code}: ${err.message}`);
+    throw err;
+  }
+}
+
+const PLAIN_LIBRARY_ID = /^[A-Za-z0-9_-]{1,200}$/;
+
+/**
+ * The library items a job may pick by itself (auto backgrounds, campaign
+ * scenes). For a non-owner only items with a plain id (#112): an id shaped
+ * like a path would be resolved as that path. The owner keeps every item.
+ */
+function pickableLibraryItems(items) {
+  const list = Array.isArray(items) ? items : [];
+  if (!currentJobCtx || isOwnerCtx(currentJobCtx)) return list;
+  return list.filter((item) => PLAIN_LIBRARY_ID.test(String(item?.id ?? "")));
+}
+
 export function resolveAssetPath(pathOrId, dataDir) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
@@ -365,27 +442,59 @@ export function resolveAssetPath(pathOrId, dataDir) {
   // global DATA_DIR searches the wrong tenant's library).
   const saved = resolveTenantTrack(dataDir || currentDataDir(), normalized);
   if (saved) return saved;
-  const direct = resolveOutputAlias(normalized);
-  if (String(direct).startsWith("http")) return direct;
-  if (fs.existsSync(direct)) return direct;
+  // An unresolved library ref is a missing track, not a URL: answer null so
+  // callers report "not found" instead of a scheme refusal.
+  if (/^(library|mylib):/i.test(normalized)) return null;
+  // The `/outputs/` alias follows the job's own ctx (#112): a non-owner's
+  // maps into their own folder (or a shared voice file / generated image in
+  // the global one), the owner's to the global folder as before. Request
+  // paths are checked against the scope by assertPayloadPathsInScope at
+  // enqueue, retry and run time; here a non-owner's bare name never resolves
+  // against the server's working folder.
+  const unconfined = !currentJobCtx || isOwnerCtx(currentJobCtx);
+  const usable = (p) => Boolean(p) && (unconfined || path.isAbsolute(p)) && fs.existsSync(p);
+  const direct = resolveOutputAliasForCtx(normalized, currentJobCtx);
+  if (isRemoteUrl(direct)) return direct;
+  if (usable(direct)) {
+    // A path a non-owner names (a payload field or a picked id that looks
+    // like one) is theirs or shared, or refused (#112). A copy this job just
+    // downloaded through the SSRF guard is the server's own, not a request.
+    if (unconfined || isOwnJobDownload(direct)) return direct;
+    return confineJobInput(direct);
+  }
 
   // Try to find in library
   const lib = readLibrary(dataDir || currentDataDir());
   const item = lib.items.find(x => String(x.id) === normalized);
   if (item) {
+    // A saved item's local links must be the caller's own (#112). Ids are
+    // also picked at RUN time (auto backgrounds, campaign scenes), past the
+    // payload check, so this is where they are confined.
+    // The item's OWN links are checked, whatever its id looks like: an id
+    // shaped like a path must not stand in for them.
+    if (!unconfined) {
+      try {
+        assertLibraryItemInScope(item, currentJobCtx);
+      } catch (err) {
+        if (err instanceof UserPathError) throw new Error(`${err.code}: ${err.message}`);
+        throw err;
+      }
+    }
     if (Array.isArray(item.files) && item.files.length > 0) {
       const sorted = item.files.slice().sort((a, b) => (b.width || 0) - (a.width || 0));
       const hd = sorted.find(f => f.quality === 'hd') || sorted[0];
       if (hd?.link) return hd.link;
     }
-    const localUrl = resolveOutputAlias(item.url);
-    if (localUrl && !String(localUrl).startsWith("http") && fs.existsSync(localUrl)) return localUrl;
-    const preview = resolveOutputAlias(item.previewUrl);
+    const localUrl = resolveOutputAliasForCtx(item.url, currentJobCtx);
+    if (localUrl && !String(localUrl).startsWith("http") && usable(localUrl)) return localUrl;
+    const preview = resolveOutputAliasForCtx(item.previewUrl, currentJobCtx);
     if (preview && String(preview).startsWith("http")) return preview;
-    if (preview && fs.existsSync(preview)) return preview;
-    if (localUrl) return localUrl;
-    if (preview) return preview;
+    if (usable(preview)) return preview;
+    if (isRemoteUrl(localUrl)) return localUrl;
+    if (unconfined && localUrl) return localUrl;
+    if (unconfined && preview) return preview;
   }
+  if (!unconfined) return null;
 
   return direct; // Return as is (might be external URL)
 }
@@ -423,6 +532,8 @@ function wrapTextLines(lines, maxChars, maxLines) {
 }
 
 let running = false;
+// The id of the job this process's worker is running now, or null.
+let activeJobId = null;
 const lastProgressByJob = new Map();
 const volatileProgressByJob = new Map();
 
@@ -472,8 +583,12 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
   // so the progress parser (matching `time=HH:MM:SS.xx`) can read the
   // running encoder stats — so we don't touch -loglevel.
   const fullArgs = args.includes("-hide_banner") ? args : ["-hide_banner", ...args];
+  // The job's cancel kills this ffmpeg (stopRunningJob), and a cancelled job starts no more.
+  const run = currentJobRun;
+  if (run?.cancelled) return Promise.reject(new Error(JOB_CANCELLED));
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpeg, fullArgs);
+    if (run) run.ffmpeg = proc;
     let stderr = "";
     let settled = false;
     let timedOut = false;
@@ -527,6 +642,7 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
     });
 
     proc.on("close", (code) => {
+      if (run?.ffmpeg === proc) run.ffmpeg = null;
       if (timedOut) {
         return done(new Error(`ffmpeg timed out after ${JOB_EXEC_TIMEOUT_SEC}s\n${summarizeFfmpegError(stderr)}`));
       }
@@ -536,13 +652,57 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
   });
 }
 
+/**
+ * `payload` with every remote audio/music (and, with `background: true`, the
+ * single background) replaced by a local copy. ffmpeg would fetch a URL input
+ * itself with no SSRF check; localiseInput goes through the guard, so a
+ * private or metadata address fails the job here. Values that resolve to a
+ * local file or a library id are left exactly as given.
+ */
+async function localiseJobInputs(payload, { background = false } = {}) {
+  const fields = [["audioPath", "audio"], ["musicPath", "music"]];
+  if (background) fields.push(["backgroundPath", "background"]);
+  let next = payload || {};
+  for (const [field, what] of fields) {
+    const resolved = resolveAssetPath(next[field]);
+    if (!isRemoteUrl(resolved)) continue;
+    let local;
+    try {
+      local = await localiseInput(resolved);
+    } catch (err) {
+      throw new Error(remoteInputFailure(err, what).error);
+    }
+    currentJobRun?.made.add(path.resolve(local));
+    next = { ...next, [field]: local };
+  }
+  return next;
+}
+
+/**
+ * #112: every path the payload names must be in the job's scope (its own
+ * folder, shared voice files, its generated images). Checked at enqueue and
+ * retry, and again here when the job runs, so a payload stored before the
+ * check existed cannot read another tenant's file.
+ */
+function assertJobPathsInScope(payload, ctx) {
+  try {
+    assertPayloadPathsInScope(payload, ctx, { ignoreMissing: true });
+  } catch (err) {
+    if (err instanceof UserPathError) throw new Error(`${err.code}: ${err.message}`);
+    throw err;
+  }
+}
+
 async function executeJob(job) {
+  currentJobRun = { ctx: currentJobCtx, made: new Set(), jobId: job?.id };
+  assertJobPathsInScope(job?.payload, currentJobCtx);
   if (!ensureFfmpegAvailable()) {
     throw new Error("FFmpeg not available on server");
   }
   logMemory(`job:${job.type}:start`);
   if (job.type === "render_waveform") {
-    const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = job.payload || {};
+    const payload = await localiseJobInputs(job.payload, { background: true });
+    const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = payload;
     const resolvedBackground = resolveAssetPath(backgroundPath);
     const resolvedAudio = resolveAssetPath(audioPath);
     const resolvedMusic = resolveAssetPath(musicPath);
@@ -622,11 +782,11 @@ async function executeJob(job) {
 
     const args = ["-y"];
     if (resolvedBackground) {
-      args.push("-stream_loop", "-1", "-i", resolvedBackground, "-i", resolvedAudio);
+      args.push("-stream_loop", "-1", ...localInput(resolvedBackground), ...localInput(resolvedAudio));
     } else {
-      args.push("-i", resolvedAudio);
+      args.push(...localInput(resolvedAudio));
     }
-    if (resolvedMusic) args.push("-i", resolvedMusic);
+    if (resolvedMusic) args.push(...localInput(resolvedMusic));
     const t = clampDuration(durationSec || 20);
     const preset = process.env.FFMPEG_PRESET || "fast";
     const hwaccel = process.env.FFMPEG_HWACCEL; // e.g., 'nvenc' or 'qsv'
@@ -674,7 +834,7 @@ async function executeJob(job) {
   }
 
   if (job.type === "render_video") {
-    return await renderVideoCore(job.payload || {}, job.id);
+    return withVideoLength(await renderVideoCore(job.payload || {}, job.id));
   }
 
   if (job.type === "campaign_auto_post") {
@@ -692,7 +852,7 @@ async function executeJob(job) {
 // when nothing can be sourced. Pure selection logic lives in lib/autoBackground.
 async function applyAutoBackground(payload) {
   const lib = readLibrary(currentDataDir());
-  const pool = Array.isArray(lib?.items) ? lib.items : [];
+  const pool = pickableLibraryItems(lib?.items);
   const lines = Array.isArray(payload?.lines) ? payload.lines.filter(Boolean) : [];
   const total = clampDuration(payload?.durationSec || 20);
   const aspect = String(payload?.aspect || "portrait");
@@ -735,6 +895,9 @@ async function renderVideoCore(payload, jobId) {
   if (payload?.autoBackground && noExplicitBg) {
     payload = await applyAutoBackground(payload);
   }
+  // Backgrounds (single and scenes) are localised further down via
+  // ensureLocalPath; voice and music are localised here.
+  payload = await localiseJobInputs(payload);
   const hasWords = Array.isArray(payload?.words) && payload.words.length > 0;
   const hasScenes = Array.isArray(payload?.scenes) && payload.scenes.length > 0;
   if (hasWords || hasScenes) {
@@ -784,7 +947,7 @@ async function renderVideoCore(payload, jobId) {
   // Cache remote bg locally — see ensureLocalPath rationale (Pexels CDN
   // resets connections under `-stream_loop -1`, which the legacy single-bg
   // ffmpeg invocation also uses below).
-  if (/^https?:\/\//i.test(resolvedBackground)) {
+  if (isRemoteUrl(resolvedBackground)) {
     try {
       resolvedBackground = await ensureLocalPath(resolvedBackground);
     } catch (err) {
@@ -833,9 +996,9 @@ async function renderVideoCore(payload, jobId) {
     : buildLineDrawtext({ lines: safeLines, w, h, preset: typographyPreset, duration: t });
   if (!filters) throw new Error("lines[] required");
 
-  const args = ["-y", "-stream_loop", "-1", "-i", resolvedBackground];
-  if (resolvedAudio) args.push("-i", resolvedAudio);
-  if (resolvedMusic) args.push("-i", resolvedMusic);
+  const args = ["-y", "-stream_loop", "-1", ...localInput(resolvedBackground)];
+  if (resolvedAudio) args.push(...localInput(resolvedAudio));
+  if (resolvedMusic) args.push(...localInput(resolvedMusic));
 
   const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
   const preset = process.env.FFMPEG_PRESET || "fast";
@@ -1060,7 +1223,7 @@ async function renderAdvancedVideo(payload, jobId) {
   // -stream_loop -1 where every wraparound re-fetches the file. Local copies
   // are bulletproof; subsequent renders re-use the cache for free.
   for (const s of resolvedScenes) {
-    if (/^https?:\/\//i.test(s.backgroundPath)) {
+    if (isRemoteUrl(s.backgroundPath)) {
       try {
         s.backgroundPath = await ensureLocalPath(s.backgroundPath);
       } catch (err) {
@@ -1165,36 +1328,29 @@ async function renderAdvancedVideo(payload, jobId) {
 
   const sceneCount = resolvedScenes.length;
   const args = ["-y"];
-  // Remote URLs (Pexels CDN, generated artwork hosts) drop intermittently —
-  // the default ffmpeg HTTP demuxer just dies with WSAECONNRESET (-10054 on
-  // Windows). Push reconnect flags BEFORE each remote `-i` so ffmpeg
-  // re-establishes the connection and resumes at the last byte offset.
-  // `-reconnect_streamed 1` is needed for non-seekable streams; the delay
-  // cap prevents hammering when the source is genuinely down.
-  const httpReconnect = (p) => (String(p || "").startsWith("http")
-    ? ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
-    : []);
+  // Every input is a local file by now (remote ones were localised above, and
+  // voice/music in renderVideoCore), so ffmpeg is held to local files: the
+  // old http reconnect flags are gone with the URLs they served.
   for (const s of resolvedScenes) {
-    args.push(...httpReconnect(s.backgroundPath));
     // `-loop 1` is image-only (ffmpeg loops a still demuxer); `-stream_loop -1`
     // is the video equivalent. Mixing them up errors out (`-loop` on a video
     // ignores; `-stream_loop` on an image errors). Sniff via the `kind`
     // populated above.
     if (s.kind === "image") {
-      args.push("-loop", "1", "-i", s.backgroundPath);
+      args.push("-loop", "1", ...localInput(s.backgroundPath));
     } else {
-      args.push("-stream_loop", "-1", "-i", s.backgroundPath);
+      args.push("-stream_loop", "-1", ...localInput(s.backgroundPath));
     }
   }
   let audioInputIdx = null;
   let musicInputIdx = null;
   if (resolvedAudio) {
     audioInputIdx = sceneCount + 0;
-    args.push(...httpReconnect(resolvedAudio), "-i", resolvedAudio);
+    args.push(...localInput(resolvedAudio));
   }
   if (resolvedMusic) {
     musicInputIdx = (resolvedAudio ? sceneCount + 1 : sceneCount);
-    args.push(...httpReconnect(resolvedMusic), "-i", resolvedMusic);
+    args.push(...localInput(resolvedMusic));
   }
 
   const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
@@ -1401,7 +1557,7 @@ async function runCampaignAutoPost(payload, jobId) {
   // 2. Library check — we'll pick backgrounds per beat after TTS so each
   // scene matches its own text mood.
   const lib = readLibrary(currentDataDir());
-  const pool = Array.isArray(lib?.items) ? lib.items : [];
+  const pool = pickableLibraryItems(lib?.items);
   if (pool.length === 0) throw new Error("campaign: library is empty — add at least one background before running auto-post");
   safeUpdateJob(jobId, { progress: 18 });
 
@@ -1762,30 +1918,45 @@ export function validatePayloadForEnqueue(type, payload) {
   return { ok: false, error: `unsupported job type: ${type}` };
 }
 
-function recoverStaleRunningJobs() {
-  const now = Date.now();
-  const staleAfterMs = STALE_RUNNING_JOB_MINUTES * 60 * 1000;
+export const RESTART_INTERRUPTED_ERROR = "Interrupted by a server restart. Retry it.";
+// Statuses where nothing is running: waiting for the worker, or finished.
+const NOT_IN_FLIGHT = new Set(["queued", "done", "failed", "cancelled"]);
+
+/**
+ * Restart recovery (#118). Every job left running (or in any status between
+ * queued and finished) that this process is not running is marked failed and
+ * `interrupted`, whatever its age, so a retry is allowed at once.
+ *
+ * This is safe without a heartbeat because the server runs as ONE process
+ * (`node index.js`, one worker loop): no other live process can own a job in
+ * this store, so a running job this process did not start was stopped by a
+ * restart or deploy. If the server ever runs several processes against one
+ * store, this needs a per-job heartbeat instead.
+ *
+ * Queued jobs are left queued: the worker runs them as before.
+ * The store is one file for every user, so every user's jobs are covered.
+ */
+function recoverInterruptedJobs() {
   store = loadJobs();
   let changed = false;
 
   for (const job of store.jobs) {
-    if (job?.status !== "running") continue;
-    const refIso = job.startedAt || job.createdAt;
-    const refTs = new Date(refIso || 0).getTime();
-    if (!Number.isFinite(refTs)) continue;
-    if (now - refTs < staleAfterMs) continue;
+    if (!job || NOT_IN_FLIGHT.has(job.status)) continue;
+    if (job.id === activeJobId) continue;
 
-    const lastPct = Number.isFinite(job.progress) ? job.progress : 0;
     job.status = "failed";
+    job.interrupted = true;
     job.finishedAt = new Date().toISOString();
-    job.progress = lastPct;
-    job.error = `Recovered stale running job after ${STALE_RUNNING_JOB_MINUTES}m (worker restart or timeout).`;
+    job.progress = Number.isFinite(job.progress) ? job.progress : 0;
+    job.error = RESTART_INTERRUPTED_ERROR;
     changed = true;
-    console.warn(`[JOBS] Recovered stale running job ${job.id}`);
+    console.warn(`[JOBS] Marked job ${job.id} failed: interrupted by a server restart`);
   }
 
   if (changed) saveJobs(store);
 }
+
+export function _recoverInterruptedJobsForTest() { recoverInterruptedJobs(); }
 
 function publicVideoUrlFromOutFile(outFile) {
   if (!outFile) return "";
@@ -1811,6 +1982,8 @@ function buildAutoPublishCaption(job) {
 export async function maybeAutoPublish(job, result) {
   try {
     if (job?.suppressAutoPublish === true) return;
+    // A render cancelled while it was finishing is not posted (#121).
+    if (loadJobs().jobs.find((j) => j.id === job?.id)?.status === "cancelled") return;
     if (!isPostizConfigured()) return;
     const outFile = result?.outFile || result?.file;
     if (!outFile) return;
@@ -1849,11 +2022,12 @@ async function workerTick() {
   const next = store.jobs.find(j => j.status === "queued");
   if (!next) return;
   running = true;
+  activeJobId = next.id;
   volatileProgressByJob.set(next.id, 0);
   safeUpdateJob(next.id, { status: "running", startedAt: new Date().toISOString(), progress: 0 });
   currentJobCtx = next.ctx || null;
   try {
-    const result = await executeJob(next);
+    const result = await executeJobImpl(next);
     volatileProgressByJob.set(next.id, 100);
     safeUpdateJob(next.id, { status: "done", progress: 100, finishedAt: new Date().toISOString(), result });
     if (next.type === "render_video" || next.type === "render_waveform") {
@@ -1872,7 +2046,9 @@ async function workerTick() {
     lastProgressByJob.delete(next.id);
     volatileProgressByJob.delete(next.id);
     running = false;
+    activeJobId = null;
     currentJobCtx = null;
+    currentJobRun = null;
   }
 }
 
@@ -1884,7 +2060,7 @@ function withVolatileProgress(job) {
 }
 
 // poll worker every 1s
-recoverStaleRunningJobs();
+recoverInterruptedJobs();
 const _t = setInterval(workerTick, 1000);
 _t.unref();
 
@@ -1917,6 +2093,9 @@ router.get("/:id", (req, res) => {
   res.json({ ok: true, job: withVolatileProgress(j) });
 });
 
+// Job types that render, so enqueue and retry each spend one unit of the plan's render quota.
+const RETRY_COUNTED_TYPES = new Set(["render_video", "render_waveform", "campaign_auto_post"]);
+
 router.post("/enqueue", (req, res) => {
   const type = String(req.body?.type || "").trim();
   const payload = req.body?.payload || {};
@@ -1926,9 +2105,22 @@ router.post("/enqueue", (req, res) => {
   const prevCtx = currentJobCtx;
   currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) };
   let validation;
-  try { validation = validatePayloadForEnqueue(type, payload); }
-  finally { currentJobCtx = prevCtx; }
+  try {
+    // Paths first (#112): 403 for one outside the caller's scope.
+    assertPayloadPathsInScope(payload, currentJobCtx, { ignoreMissing: true });
+    validation = validatePayloadForEnqueue(type, payload);
+  } catch (err) {
+    if (sendUserPathError(res, err)) return;
+    throw err;
+  } finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
+
+  // A queued render spends the plan's render quota exactly as a retry does
+  // (R34); without this, the queue was an unmetered way to render.
+  if (RETRY_COUNTED_TYPES.has(type)) {
+    const spent = consumeQuota(req.ctx, "render");
+    if (!spent.ok) return res.status(spent.status).json(spent.body);
+  }
 
   const id = `job_${uuid()}`;
   const job = {
@@ -1939,7 +2131,11 @@ router.post("/enqueue", (req, res) => {
     // when no per-user webhook is configured).
     ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) },
     status: "queued",
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    // `{ "autoPublish": false }` next to type and payload keeps this render
+    // from posting through Postiz when it finishes (agents without publish
+    // consent), the same switch the retry route takes.
+    ...(req.body?.autoPublish === false ? { suppressAutoPublish: true } : {}),
   };
   store = loadJobs();
   store.jobs.push(job);
@@ -1961,8 +2157,6 @@ router.post("/enqueue", (req, res) => {
  * Ownership: only the job's owner (or super-admin) can retry. Anything
  * else returns 404 to avoid leaking job existence across tenants.
  */
-const RETRY_COUNTED_TYPES = new Set(["render_video", "render_waveform", "campaign_auto_post"]);
-
 router.post("/:id/retry", (req, res) => {
   store = loadJobs();
   const original = store.jobs.find((j) => j.id === req.params.id);
@@ -1982,8 +2176,14 @@ router.post("/:id/retry", (req, res) => {
   const prevCtx = currentJobCtx;
   currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) };
   let validation;
-  try { validation = validatePayloadForEnqueue(type, payload); }
-  finally { currentJobCtx = prevCtx; }
+  try {
+    // Paths first (#112): 403 for one outside the caller's scope.
+    assertPayloadPathsInScope(payload, currentJobCtx, { ignoreMissing: true });
+    validation = validatePayloadForEnqueue(type, payload);
+  } catch (err) {
+    if (sendUserPathError(res, err)) return;
+    throw err;
+  } finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
 
   // A retry renders again, so it spends the plan's render quota; without this
@@ -2017,6 +2217,28 @@ router.post("/:id/retry", (req, res) => {
   res.json({ ok: true, job });
 });
 
+/**
+ * Cancel a queued or running job (#121), for its owner only (anyone else gets the same 404 a
+ * missing job gets). A queued job is never started; a running one has its ffmpeg killed. Either
+ * way it reads `cancelled` at once and stays so. A job that has ended answers 409 NOTHING_RUNNING.
+ * A post that a finishing campaign_auto_post has already handed to its destination still goes out.
+ */
+router.post("/:id/cancel", (req, res) => {
+  store = loadJobs();
+  const job = store.jobs.find((j) => j.id === req.params.id);
+  if (!job || !isJobVisibleTo(job, req.ctx)) return res.status(404).json({ ok: false, error: "Not found" });
+  if (job.status !== "queued" && job.status !== "running") {
+    return res.status(409).json({ ok: false, error: "NOTHING_RUNNING", hint: `Job is already ${job.status}; nothing to cancel.` });
+  }
+  const cancelled = safeUpdateJob(job.id, { status: "cancelled", finishedAt: new Date().toISOString(), error: JOB_CANCELLED });
+  if (!cancelled) return res.status(500).json({ ok: false, error: "The cancel could not be saved. Try again." });
+  stopRunningJob(job.id);
+  res.json({ ok: true, job: cancelled });
+});
+
+/** Test seam: true while the worker is running a job. */
+export function _workerBusyForTests() { return running; }
+
 // Pure constructor for a campaign_auto_post job row. Extracted so the
 // ownership/isolation contract is unit-testable without touching the jobs
 // store: a job MUST carry the caller's `ownerId` and per-user `ctx`
@@ -2039,6 +2261,31 @@ export function buildCampaignJob(id, payload, ctx) {
   };
 }
 
+/**
+ * validatePayloadForEnqueue("campaign_auto_post", payload) under the caller's scope (their Library).
+ * Throws first when a payload path is outside the caller's scope (#112).
+ */
+function validateCampaignFor(payload, ctx) {
+  const normalizedCtx = ctx
+    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin), isOwner: isOwnerCtx(ctx) }
+    : null;
+  const prevCtx = currentJobCtx;
+  currentJobCtx = normalizedCtx;
+  try {
+    assertJobPathsInScope(payload, normalizedCtx);
+    return validatePayloadForEnqueue("campaign_auto_post", payload || {});
+  } finally { currentJobCtx = prevCtx; }
+}
+
+/**
+ * Why enqueueCampaignAutoPost would refuse every campaign for this caller (an empty Library), or null.
+ * Lets a caller that enqueues several (a series) refuse before it spends anything.
+ */
+export function campaignPreconditionError(ctx) {
+  const validation = validateCampaignFor({}, ctx);
+  return validation.ok ? null : validation.error;
+}
+
 // Programmatic enqueue helper for in-process callers (e.g. cron-driven
 // schedules in social.js). Skips HTTP/auth, performs the same validation.
 export async function enqueueCampaignAutoPost(payload, ctx) {
@@ -2046,14 +2293,7 @@ export async function enqueueCampaignAutoPost(payload, ctx) {
   //   { dataDir, outputDir, userId, isSuperAdmin }
   // Callers that don't pass ctx (legacy cron in social.js pre-refactor) get
   // the global super-admin paths, matching pre-multi-tenant behaviour.
-  const normalizedCtx = ctx
-    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin), isOwner: isOwnerCtx(ctx) }
-    : null;
-  const prevCtx = currentJobCtx;
-  currentJobCtx = normalizedCtx;
-  let validation;
-  try { validation = validatePayloadForEnqueue("campaign_auto_post", payload || {}); }
-  finally { currentJobCtx = prevCtx; }
+  const validation = validateCampaignFor(payload, ctx);
   if (!validation.ok) throw new Error(validation.error);
   const job = buildCampaignJob(`job_${uuid()}`, payload, ctx);
   store = loadJobs();

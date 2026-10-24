@@ -6,7 +6,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { Readable } from "stream";
-import socialRouter, { _setFetchImpl, _resetFetchImpl, _resetPublishJobs } from "./social.js";
+import socialRouter, { _setFetchImpl, _resetFetchImpl, _setLookupImpl, _resetLookupImpl, _resetPublishJobs } from "./social.js";
 import { _setGoogleImpl, _resetGoogleImpl } from "../lib/social/youtubeUpload.js";
 import { writeSocialStore } from "../lib/socialStore.js";
 import { createProject, readProject, writeProject } from "../lib/ambient/projectStore.js";
@@ -230,25 +230,35 @@ describe("POST /api/social/youtube/publish", () => {
 });
 
 describe("a video fetched for upload", () => {
-  afterEach(() => { _resetGoogleImpl(); _resetFetchImpl(); _resetPublishJobs(); });
+  afterEach(() => { _resetGoogleImpl(); _resetFetchImpl(); _resetLookupImpl(); _resetPublishJobs(); });
 
   test("a download that breaks half way leaves no partial file behind", async () => {
     const fake = gatedGoogle();
     _setGoogleImpl(fake.google);
     fake.release();
     const { a, outputDir } = app();
-    _setFetchImpl(async () => ({
-      ok: true,
-      body: new Readable({
-        read() {
-          this.push(Buffer.from("some bytes"));
-          this.destroy(new Error("simulated ECONNRESET"));
-        },
-      }),
-    }));
+    // The download is SSRF-vetted: resolve the name to a public address so the
+    // stubbed fetch is actually reached.
+    _setLookupImpl(async () => ({ address: "93.184.216.34", family: 4 }));
+    let fetched = 0;
+    _setFetchImpl(async () => {
+      fetched += 1;
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        body: new Readable({
+          read() {
+            this.push(Buffer.from("some bytes"));
+            this.destroy(new Error("simulated ECONNRESET"));
+          },
+        }),
+      };
+    });
     const res = await request(a).post("/api/social/youtube/publish").send({ videoUrl: "https://example.com/v.mp4", title: "T" });
     const job = await waitForJob(a, res.body.jobId);
     assert.equal(job.status, "error");
+    assert.equal(fetched, 1, "the download was attempted, so the cleanup is what is under test");
     const left = fs.readdirSync(outputDir).filter((f) => f.startsWith("youtube-upload-"));
     assert.deepEqual(left, []);
   });

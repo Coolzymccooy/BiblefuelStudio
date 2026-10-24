@@ -23,9 +23,10 @@ export const QUOTAS = Object.freeze({
  *
  * @param {{ dataDir?: string, plan?: string } | null | undefined} ctx req.ctx from withUserScope
  * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
+ * @param {number} [amount=1] units to spend at once (a series spends one render per part): all or nothing
  * @returns {{ ok: true } | { ok: false, status: number, body: object }}
  */
-export function consumeQuota(ctx, bucket) {
+export function consumeQuota(ctx, bucket, amount = 1) {
   if (!ctx) {
     return { ok: false, status: 401, body: { ok: false, error: "Missing user context" } };
   }
@@ -39,7 +40,8 @@ export function consumeQuota(ctx, bucket) {
 
   const { counts } = readUsage(ctx.dataDir);
   const used = Number(counts[bucket] || 0);
-  if (used >= limit) {
+  const units = Math.max(1, Math.floor(Number(amount) || 1));
+  if (used + units > limit) {
     return {
       ok: false,
       status: 429,
@@ -50,13 +52,60 @@ export function consumeQuota(ctx, bucket) {
         used,
         limit,
         plan,
+        ...(units > 1 ? { needed: units } : {}),
         hint: "Upgrade to Premium for unlimited generation, or come back tomorrow — quota resets at midnight UTC.",
       },
     };
   }
 
-  incrementUsage(ctx.dataDir, bucket);
+  incrementUsage(ctx.dataDir, bucket, units);
   return { ok: true };
+}
+
+/**
+ * Gives back up to `amount` units consumeQuota spent today (never below zero), for a
+ * request that spent quota up front and then started nothing. Unlimited plans spend
+ * nothing, so they get nothing back.
+ *
+ * @param {{ dataDir?: string, plan?: string } | null | undefined} ctx
+ * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
+ * @param {number} [amount=1]
+ * @param {{ day?: string }} [options] `day`: the UTC day the units were spent on. When the
+ *   counter has since rolled over to another day, that day's count is not touched.
+ */
+export function refundQuota(ctx, bucket, amount = 1, { day } = {}) {
+  if (!ctx?.dataDir) return;
+  const limit = (QUOTAS[ctx.plan] || QUOTAS.free)[bucket];
+  if (limit === -1) return;
+  const usage = readUsage(ctx.dataDir);
+  if (day && usage.day !== day) return;
+  const used = Number(usage.counts[bucket] || 0);
+  const back = Math.min(used, Math.max(0, Math.floor(Number(amount) || 0)));
+  if (back > 0) incrementUsage(ctx.dataDir, bucket, -back);
+}
+
+/**
+ * Arranges for the unit this request just spent to come back if it answers with an
+ * error status (>= 400): it produced nothing. Also exposes `res.locals.refundQuota()`
+ * for a handler that answers 200 yet produced nothing (a compare where every
+ * candidate failed). Either way the unit comes back at most once.
+ */
+function refundOnFailure(req, res, bucket) {
+  let refunded = false;
+  // The unit was spent on today's counter; a failure after midnight UTC gives nothing back.
+  const day = req.ctx?.dataDir ? readUsage(req.ctx.dataDir).day : undefined;
+  const refund = () => {
+    if (refunded) return;
+    refunded = true;
+    refundQuota(req.ctx, bucket, 1, { day });
+  };
+  res.locals.refundQuota = refund;
+  // Every response goes through writeHead (res.json and res.end call it implicitly).
+  const writeHead = res.writeHead;
+  res.writeHead = function writeHeadRefundingFailures(statusCode, ...rest) {
+    if (Number(statusCode) >= 400) refund();
+    return writeHead.call(this, statusCode, ...rest);
+  };
 }
 
 /**
@@ -64,15 +113,21 @@ export function consumeQuota(ctx, bucket) {
  * counting rules.
  *
  * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
+ * @param {{ skip?: (req: object) => boolean, refundOnFailure?: boolean }} [options]
+ *   `skip`: requests on the router that do no billable work (a cancel), so they never
+ *   spend or need quota. `refundOnFailure`: give the unit back when the request fails
+ *   (see refundOnFailure()), for routers whose failures cost nothing, like TTS (#120).
  */
-export function quota(bucket) {
+export function quota(bucket, { skip, refundOnFailure: refundsFailures = false } = {}) {
   return function quotaCheck(req, res, next) {
     // Reads never spend budget: every GET on the quota-mounted routers is a
     // status/list read, and charging them let a polling client (e.g. the MCP
     // jobs_wait tool) drain the bucket and 429 its own render.
     if (req.method === "GET" || req.method === "HEAD") return next();
+    if (typeof skip === "function" && skip(req)) return next();
     const outcome = consumeQuota(req?.ctx, bucket);
     if (!outcome.ok) return res.status(outcome.status).json(outcome.body);
+    if (refundsFailures) refundOnFailure(req, res, bucket);
     next();
   };
 }

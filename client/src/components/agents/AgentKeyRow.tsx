@@ -63,7 +63,7 @@ export function AgentKeyRow({ agentKey, ceilings, onPublishChange, onCapsSave, o
         onChange={changePublish}
       />
 
-      <dl aria-label={`Today's use for ${agentKey.name}`} className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-5">
+      <dl aria-label={`Today's use for ${agentKey.name}`} className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
         {CAP_BUCKETS.map((bucket) => {
           const usage = agentKey.usage?.[bucket];
           return (

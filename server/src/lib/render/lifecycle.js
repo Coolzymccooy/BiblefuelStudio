@@ -201,8 +201,10 @@ export function createRenderLifecycle(spec) {
         if (!cancelled) reportRenderFailure(spec.label, { projectId: id, error: e?.message || e });
         store.updateProject(ctx.dataDir, id, (p) => ({
           ...p,
+          // startedAt and finishedAt let an agent's job handle tell this run's end from an older one.
           render: withPrevious({
             status: cancelled ? "cancelled" : "error", error: cancelled ? null : String(e?.message || e).slice(0, 400), progress: 0,
+            startedAt: p.render?.startedAt ?? null, finishedAt: Date.now(),
           }, p.render),
         }));
       })
@@ -221,7 +223,10 @@ export function createRenderLifecycle(spec) {
   /** After a restart a queued or running render has no worker: show it as stopped. */
   function recover(project) {
     if (!["queued", "rendering"].includes(project?.render?.status) || runs.has(project.id)) return project;
-    return { ...project, render: withPrevious({ status: "error", error: spec.interrupted, progress: 0 }, project.render) };
+    return {
+      ...project,
+      render: withPrevious({ status: "error", error: spec.interrupted, progress: 0, startedAt: project.render.startedAt ?? null }, project.render),
+    };
   }
 
   return { start, cancel, recover, isRendering: (id) => runs.has(id) };

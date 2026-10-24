@@ -2,8 +2,9 @@ import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import guide from '../../../docs/mcp.md?raw';
 
-// The guide's own H1 repeats the card title, so the page drops it.
-const BODY = guide.replace(/^# .*\r?\n/, '');
+// The guide's own H1 repeats the card title, so the page drops it. The comment line that splits
+// the agent part from the setup part is for the server (react-markdown would show it as text).
+const BODY = guide.replace(/^# .*\r?\n/, '').replace(/^<!--.*-->[ \t]*\r?$/gm, '');
 
 const components: Components = {
     h2: ({ children }) => (

@@ -6,6 +6,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { AuthedImage } from '../components/AuthedImage';
+import { AgentActivityTab } from '../components/admin/AgentActivityTab';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
 
@@ -73,12 +74,13 @@ interface IssueCounts {
     resolved: number;
 }
 
-type AdminTab = 'users' | 'access-requests' | 'issues';
+type AdminTab = 'users' | 'access-requests' | 'issues' | 'agent-activity';
 
 const TAB_LABELS: Record<AdminTab, string> = {
     users: 'Users',
     'access-requests': 'Access Requests',
     issues: 'Issues',
+    'agent-activity': 'Agent activity',
 };
 
 export function AdminPage() {
@@ -96,6 +98,7 @@ export function AdminPage() {
     const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
     const [replyingId, setReplyingId] = useState<string | null>(null);
     const [expandedThreads, setExpandedThreads] = useState<Record<string, boolean>>({});
+    const [activityReload, setActivityReload] = useState(0);
 
     const loadUsers = useCallback(async () => {
         setLoading(true);
@@ -146,13 +149,16 @@ export function AdminPage() {
     const refresh = useCallback(() => {
         if (tab === 'users') return loadUsers();
         if (tab === 'access-requests') return loadRequests();
+        if (tab === 'agent-activity') return setActivityReload((n) => n + 1);
         return loadIssues();
     }, [tab, loadUsers, loadRequests, loadIssues]);
 
     useEffect(() => {
         if (!isSuperAdmin) return;
+        // The agent activity tab loads itself when it mounts; Refresh reloads it.
+        if (tab === 'agent-activity') return;
         refresh();
-    }, [isSuperAdmin, refresh]);
+    }, [isSuperAdmin, tab, refresh]);
 
     if (isLoading) {
         return <div className="text-content-secondary text-sm">Checking access…</div>;
@@ -254,7 +260,7 @@ export function AdminPage() {
                 </Button>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
                 {(Object.keys(TAB_LABELS) as AdminTab[]).map((t) => (
                     <button
                         key={t}
@@ -511,6 +517,10 @@ export function AdminPage() {
                         </div>
                     )}
                 </Card>
+            )}
+
+            {tab === 'agent-activity' && (
+                <AgentActivityTab users={users} reloadToken={activityReload} />
             )}
 
             {tab === 'users' && (

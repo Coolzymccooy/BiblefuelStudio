@@ -25,6 +25,9 @@ app.get("/api/quota", (_req, res) =>
     hint: "Upgrade to Premium, or come back tomorrow.",
   }),
 );
+app.get("/api/not-set-up", (_req, res) =>
+  res.status(503).json({ ok: false, code: "NOT_CONFIGURED", error: "Azure Speech is not set up on this server." }),
+);
 app.get("/api/forbidden", (_req, res) => res.status(403).json({ ok: false, error: "That project is not yours." }));
 
 let server;
@@ -67,6 +70,17 @@ test("QUOTA_EXCEEDED becomes ApiError with code and hint", async () => {
     assert.equal(err.code, "QUOTA_EXCEEDED");
     assert.equal(err.hint, "Upgrade to Premium, or come back tomorrow.");
     assert.equal(err.message, "Upgrade to Premium, or come back tomorrow.");
+    return true;
+  });
+});
+
+test("a route's own code field is kept, with its error sentence as the message", async () => {
+  const api = createApi({ user: USER, baseUrl });
+  await assert.rejects(api.call("GET", "/api/not-set-up"), (err) => {
+    assert.ok(err instanceof ApiError);
+    assert.equal(err.status, 503);
+    assert.equal(err.code, "NOT_CONFIGURED");
+    assert.equal(err.message, "Azure Speech is not set up on this server.");
     return true;
   });
 });

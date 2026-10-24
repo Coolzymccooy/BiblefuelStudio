@@ -21,7 +21,7 @@ vi.mock('../../lib/agentKeysApi', async (importOriginal) => {
 
 const api = vi.mocked(keysApi);
 const ENDPOINT = 'https://studio.example.test/api/mcp';
-const CEILINGS = { renders: 10, aiVideoUsd: 2, images: 30, tts: 30, publishes: 3 };
+const CEILINGS = { renders: 10, aiVideoUsd: 2, images: 30, tts: 30, publishes: 3, imports: 20 };
 const PLAIN = 'bfk_live_9f3a1c77d2e84b5a';
 
 function makeKey(over: Partial<AgentKey> = {}): AgentKey {
@@ -39,6 +39,7 @@ function makeKey(over: Partial<AgentKey> = {}): AgentKey {
       images: { used: 0, limit: 30, remaining: 30 },
       tts: { used: 1, limit: 30, remaining: 29 },
       publishes: { used: 0, limit: 3, remaining: 3 },
+      imports: { used: 2, limit: 20, remaining: 18 },
     },
     ...over,
   };
@@ -256,6 +257,7 @@ describe('ConnectedAgentsCard', () => {
       expect(usd.max).toBe('2');
       expect(within(form).getByLabelText('Voice (TTS)')).toBeTruthy();
       expect(within(form).getByLabelText('Publishes')).toBeTruthy();
+      expect((within(form).getByLabelText('Imports') as HTMLInputElement).value).toBe('20');
     });
 
     it('saves only the changed bucket and shows what the server kept', async () => {

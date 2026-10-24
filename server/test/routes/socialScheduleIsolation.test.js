@@ -9,6 +9,8 @@ test("auto_generate schedule enqueues with the owner's ctx", async () => {
   const deps = {
     enqueueCampaignAutoPost: async (_payload, ctx) => { seenCtx = ctx; return { id: "job_x" }; },
     dispatchPost: async () => ({ ok: true }),
+    // The fake dataDir is not a real folder; plan quota is covered in socialScheduleQuota.test.js.
+    spendRender: () => null,
   };
   const schedule = { id: "s1", enabled: true, type: "auto_generate", destination: "webhook" };
   await runScheduledPost(schedule, aliceCtx, deps);

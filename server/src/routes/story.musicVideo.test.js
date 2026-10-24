@@ -259,6 +259,15 @@ describe("while the prompts are being written", () => {
     return { made, project, gate, run, app, id: project.projectId };
   }
 
+  test("GET says the pictures are about to start (preparing), and stops saying so once they run", async () => {
+    const { gate, run, app, id } = preparing();
+    const waiting = await request(app).get(`/api/story/${id}`);
+    assert.equal(waiting.body.preparing, true);
+    gate.resolve();
+    await run;
+    assert.equal((await request(app).get(`/api/story/${id}`)).body.preparing, undefined);
+  });
+
   test("Cancel then Resume puts the queued pictures back on, instead of staying cancelled", async () => {
     const { made, gate, run, app, id } = preparing();
     assert.equal((await request(app).post(`/api/story/${id}/cancel`).send({})).status, 200);

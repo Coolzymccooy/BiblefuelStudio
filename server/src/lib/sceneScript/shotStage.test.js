@@ -143,6 +143,29 @@ describe("shot stage", () => {
     assert.equal(readLedger(ledgerDir).settledUsd, 0);
   });
 
+  test("a run is recorded on the project: when it started and ended, and whether it was stopped", async () => {
+    const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    const marked = startShots(ctx, project.id, { ledgerDir, deps: fakeDeps().deps });
+    assert.equal(typeof marked.shotsRun.startedAt, "number");
+    assert.equal(marked.shotsRun.finishedAt, null);
+    await settle(project.id);
+    const run = readProject(ctx.dataDir, project.id).shotsRun;
+    assert.ok(run.finishedAt >= run.startedAt);
+    assert.equal(run.cancelled, false);
+  });
+
+  test("a run stopped with cancelShots is recorded as cancelled", async () => {
+    const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const { deps } = fakeDeps();
+    startShots(ctx, project.id, { ledgerDir, deps: { ...deps, wait: async (...args) => { await gate; return deps.wait(...args); } } });
+    cancelShots(project.id);
+    release();
+    await settle(project.id);
+    assert.equal(readProject(ctx.dataDir, project.id).shotsRun.cancelled, true);
+  });
+
   test("a refused prompt costs nothing and says how to fix it", async () => {
     const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
     startShots(ctx, project.id, { ledgerDir, deps: fakeDeps({ refuse: true }).deps });

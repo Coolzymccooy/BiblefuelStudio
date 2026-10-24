@@ -2,8 +2,9 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { hostHeaderValidation } from "@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js";
-import { requireAgentKeyOrJwt } from "../middleware/agentAuth.js";
+import { requireAgentKey } from "../middleware/agentAuth.js";
 import { isSuperAdmin } from "../lib/userPlan.js";
+import { planForUser } from "../middleware/userScope.js";
 import { createApi } from "./api.js";
 import { buildServer } from "./registry.js";
 
@@ -47,20 +48,41 @@ export function allowedHosts(env = process.env) {
   return [...new Set([...DEFAULT_HOSTS, ...fromCors])];
 }
 
-function publicBaseFor(req) {
+/** The configured public origin (PUBLIC_BASE_URL), or null when unset or not an http(s) URL. */
+function configuredPublicUrl(env) {
+  const raw = String(env?.PUBLIC_BASE_URL || "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return /^https?:$/.test(url.protocol) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The origin tools build media links from (webhook posts, output urls).
+ * PUBLIC_BASE_URL wins when set, so the links never follow the request's Host
+ * header; either way the production site maps to its media host.
+ */
+export function publicBaseFor(req, env = process.env) {
+  const configured = configuredPublicUrl(env);
+  if (configured) return MEDIA_BASES[configured.hostname.toLowerCase()] || configured.origin;
   const hostname = String(req.hostname || "").toLowerCase();
   return MEDIA_BASES[hostname] || `${req.protocol}://${req.get("host")}`;
 }
 
 function contextFor(req) {
   const user = req.user;
-  const agentKey = req.agentKey || null;
+  const agentKey = req.agentKey;
   const baseUrl = `http://127.0.0.1:${req.socket.localPort}`;
   return {
     user,
     agentKey,
-    subjectId: agentKey?.id || `jwt:${user.sub}`,
+    subjectId: agentKey.id,
     isSuperAdmin: isSuperAdmin(user),
+    // The plan the routes will see (withUserScope), for feature-gated tools.
+    plan: planForUser(user),
     baseUrl,
     publicBase: publicBaseFor(req),
     api: createApi({ user, baseUrl }),
@@ -93,13 +115,13 @@ export function createMcpRouter() {
   const router = express.Router();
   router.use(hostHeaderValidation(allowedHosts()));
   router.use(
-    requireAgentKeyOrJwt,
+    requireAgentKey,
     rateLimit({
       windowMs: 60_000,
       limit: 120,
       standardHeaders: "draft-7",
       legacyHeaders: false,
-      keyGenerator: (req) => req.agentKey?.id || `jwt:${req.user.sub}`,
+      keyGenerator: (req) => req.agentKey.id,
       handler: (_req, res) => res.status(429).json({ ok: false, error: "RATE_LIMITED" }),
     }),
   );
