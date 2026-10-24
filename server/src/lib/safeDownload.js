@@ -19,14 +19,37 @@ import fetch from "node-fetch";
  * deadline or a stalled body):
  *   URL_SCHEME, URL_PRIVATE, URL_REDIRECTS, URL_TOO_LARGE, URL_TIMEOUT.
  * Anything else (HTTP errors, network errors) carries a plain message.
+ * URL_TOO_LARGE caused by a declared Content-Length carries `declaredBytes`.
  */
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-function codedError(code) {
-  const err = new Error(code);
-  err.code = code;
-  return err;
+function codedError(code, extra = {}) {
+  return Object.assign(new Error(code), { code }, extra);
+}
+
+/** Codes that mean "this URL is refused", as opposed to a network failure. */
+const GUARD_CODES = new Set(["URL_SCHEME", "URL_PRIVATE", "URL_REDIRECTS", "URL_TOO_LARGE"]);
+
+const GUARD_SENTENCES = {
+  URL_SCHEME: "Only http and https links can be used.",
+  URL_PRIVATE: "That link points to a private or internal address, which is not allowed.",
+  URL_REDIRECTS: "That link redirected too many times.",
+  URL_TOO_LARGE: "That file is larger than the size limit.",
+};
+
+/**
+ * True when `err` is a refusal (bad scheme, private address, redirect loop,
+ * oversized file). Refusals must not be retried: the answer will not change.
+ * URL_TIMEOUT is deliberately NOT a refusal.
+ */
+export function isUrlGuardError(err) {
+  return Boolean(err && GUARD_CODES.has(err.code));
+}
+
+/** "<code>: <plain sentence>" for a refusal, else null. */
+export function urlGuardMessage(err) {
+  return isUrlGuardError(err) ? `${err.code}: ${GUARD_SENTENCES[err.code]}` : null;
 }
 
 // ---------------------------------------------------------------- addresses
@@ -159,6 +182,38 @@ async function resolveVettedAddress(parsed, lookup, unvettedHosts) {
   return { address, family };
 }
 
+/** Every address `lookup` gives for `host`, whatever shape it answers in. */
+async function resolveAll(host, lookup) {
+  const answer = await lookup(host, { all: true });
+  const list = Array.isArray(answer) ? answer : [answer];
+  return list.map((entry) => String(entry?.address ?? "")).filter(Boolean);
+}
+
+/**
+ * Vet a URL that is handed onward (to ffmpeg, a webhook POST) rather than
+ * downloaded here. http(s) only (URL_SCHEME); the host must resolve, and EVERY
+ * address it resolves to must be public (URL_PRIVATE). Returns the parsed URL.
+ *
+ * Unlike downloadPublicUrl this cannot pin the later connection, so a host
+ * whose DNS changes between this check and the request is not covered; callers
+ * that can download instead should use downloadPublicUrl.
+ *
+ * @param {string} url
+ * @param {{ lookup?: (host: string, opts: { all: true }) => Promise<any> }} [opts]
+ * @returns {Promise<URL>}
+ */
+export async function assertPublicHttpUrl(url, { lookup = dns.promises.lookup } = {}) {
+  const parsed = parseHttpUrl(String(url ?? ""));
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(host)) {
+    if (!isPublicAddress(host)) throw codedError("URL_PRIVATE");
+    return parsed;
+  }
+  const addresses = await resolveAll(host, lookup);
+  if (addresses.length === 0 || !addresses.every(isPublicAddress)) throw codedError("URL_PRIVATE");
+  return parsed;
+}
+
 function byteCounter(maxBytes, onCount) {
   let total = 0;
   return new Transform({
@@ -200,7 +255,8 @@ function mediaTypeOf(response) {
  *   unvettedHostsForTests?: Iterable<string>,
  * }} opts `unvettedHostsForTests` exists only so tests can reach a loopback
  *   fixture through a fake hostname; production code must never set it.
- * @returns {Promise<{ bytes: number, contentType: string, finalUrl: string }>}
+ * @returns {Promise<{ bytes: number, contentType: string, finalUrl: string, declaredBytes: number }>}
+ *   `declaredBytes` is the host's Content-Length, 0 when it did not send one.
  */
 export async function downloadPublicUrl(url, destPath, opts) {
   const {
@@ -251,9 +307,10 @@ export async function downloadPublicUrl(url, destPath, opts) {
         throw new Error(`HTTP ${response.status}`);
       }
       const declared = Number(response.headers.get("content-length"));
-      if (Number.isFinite(declared) && declared > maxBytes) {
+      const declaredBytes = Number.isFinite(declared) && declared > 0 ? declared : 0;
+      if (declaredBytes > maxBytes) {
         response.body.destroy();
-        throw codedError("URL_TOO_LARGE");
+        throw codedError("URL_TOO_LARGE", { declaredBytes });
       }
 
       let bytes = 0;
@@ -269,7 +326,7 @@ export async function downloadPublicUrl(url, destPath, opts) {
         await removeQuietly(destPath);
         throw err;
       }
-      return { bytes, contentType: mediaTypeOf(response), finalUrl: current.href };
+      return { bytes, contentType: mediaTypeOf(response), finalUrl: current.href, declaredBytes };
     }
   } catch (err) {
     if (timedOut || err?.name === "AbortError") throw codedError("URL_TIMEOUT");
