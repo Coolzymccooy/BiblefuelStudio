@@ -87,7 +87,7 @@ const timelineRender = {
   description:
     "Render a timeline project into one video: projectId (a saved project) or project (a whole project, rendered without saving). Asset paths follow the timeline_project rule (refused otherwise, at no cost). " +
     "quality proof_720p (default), standard_1080p or final_1080p; typographyPreset, captionEnergy (calm, lively, wild), captionSeed, captionMotion, captionLayout, captionStagger and captionHighlight style the captions (default: the project's renderSettings). " +
-    "Returns a handle of kind timeline: call jobs_wait with kind timeline and the handle's id until done; output.url plays the video. " +
+    "Returns a handle of kind timeline: call jobs_wait with kind timeline and the handle's id until done; output.url plays the video and output.path (in your media folder) is the video for publish_youtube or publish_post. " +
     "Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first), plus one daily tts for each voiceover clip it must speak (a chatterbox or fish asset with a prompt and no path), all charged together up front. Takes minutes; a server deploy stops it. It never posts anywhere.",
   inputSchema: {
     projectId: TIMELINE_ID.optional().describe("A saved project's id."),

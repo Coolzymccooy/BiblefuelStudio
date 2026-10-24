@@ -191,6 +191,38 @@ test("a real project is saved, listed, read and rendered, and jobs_wait sees it 
   assert.match(done.structuredContent.output.url, /\/outputs\/timeline\/x\.mp4$/);
 });
 
+test("a real render of a non-owner's own clip is accepted by the renderer and lands in their media, served by link (R48)", async () => {
+  _setScopeForTests(null);
+  const { resolveScopeDirs } = await import("../../lib/paths.js");
+  const { renderTimelineProof } = await import("../../lib/timelineRender/proofRenderer.js");
+  const { createPerUserOutputFinder } = await import("../../lib/perUserOutputs.js");
+  const { outputDir } = resolveScopeDirs({ sub: USER.id, id: USER.id, email: USER.email, role: USER.role });
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(path.join(outputDir, "own-clip.mp4"), "x");
+  let mainInput = null;
+  // The real command builder (which refuses paths outside its roots); only ffmpeg itself is replaced.
+  _setTimelineRendererForTest((plan, opts) => renderTimelineProof(plan, {
+    ...opts,
+    runner: async (args) => {
+      mainInput = args[args.indexOf("-i") + 1];
+      fs.mkdirSync(path.dirname(opts.outputPath), { recursive: true });
+      fs.writeFileSync(opts.outputPath, "video");
+      return { ok: true, code: 0, stderr: "" };
+    },
+  }));
+  const project = { ...videoProject("/outputs/own-clip.mp4"), id: "tl_own" };
+  const started = await client.callTool({ name: "timeline_render", arguments: { project } });
+  assert.ok(!started.isError, JSON.stringify(started.structuredContent));
+  const done = await client.callTool({ name: "jobs_wait", arguments: { kind: "timeline", id: started.structuredContent.id, timeoutSec: 5 } });
+  assert.equal(done.structuredContent.status, "done", JSON.stringify(done.structuredContent));
+  assert.equal(mainInput, fs.realpathSync(path.join(outputDir, "own-clip.mp4")));
+  const video = done.structuredContent.output.path;
+  assert.equal(path.relative(outputDir, video), path.join("timeline", started.structuredContent.id, "video.mp4"));
+  const rel = `timeline/${started.structuredContent.id}/video.mp4`;
+  assert.match(done.structuredContent.output.url, new RegExp(`/outputs/${rel}$`));
+  assert.equal(createPerUserOutputFinder(testApp.dataDir)(rel), fs.realpathSync(video));
+});
+
 test("a real render of a project with no renderable clips is refused by the app and the render cap is given back", async () => {
   const empty = { ...PROJECT({ cap1: captionAsset }, [{ id: "t", kind: "captions", label: "C", clips: [] }]), id: "tl_empty" };
   const before = (await client.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders;
