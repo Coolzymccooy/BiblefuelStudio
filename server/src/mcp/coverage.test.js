@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { catalogue } from "./registry.js";
 
 /**
  * Keeps the agent tools honest: every router the app mounts under /api must be
  * reachable by some MCP tool (its `routes`), or be deliberately excluded.
- * Slice 1 maps only part of the app, so PENDING lists the rest and may only
- * ever shrink.
+ * Slices 1-4 mapped every creation router, so nothing is pending any more: a
+ * new router needs a tool (or a reason to exclude it) before it ships. The
+ * whole catalogue stays at 75 tools or fewer (fold rather than add).
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,13 +23,8 @@ const EXCLUDED = [
   "stems-worker", "firebase", "abi", "postiz", "issues", "mcp",
 ];
 
-// Creation routers no tool covers yet. This shrinks as slices 2-4 land: when a
-// tool maps a router, delete it from here (the second assertion enforces it).
-const PENDING = [
-  "ambient", "audio", "audio-adv", "bible", "branding", "gumroad", "imagegen",
-  "library", "longform", "lyric-video", "moments", "pexels", "pixabay", "queue",
-  "scene-script", "scripts", "series", "tts", "transcripts", "visual-library",
-];
+// The most tools the catalogue may hold (tool-authoring.md).
+const MAX_TOOLS = 75;
 
 /** Every `app.use("/api/<name>"` mount in index.js, with either quote style. */
 function mountedPrefixes() {
@@ -58,17 +55,16 @@ test("index.js mounts the routers this test expects to find", () => {
   }
 });
 
-test("every mounted /api router is excluded, mapped by a tool, or listed as pending", async () => {
+test("every mounted /api router is excluded or mapped by a tool", async () => {
   const mapped = await mappedPrefixes();
-  const strays = mountedPrefixes().filter((name) => !EXCLUDED.includes(name) && !mapped.has(name) && !PENDING.includes(name));
-  assert.deepEqual(strays, [], `mounted routers with no tool and not excluded or pending: ${strays.join(", ")}`);
+  const strays = mountedPrefixes().filter((name) => !EXCLUDED.includes(name) && !mapped.has(name));
+  assert.deepEqual(strays, [], `mounted routers with no tool and not excluded: ${strays.join(", ")}`);
 });
 
-test("PENDING lists only routers that are still unmapped", async () => {
-  const mapped = await mappedPrefixes();
-  const mounted = mountedPrefixes();
-  const stale = PENDING.filter((name) => mapped.has(name) || EXCLUDED.includes(name) || !mounted.includes(name));
-  assert.deepEqual(stale, [], `remove from PENDING (mapped, excluded or no longer mounted): ${stale.join(", ")}`);
+test(`the catalogue holds at most ${MAX_TOOLS} tools`, () => {
+  const count = catalogue().length;
+  assert.ok(count > 0, "the catalogue loaded no tools");
+  assert.ok(count <= MAX_TOOLS, `the catalogue has ${count} tools, more than ${MAX_TOOLS}: fold rather than add`);
 });
 
 test("EXCLUDED names are all mounted routers", () => {

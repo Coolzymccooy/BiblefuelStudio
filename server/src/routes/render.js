@@ -24,6 +24,9 @@ import { appendRender, listRenders } from "../lib/renderHistory.js";
 import { friendlyRenderError } from "../lib/renderErrors.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
+import { scopeMediaInput, resolveOutputAliasForCtx } from "../lib/mediaInputScope.js";
+import { sendUserPathError, UserPathError } from "../lib/userPathScope.js";
+import { isOwnerCtx } from "../lib/paths.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -100,10 +103,19 @@ function logMemory(tag) {
   console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
-function resolveAssetPath(dataDir, pathOrId) {
+/**
+ * One render input: bundled (`library:`) or saved (`mylib:`) music, a saved
+ * library id, a URL (fetched later through the SSRF guard), or a file path.
+ * For anyone but the owner a local path must be in their scope (#112):
+ * scopeMediaInput throws a UserPathError (403) for anything outside, and the
+ * `/outputs/` alias follows the caller's own folder. Null when nothing by
+ * that name exists.
+ */
+function resolveAssetPath(ctx, pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
+  const dataDir = ctx?.dataDir;
   const libTrack = resolveLibraryTrack(normalized);
   if (libTrack) return libTrack;
   // A track the operator saved to their own library. Needs dataDir, which is
@@ -113,9 +125,19 @@ function resolveAssetPath(dataDir, pathOrId) {
   // An unresolved library ref is a missing track, not a URL: answer null so
   // callers report "not found" instead of a scheme refusal.
   if (/^(library|mylib):/i.test(normalized)) return null;
-  const direct = resolveOutputAlias(normalized);
+  let scoped;
+  try {
+    scoped = scopeMediaInput(normalized, ctx);
+  } catch (err) {
+    if (err instanceof UserPathError && err.code === "FILE_NOT_FOUND") return null;
+    throw err;
+  }
+  // A non-owner's bare name never resolves against the server's folder.
+  const unconfined = !ctx || isOwnerCtx(ctx);
+  const usable = (p) => Boolean(p) && (unconfined || path.isAbsolute(p)) && fs.existsSync(p);
+  const direct = resolveOutputAliasForCtx(scoped, ctx);
   if (isRemoteUrl(direct)) return direct;
-  if (fs.existsSync(direct)) return direct;
+  if (usable(direct)) return direct;
 
   const lib = readLibrary(dataDir);
   const item = lib.items.find(x => String(x.id) === normalized);
@@ -125,16 +147,31 @@ function resolveAssetPath(dataDir, pathOrId) {
       const hd = sorted.find(f => f.quality === 'hd') || sorted[0];
       if (hd?.link) return hd.link;
     }
-    const localUrl = resolveOutputAlias(item.url);
-    if (localUrl && !String(localUrl).startsWith("http") && fs.existsSync(localUrl)) return localUrl;
-    const preview = resolveOutputAlias(item.previewUrl);
+    const localUrl = resolveOutputAliasForCtx(item.url, ctx);
+    if (localUrl && !String(localUrl).startsWith("http") && usable(localUrl)) return localUrl;
+    const preview = resolveOutputAliasForCtx(item.previewUrl, ctx);
     if (preview && String(preview).startsWith("http")) return preview;
-    if (preview && fs.existsSync(preview)) return preview;
-    if (localUrl) return localUrl;
-    if (preview) return preview;
+    if (usable(preview)) return preview;
+    if (isRemoteUrl(localUrl)) return localUrl;
+    if (unconfined && localUrl) return localUrl;
+    if (unconfined && preview) return preview;
   }
 
-  return direct;
+  return unconfined ? direct : null;
+}
+
+/** Check a request's raw inputs before anything is fetched or run (#112). Throws a UserPathError. */
+function assertRequestInputsInScope(ctx, values) {
+  for (const value of values) {
+    if (value == null || !String(value).trim()) continue;
+    try {
+      scopeMediaInput(value, ctx);
+    } catch (err) {
+      // A missing input is reported by the route with its own message.
+      if (err instanceof UserPathError && err.code === "FILE_NOT_FOUND") continue;
+      throw err;
+    }
+  }
 }
 
 function getDims(aspect) {
@@ -184,9 +221,10 @@ router.post("/video", async (req, res) => {
     const rawAudioPath = req.body?.audioPath;
     const rawMusicPath = req.body?.musicPath;
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
-    backgroundPath = resolveAssetPath(req.ctx.dataDir, rawBackgroundPath);
-    audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
-    musicPath = resolveAssetPath(req.ctx.dataDir, rawMusicPath);
+    assertRequestInputsInScope(req.ctx, [rawBackgroundPath, rawAudioPath, rawMusicPath]);
+    backgroundPath = resolveAssetPath(req.ctx, rawBackgroundPath);
+    audioPath = resolveAssetPath(req.ctx, rawAudioPath);
+    musicPath = resolveAssetPath(req.ctx, rawMusicPath);
 
     if (!backgroundPath || !isLocalOrRemote(backgroundPath)) {
       return res.status(400).json({ ok: false, error: `backgroundPath missing or not found: ${rawBackgroundPath || "<empty>"}` });
@@ -322,6 +360,7 @@ router.post("/video", async (req, res) => {
       res.json({ ok: true, file: outFile.replace(/\\/g, '/') });
     });
   } catch (e) {
+    if (sendUserPathError(res, e)) return;
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
@@ -342,9 +381,10 @@ router.post("/waveform", async (req, res) => {
     const rawAudioPath = req.body?.audioPath;
     const rawMusicPath = req.body?.musicPath;
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
-    backgroundPath = resolveAssetPath(req.ctx.dataDir, rawBackgroundPath);
-    audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
-    musicPath = resolveAssetPath(req.ctx.dataDir, rawMusicPath);
+    assertRequestInputsInScope(req.ctx, [rawBackgroundPath, rawAudioPath, rawMusicPath]);
+    backgroundPath = resolveAssetPath(req.ctx, rawBackgroundPath);
+    audioPath = resolveAssetPath(req.ctx, rawAudioPath);
+    musicPath = resolveAssetPath(req.ctx, rawMusicPath);
 
     if (!audioPath || !isLocalOrRemote(audioPath)) {
       return res.status(400).json({ ok: false, error: `audioPath missing or not found: ${rawAudioPath || "<empty>"}` });
@@ -492,6 +532,7 @@ router.post("/waveform", async (req, res) => {
       res.json({ ok: true, file: outFile.replace(/\\/g, '/') });
     });
   } catch (e) {
+    if (sendUserPathError(res, e)) return;
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
@@ -629,6 +670,8 @@ router.post("/captioned-video", async (req, res) => {
     const rawMusicPaths = (Array.isArray(req.body?.musicPaths) ? req.body.musicPaths : (rawMusicPath ? [rawMusicPath] : []))
       .map((p) => (p == null ? "" : String(p).trim()))
       .filter(Boolean);
+    // Every path the request names, before anything is fetched or probed.
+    assertRequestInputsInScope(req.ctx, [rawVideoPath, rawAudioPath, ...rawBackgroundPaths, ...rawMusicPaths]);
     const words = Array.isArray(req.body?.words) ? req.body.words : [];
     const typographyPreset = String(req.body?.typographyPreset || "default");
     const layout = String(req.body?.layout || "center");
@@ -778,7 +821,7 @@ router.post("/captioned-video", async (req, res) => {
     let durationSec = 0;
 
     if (hasVideoMode) {
-      videoPath = resolveAssetPath(req.ctx.dataDir, rawVideoPath);
+      videoPath = resolveAssetPath(req.ctx, rawVideoPath);
       if (!videoPath || !isLocalOrRemote(videoPath)) {
         return res.status(400).json({ ok: false, error: `videoPath not found: ${rawVideoPath}` });
       }
@@ -797,7 +840,7 @@ router.post("/captioned-video", async (req, res) => {
       canvasHeight = info.height;
       durationSec = info.durationSec;
     } else {
-      audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
+      audioPath = resolveAssetPath(req.ctx, rawAudioPath);
       if (!audioPath || !isLocalOrRemote(audioPath)) {
         return res.status(400).json({ ok: false, error: `audioPath not found: ${rawAudioPath}` });
       }
@@ -816,7 +859,7 @@ router.post("/captioned-video", async (req, res) => {
       // surface the failing index in the error so a user with 4 backgrounds
       // can tell which one is busted.
       for (let i = 0; i < rawBackgroundPaths.length; i++) {
-        const resolved = resolveAssetPath(req.ctx.dataDir, rawBackgroundPaths[i]);
+        const resolved = resolveAssetPath(req.ctx, rawBackgroundPaths[i]);
         if (!resolved || !isLocalOrRemote(resolved)) {
           return res.status(400).json({
             ok: false,
@@ -870,7 +913,7 @@ router.post("/captioned-video", async (req, res) => {
     {
       const resolvedMusic = [];
       for (let i = 0; i < rawMusicPaths.length; i += 1) {
-        let m = resolveAssetPath(req.ctx.dataDir, rawMusicPaths[i]);
+        let m = resolveAssetPath(req.ctx, rawMusicPaths[i]);
         if (!m || !isLocalOrRemote(m)) {
           return res.status(400).json({ ok: false, error: `music track ${i + 1} not found: ${rawMusicPaths[i]}` });
         }
@@ -1327,6 +1370,7 @@ router.post("/captioned-video", async (req, res) => {
       backgroundIds: hasVideoMode ? [] : rawBackgroundPaths,
     });
   } catch (e) {
+    if (sendUserPathError(res, e)) return;
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
@@ -1405,6 +1449,13 @@ router.get("/captioned-video-status/:jobId", (req, res) => {
   }
   return res.json({ ok: true, ...summarizeJob(job) });
 });
+
+// POSTs on this router that start no render. index.js passes this to the
+// router's quota("render") mount, so a user out of renders can still cancel.
+const CANCEL_PATH = /^\/captioned-video\/[^/]+\/cancel$/;
+export function isQuotaFreeRenderRequest(req) {
+  return req?.method === "POST" && CANCEL_PATH.test(String(req?.path || ""));
+}
 
 /**
  * Cancel a running render: SIGKILL its ffmpeg and mark the job cancelled. The

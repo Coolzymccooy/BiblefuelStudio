@@ -196,7 +196,7 @@ export function startVoicing(ctx, id, { deps } = {}) {
   runVoicing(ctx, id, { ...defaultDeps, ...deps })
     .catch((e) => {
       console.warn(`[scene-script] voicing ${id} failed: ${e?.message || e}`);
-      updateProject(ctx.dataDir, id, (p) => ({ ...p, voice: { status: "error", error: String(e?.message || e) } }));
+      updateProject(ctx.dataDir, id, (p) => ({ ...p, voice: { status: "error", error: String(e?.message || e), startedAt: p.voice?.startedAt ?? null, finishedAt: Date.now() } }));
     })
     .finally(() => runs.delete(id));
   return marked;
@@ -205,5 +205,5 @@ export function startVoicing(ctx, id, { deps } = {}) {
 /** After a restart a "running" voice pass has no worker; mark it stopped so it can be started again. */
 export function recoverInterruptedVoicing(project) {
   if (project?.voice?.status !== "running" || runs.has(project.id)) return project;
-  return { ...project, voice: { status: "error", error: "Interrupted by a server restart. Voice it again; finished lines are kept." } };
+  return { ...project, voice: { status: "error", error: "Interrupted by a server restart. Voice it again; finished lines are kept.", startedAt: project.voice.startedAt ?? null } };
 }

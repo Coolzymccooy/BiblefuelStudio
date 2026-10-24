@@ -3,25 +3,61 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { readLibrary, addToLibrary, removeFromLibrary, writeLibrary } from "../lib/library.js";
-import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, resolveOutputAlias, toOutputPublicPath } from "../lib/mediaThumb.js";
+import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, resolveOutputAlias, safeThumbName, toOutputPublicPath } from "../lib/mediaThumb.js";
+import { confineLibraryLink } from "../lib/mediaInputScope.js";
 import { CATEGORIES, classifySearchQuery, normalizeCategories } from "../lib/categorize.js";
+import { isOwnerCtx } from "../lib/paths.js";
+import { isInsideDir } from "../lib/pathJail.js";
+import { confineUserPath, sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 
 const router = Router();
 
-function normalizeLibraryItem(item) {
+const LIBRARY_ID = /^[A-Za-z0-9_-]{1,200}$/;
+const isHttpLink = (value) => /^https?:[/][/]/i.test(String(value || "").trim());
+
+/** The links of a library item that are read later (thumbnails, renders). */
+function itemLinks(item) {
+    const files = Array.isArray(item.files) ? item.files.map((f) => f?.link) : [];
+    return [item.url, item.previewUrl, item.image, ...files].filter((v) => v != null && String(v).trim() !== "");
+}
+
+/**
+ * Every local link must be the caller's own file (#112): a saved item is read
+ * later by the thumbnail run below and by renders. Stock https links stay.
+ */
+function assertItemLinksInScope(item, ctx) {
+    for (const link of itemLinks(item)) {
+        if (!isHttpLink(link)) confineLibraryLink(String(link), ctx);
+    }
+}
+
+/** The real path of a local link inside the caller's folder that exists, else null. */
+function confinedLocal(value, ctx) {
+    if (!value || isHttpLink(value)) return null;
+    try {
+        const real = confineLibraryLink(String(value), ctx);
+        return real && fs.existsSync(real) ? real : null;
+    } catch (err) {
+        if (err instanceof UserPathError) return null;
+        throw err;
+    }
+}
+
+function normalizeLibraryItem(item, ctx) {
     const next = { ...item };
     let changed = false;
 
-    const resolvedUrl = resolveOutputAlias(next.url);
-    const hasLocalUrl = resolvedUrl && !String(resolvedUrl).startsWith("http") && fs.existsSync(resolvedUrl);
+    // Only a video in the caller's own folder is normalised or thumbnailed
+    // (#112): a stored link elsewhere is left as it is, never read.
+    const localUrl = confinedLocal(next.url, ctx);
 
-    if (hasLocalUrl) {
-        const normalizedUrl = normalizePathSlashes(resolvedUrl);
+    if (localUrl) {
+        const normalizedUrl = normalizePathSlashes(localUrl);
         if (next.url !== normalizedUrl) {
             next.url = normalizedUrl;
             changed = true;
         }
-        const normalizedPreview = toOutputPublicPath(resolvedUrl);
+        const normalizedPreview = toOutputPublicPath(localUrl);
         if (normalizedPreview && next.previewUrl !== normalizedPreview) {
             next.previewUrl = normalizedPreview;
             changed = true;
@@ -34,33 +70,31 @@ function normalizeLibraryItem(item) {
         }
     }
 
-    if (next.image) {
-        if (String(next.image).startsWith("http://") || String(next.image).startsWith("https://")) {
-            // keep remote image as-is
-        } else {
-            const resolvedImage = resolveOutputAlias(next.image);
-            if (resolvedImage && fs.existsSync(resolvedImage)) {
-                const normalizedImage = toOutputPublicPath(resolvedImage);
-                if (normalizedImage && normalizedImage !== next.image) {
-                    next.image = normalizedImage;
-                    changed = true;
-                }
-            } else {
-                delete next.image;
+    if (next.image && !isHttpLink(next.image)) {
+        // A local image outside the caller's folder is dropped like a missing one.
+        const localImage = confinedLocal(next.image, ctx);
+        const normalizedImage = localImage ? toOutputPublicPath(localImage) : "";
+        if (normalizedImage) {
+            if (normalizedImage !== next.image) {
+                next.image = normalizedImage;
                 changed = true;
             }
+        } else {
+            delete next.image;
+            changed = true;
         }
     }
 
-    if (!next.image && hasLocalUrl) {
-        const thumb = generateVideoThumbnail(resolvedUrl, { outputBaseName: `thumb-${String(next.id || "library")}` });
+    if (!next.image && localUrl) {
+        // Stored ids predate the /add check, so the name is rebuilt from a sanitised one.
+        const safeId = safeThumbName(String(next.id || "library").replace(/[^A-Za-z0-9_-]/g, "_"));
+        const thumb = generateVideoThumbnail(localUrl, { outputBaseName: `thumb-${safeId}`, outputDir: ctx.outputDir });
         if (thumb) {
             next.image = thumb;
             changed = true;
         } else {
-            const derived = deriveOutputJpgPathFromVideo(resolvedUrl);
-            const derivedLocal = resolveOutputAlias(derived);
-            if (derived && derivedLocal && fs.existsSync(derivedLocal)) {
+            const derived = deriveOutputJpgPathFromVideo(localUrl);
+            if (derived && confinedLocal(derived, ctx)) {
                 next.image = derived;
                 changed = true;
             }
@@ -75,7 +109,7 @@ router.get("/", (req, res) => {
     const normalizedItems = [];
     let changed = false;
     for (const item of library.items || []) {
-        const out = normalizeLibraryItem(item);
+        const out = normalizeLibraryItem(item, req.ctx);
         normalizedItems.push(out.item);
         if (out.changed) changed = true;
     }
@@ -87,7 +121,16 @@ router.get("/", (req, res) => {
 
 router.post("/add", (req, res) => {
     const item = req.body || {};
-    if (!item.id) return res.status(400).json({ ok: false, error: "id required" });
+    const id = typeof item.id === "number" ? String(item.id) : item.id;
+    if (typeof id !== "string" || !LIBRARY_ID.test(id)) {
+        return res.status(400).json({ ok: false, error: "INVALID_ID", message: "id must be 1-200 letters, digits, dashes or underscores." });
+    }
+    try {
+        assertItemLinksInScope(item, req.ctx);
+    } catch (err) {
+        if (sendUserPathError(res, err)) return;
+        throw err;
+    }
     addToLibrary(req.ctx.dataDir, item);
     res.json({ ok: true });
 });
@@ -135,16 +178,62 @@ router.post("/auto-tag", (req, res) => {
     res.json({ ok: true, tagged, total: (lib.items || []).length });
 });
 
+/**
+ * Import-local reads a folder on the server, so only the owner may use it
+ * (#112), and only from a folder inside their own outputs folder: anything
+ * else would let a request copy any video the server can read into a
+ * library. A missing folder and one outside get the same answer.
+ */
+const FOLDER_NOT_AVAILABLE = {
+    ok: false,
+    error: "FOLDER_NOT_AVAILABLE",
+    message: "That folder is not available. Use a folder inside your outputs folder.",
+};
+const LOCAL_VIDEO_EXTS = new Set([".mp4", ".mov", ".webm", ".m4v"]);
+
+/** The folder's real path when it is a directory inside the owner's outputs folder, else null. */
+function confineImportFolder(folderPath, ctx) {
+    try {
+        const real = confineUserPath(folderPath, ctx);
+        return fs.statSync(real).isDirectory() ? real : null;
+    } catch (err) {
+        if (err instanceof UserPathError && err.status < 500) return null;
+        throw err;
+    }
+}
+
+/** Videos directly in `folder` whose real path is still inside it (a link inside cannot lead out). */
+function listImportableVideos(folder) {
+    const files = [];
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+        if (!LOCAL_VIDEO_EXTS.has(path.extname(entry.name).toLowerCase())) continue;
+        let real;
+        try {
+            real = fs.realpathSync(path.join(folder, entry.name));
+        } catch {
+            continue;
+        }
+        if (!isInsideDir(real, folder) || !fs.statSync(real).isFile()) continue;
+        files.push(real);
+    }
+    return files;
+}
+
+router.get("/import-local", (req, res) => {
+    res.json({ ok: true, allowed: isOwnerCtx(req.ctx) });
+});
+
 router.post("/import-local", (req, res) => {
     try {
+        if (!isOwnerCtx(req.ctx)) {
+            return res.status(403).json({ ok: false, error: "OWNER_ONLY", message: "Only the studio owner can import a server folder." });
+        }
         const folderPath = String(req.body?.folderPath || "").trim();
         if (!folderPath) return res.status(400).json({ ok: false, error: "folderPath required" });
-        if (!fs.existsSync(folderPath)) return res.status(400).json({ ok: false, error: "folderPath not found" });
+        const folder = confineImportFolder(folderPath, req.ctx);
+        if (!folder) return res.status(400).json(FOLDER_NOT_AVAILABLE);
 
-        const exts = [".mp4", ".mov", ".webm", ".m4v"];
-        const files = fs.readdirSync(folderPath)
-            .filter(f => exts.includes(path.extname(f).toLowerCase()))
-            .map(f => path.join(folderPath, f));
+        const files = listImportableVideos(folder);
 
         const outDir = req.ctx.outputDir;
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
@@ -157,7 +246,7 @@ router.post("/import-local", (req, res) => {
             fs.copyFileSync(filePath, outFile);
             const normalized = normalizePathSlashes(outFile);
             const previewUrl = toOutputPublicPath(normalized);
-            const thumb = generateVideoThumbnail(normalized, { outputBaseName: `thumb-${id}` });
+            const thumb = generateVideoThumbnail(normalized, { outputBaseName: `thumb-${id}`, outputDir: req.ctx.outputDir });
             const derived = deriveOutputJpgPathFromVideo(normalized);
             const derivedExists = derived ? fs.existsSync(resolveOutputAlias(derived)) : false;
             const item = {
@@ -173,7 +262,8 @@ router.post("/import-local", (req, res) => {
 
         res.json({ ok: true, imported });
     } catch (e) {
-        res.status(400).json({ ok: false, error: String(e?.message || e) });
+        console.error("[library] import-local failed:", e?.message || e);
+        res.status(500).json({ ok: false, error: "IMPORT_FAILED", message: "The folder could not be imported." });
     }
 });
 

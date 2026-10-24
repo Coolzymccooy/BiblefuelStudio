@@ -427,10 +427,11 @@ describe("story routes", () => {
     await handlerFor("post", "/")(create.req, create.res);
     const id = create.res.payload.project.projectId;
 
-    const set = mockReqRes({ params: { id }, body: { path: "/out/music.mp3", volume: 5, autoDuck: true }, dataDir, outputDir });
+    const bed = path.join(outputDir, "music.mp3"); fs.writeFileSync(bed, "mp3");
+    const set = mockReqRes({ params: { id }, body: { path: bed, volume: 5, autoDuck: true }, dataDir, outputDir });
     await handlerFor("patch", "/:id/music")(set.req, set.res);
-    assert.equal(set.res.payload.ok, true);
-    assert.equal(set.res.payload.project.music.path, "/out/music.mp3");
+    assert.equal(set.res.payload.ok, true, JSON.stringify(set.res.payload));
+    assert.equal(set.res.payload.project.music.path, fs.realpathSync(bed));
     assert.equal(set.res.payload.project.music.volume, 1);
     assert.equal(set.res.payload.project.music.autoDuck, true);
 
@@ -817,8 +818,8 @@ describe("story routes", () => {
   });
 
   // ffmpeg fetches a URL input itself with no SSRF check, so a music path the
-  // user stored as a URL must be localised through the guard, and a private
-  // or metadata address refused before any job starts.
+  // user stored as a URL is refused before any job starts: a music bed is a
+  // library track or the caller's own file (#112).
   function remoteProject({ music, audioPath }) {
     const img = path.join(outputDir, "img.png"); fs.writeFileSync(img, "png");
     const audio = path.join(outputDir, "voice.mp3"); fs.writeFileSync(audio, "mp3");
@@ -834,14 +835,14 @@ describe("story routes", () => {
     return project;
   }
 
-  test("render refuses a private music URL with 400 before any job starts", async () => {
+  test("render refuses a private music URL before any job starts", async () => {
     const calls = [];
     _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
     const project = remoteProject({ music: "http://169.254.169.254/latest/meta-data/bed.mp3" });
     const { req, res } = mockReqRes({ params: { id: project.projectId }, dataDir, outputDir });
     await handlerFor("post", "/:id/render")(req, res);
-    assert.equal(res.statusCode, 400, JSON.stringify(res.payload));
-    assert.ok(String(res.payload.error).startsWith("URL_PRIVATE: "), res.payload.error);
+    assert.equal(res.statusCode, 403, JSON.stringify(res.payload));
+    assert.equal(res.payload.error, "PATH_OUTSIDE_MEDIA");
     assert.equal(calls.length, 0);
     assert.equal(readProject(dataDir, project.projectId).status, "ready_to_render");
   });

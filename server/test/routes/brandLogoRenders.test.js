@@ -130,8 +130,11 @@ describe("render routes draw the account logo", { skip }, () => {
   test("an account with branding off gets no logo", async () => {
     const plain = fs.mkdtempSync(path.join(os.tmpdir(), "brand-off-"));
     try {
+      // Its own copy: render inputs must be the caller's own files (#112).
+      const bg = path.join(plain, path.basename(media.bg));
+      fs.copyFileSync(media.bg, bg);
       const res = await request(app({ dataDir: plain, outputDir: plain, userId: "plain" })).post("/api/render/video")
-        .send({ backgroundPath: media.bg, lines: ["Peace"], durationSec: 1, aspect: "landscape" });
+        .send({ backgroundPath: bg, lines: ["Peace"], durationSec: 1, aspect: "landscape" });
       assert.equal(res.status, 200, JSON.stringify(res.body));
       assertLogo(res.body.file, { present: false });
     } finally {
@@ -196,7 +199,14 @@ describe("the timeline's quick preview draws the account logo", { skip }, () => 
   test("an account with branding off gets a preview without one", async () => {
     const plain = fs.mkdtempSync(path.join(os.tmpdir(), "brand-off-"));
     try {
-      const res = await preview({ dataDir: plain, outputDir: plain, userId: "plain" });
+      // Its own copies: audio-adv reads only the caller's files (#112).
+      const bg = path.join(plain, path.basename(media.bg));
+      const voice = path.join(plain, path.basename(media.voice));
+      fs.copyFileSync(media.bg, bg);
+      fs.copyFileSync(media.voice, voice);
+      const res = await request(app({ dataDir: plain, outputDir: plain, userId: "plain" }))
+        .post("/api/audio-adv/timeline-preview")
+        .send({ backgroundPath: bg, clips: [{ path: voice }], normalizeLUFS: -14 });
       assert.equal(res.status, 200, JSON.stringify(res.body));
       assertLogo(res.body.file, { present: false, late: 1.5 });
     } finally {

@@ -7,7 +7,8 @@ import { v4 as uuid } from "uuid";
 import cron from "node-cron";
 import { google } from "googleapis";
 import crypto from "node:crypto";
-import { signOAuthState, verifyOAuthState } from "../auth.js";
+import { signOAuthState, verifyOAuthState, getUsersStore } from "../auth.js";
+import { refuseAgentCalls } from "../middleware/agentAuth.js";
 import { buildZernioPost } from "../lib/zernioPayload.js";
 // readTikTokOutcome replaced this branch's isTikTokCapacityError: the capacity
 // check now reads attempt.outcome.atCapacity rather than sniffing the message.
@@ -15,6 +16,8 @@ import { readTikTokOutcome } from "../lib/zernioStatus.js";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { publicDirectConfig, mergeDirectSecrets } from "../lib/social/directSecrets.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
+import { spendScheduleRender } from "../lib/social/scheduleQuota.js";
+import { changedCronProblem, agentScheduleCount, MAX_AGENT_SCHEDULES } from "../lib/social/scheduleRules.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
 import { uploadToYoutube, setYoutubeThumbnail, listYoutubePlaylists } from "../lib/social/youtubeUpload.js";
 import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
@@ -22,7 +25,9 @@ import { prepareThumbnail } from "../lib/social/youtubeThumbnail.js";
 import { startPublishJob, getPublishJob, _resetPublishJobs as resetPublishJobs } from "../lib/social/youtubePublishJobs.js";
 import { readProject, writeProject, publishedEntry, withPublished } from "../lib/ambient/projectStore.js";
 import os from "os";
-import { confineToDir } from "../lib/confinePath.js";
+import { isUrlLike } from "../lib/inputUrl.js";
+import { isSharedGeneratedImage } from "../lib/mediaInputScope.js";
+import { confineUserPath, UserPathError } from "../lib/userPathScope.js";
 import { downloadPublicUrl, assertPublicHttpUrl, fetchPublic, isUrlGuardError, urlGuardMessage } from "../lib/safeDownload.js";
 import { MAX_INPUT_MB } from "../lib/backgroundLimits.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
@@ -119,32 +124,39 @@ function toAbsolutePublicUrl(req, value) {
   return `${base}${pathOnly}`;
 }
 
-function resolveOutputAlias(value, outputDir = OUTPUT_DIR) {
+const OUTPUT_ALIAS_PREFIXES = ["/outputs/", "outputs/", "./outputs/", "server/outputs/"];
+const VIDEO_OUTSIDE_ERROR = "videoUrl must point inside your outputs folder";
+
+/**
+ * The file a local videoUrl names, spelled for confineUserPath: an /outputs/
+ * alias in any of its spellings, an absolute path, or a bare (or relative)
+ * name looked up by file name in the caller's outputs. Null for a web link,
+ * which the remote branch handles. Nothing here touches the disk.
+ */
+function localVideoRef(value) {
   const raw = String(value || "").trim();
-  if (!raw) return null;
-  if (fs.existsSync(raw)) return path.resolve(raw);
-
+  if (!raw || isUrlLike(raw)) return null;
   const normalized = raw.replace(/\\/g, "/");
-  if (normalized.startsWith("/outputs/")) return path.join(outputDir, normalized.slice("/outputs/".length));
-  if (normalized.startsWith("outputs/")) return path.join(outputDir, normalized.slice("outputs/".length));
-  if (normalized.startsWith("./outputs/")) return path.join(outputDir, normalized.slice("./outputs/".length));
-  if (normalized.startsWith("server/outputs/")) return path.join(outputDir, normalized.slice("server/outputs/".length));
-
-  const byName = path.join(outputDir, path.basename(normalized));
-  if (fs.existsSync(byName)) return byName;
-  return null;
+  const prefix = OUTPUT_ALIAS_PREFIXES.find((p) => normalized.startsWith(p));
+  if (prefix) return `/outputs/${normalized.slice(prefix.length)}`;
+  if (path.isAbsolute(raw)) return raw;
+  return `/outputs/${path.posix.basename(normalized)}`;
 }
 
-// A resolved local candidate must live inside the caller's own outputs.
-// resolveOutputAlias happily returns any existing absolute path, so without
-// this a videoUrl of "/etc/passwd" (or another tenant's file) would be
-// uploaded. Null (no local candidate) passes through untouched so the
+// A local candidate must be the caller's own file, checked by name and then
+// by real path (#112), so neither "/etc/passwd", another tenant's file nor a
+// link inside the caller's outputs that leads out is uploaded. A file that is
+// merely missing from the caller's outputs comes back null, so the
 // remote-fetch branch still runs.
-function confineLocalVideo(candidate, outputDir) {
-  if (candidate === null || candidate === undefined) return null;
-  const confined = confineToDir(outputDir, candidate);
-  if (!confined) throw new Error("videoUrl must point inside your outputs folder");
-  return confined;
+function confineLocalVideo(ref, outputDir) {
+  if (!ref) return null;
+  try {
+    return confineUserPath(ref, { outputDir });
+  } catch (err) {
+    if (!(err instanceof UserPathError)) throw err;
+    if (err.code === "FILE_NOT_FOUND") return null;
+    throw new Error(VIDEO_OUTSIDE_ERROR);
+  }
 }
 
 async function resolveVideoInputForUpload(videoUrl, req) {
@@ -155,18 +167,18 @@ async function resolveVideoInputForUpload(videoUrl, req) {
   // outputDir (req.ctx.outputDir), not the global OUTPUT_DIR.
   const outputDir = req?.ctx?.outputDir || OUTPUT_DIR;
 
-  const local = confineLocalVideo(resolveOutputAlias(raw, outputDir), outputDir);
+  const local = confineLocalVideo(localVideoRef(raw), outputDir);
   if (local && fs.existsSync(local)) {
     return { filePath: local, cleanup: async () => {} };
   }
 
   if (/^https?:\/\//i.test(raw)) {
-    let localFromPath = null;
+    // A link to this server's own /outputs/ is read from disk, not fetched.
+    let pathname = "";
     try {
-      const u = new URL(raw);
-      localFromPath = resolveOutputAlias(u.pathname, outputDir);
-    } catch { localFromPath = null; }
-    const confined = confineLocalVideo(localFromPath, outputDir);
+      pathname = new URL(raw).pathname;
+    } catch { pathname = ""; }
+    const confined = pathname.startsWith("/outputs/") ? confineLocalVideo(pathname, outputDir) : null;
     if (confined && fs.existsSync(confined)) {
       return { filePath: confined, cleanup: async () => {} };
     }
@@ -365,12 +377,15 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   }
 
   // Resolve webhook in this order:
-  //   1. Explicit webhookId match in the store (and enabled).
+  //   1. A named webhookId: that webhook, enabled, or the post fails (R40).
+  //      A schedule or campaign whose webhook was disabled or removed must
+  //      not quietly post to another of the user's webhooks.
   //   2. Caller-supplied webhookUrl.
-  //   3. The first enabled webhook in the store (so one-click Auto-Publish
-  //      Just Works without the caller having to know which webhook ID to pass).
+  //   3. With no webhookId, the first enabled webhook in the store (so one-click
+  //      Auto-Publish Just Works without the caller having to know which ID to pass).
   const webhooks = Array.isArray(store.webhooks) ? store.webhooks : [];
   const exact = webhookId ? webhooks.find((w) => w.id === webhookId && w.enabled) : null;
+  if (webhookId && !exact) throw new Error(`Webhook ${webhookId} is disabled or removed. Pick an enabled webhook in Settings.`);
   const firstEnabled = !exact && !webhookUrl ? webhooks.find((w) => w.enabled && String(w.url || "").trim()) : null;
   const target = exact || firstEnabled;
   const url = String(target?.url || webhookUrl || "").trim();
@@ -519,9 +534,22 @@ function youtubeCredentials(store) {
 
 /** A picture the caller may use as a thumbnail, confined to their outputs (or genImg). */
 function thumbnailSource(thumbnailPath, req) {
-  const thumb = resolveThumbnail(String(thumbnailPath), req?.ctx?.outputDir || OUTPUT_DIR, OUTPUT_DIR);
+  // No ctx is the owner's own job (only the owner's jobs predate the ctx stamp).
+  const caller = { userId: req?.ctx?.userId || "", isOwner: !req?.ctx || isOwnerCtx(req.ctx) };
+  const outputDir = req?.ctx?.outputDir || OUTPUT_DIR;
+  const thumb = resolveThumbnail(String(thumbnailPath), outputDir, OUTPUT_DIR, caller);
   if (!thumb.ok) throw new Error(thumb.error);
-  return thumb.path;
+  // resolveThumbnail checks the name only: re-check the real path, so a link
+  // inside the caller's outputs cannot lead out (#112). A missing file is
+  // reported later as "thumbnail not found".
+  const shared = caller.isOwner ? undefined : (abs) => isSharedGeneratedImage(abs, caller.userId);
+  try {
+    return confineUserPath(thumb.path, { outputDir }, { allowShared: shared });
+  } catch (err) {
+    if (!(err instanceof UserPathError)) throw err;
+    if (err.code === "FILE_NOT_FOUND") return thumb.path;
+    throw new Error("thumbnailPath must point inside your outputs folder");
+  }
 }
 
 /** Title and tagline are drawn only when the operator asked for the title. */
@@ -641,14 +669,23 @@ function scheduleSignature(s) {
   });
 }
 
+const ownerEmail = (userId) => (getUsersStore().users || []).find((u) => u.id === userId)?.email || "";
+
 export async function runScheduledPost(schedule, ctx, deps = {}) {
   const enqueue = deps.enqueueCampaignAutoPost
     || (await import("./jobs.js")).enqueueCampaignAutoPost;
   const dispatch = deps.dispatchPost || dispatchPost;
+  const spendRender = deps.spendRender || ((owner) => spendScheduleRender(owner, ownerEmail));
   try {
     if (!schedule?.enabled) return;
 
     if (String(schedule.type || "replay") === "auto_generate") {
+      // R38: a fresh video spends the owner's plan render quota; out of quota, this run is skipped.
+      const refused = spendRender(ctx);
+      if (refused) {
+        console.warn(`[SOCIAL][CRON] Schedule ${schedule.id} skipped: the owner's daily render quota is used up (${refused.used} of ${refused.limit}, owner=${ctx?.userId ?? "root"})`);
+        return;
+      }
       const job = await enqueue({
         destination: schedule.destination || "webhook",
         webhookId: schedule.webhookId || undefined,
@@ -887,7 +924,7 @@ async function ownAccountsOr502(res, apiKey) {
   }
 }
 
-router.post("/tiktok/own-key", ownKeyLimiter, async (req, res) => {
+router.post("/tiktok/own-key", refuseAgentCalls, ownKeyLimiter, async (req, res) => {
   const apiKey = cleanZernioKey(req.body?.apiKey);
   if (!apiKey) return res.status(400).json({ ok: false, error: "That does not look like a Zernio API key. Paste the whole key." });
   if (apiKey === zernioApiKey()) {
@@ -914,7 +951,7 @@ router.post("/tiktok/own-key", ownKeyLimiter, async (req, res) => {
   res.json({ ok: true, accounts, selected: only?.accountId || "" });
 });
 
-router.get("/tiktok/own-accounts", ownKeyLimiter, async (req, res) => {
+router.get("/tiktok/own-accounts", refuseAgentCalls, ownKeyLimiter, async (req, res) => {
   const apiKey = cleanZernioKey(readSocialStore(req.ctx.dataDir).zernio?.own?.apiKey);
   if (!apiKey) return res.status(404).json({ ok: false, error: "Add your Zernio API key first." });
   const accounts = await ownAccountsOr502(res, apiKey);
@@ -922,7 +959,7 @@ router.get("/tiktok/own-accounts", ownKeyLimiter, async (req, res) => {
   res.json({ ok: true, accounts });
 });
 
-router.post("/tiktok/own-account", ownKeyLimiter, async (req, res) => {
+router.post("/tiktok/own-account", refuseAgentCalls, ownKeyLimiter, async (req, res) => {
   const apiKey = cleanZernioKey(readSocialStore(req.ctx.dataDir).zernio?.own?.apiKey);
   if (!apiKey) return res.status(404).json({ ok: false, error: "Add your Zernio API key first." });
   const wanted = String(req.body?.accountId || "").trim();
@@ -942,14 +979,14 @@ router.post("/tiktok/own-account", ownKeyLimiter, async (req, res) => {
   res.json({ ok: true, accountId: pick.accountId, username: pick.username });
 });
 
-router.post("/tiktok/own-key/remove", (req, res) => {
+router.post("/tiktok/own-key/remove", refuseAgentCalls, (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   // Only forgotten here: the TikTok stays connected in the user's own Zernio.
   writeSocialStore(req.ctx.dataDir, { ...store, zernio: { ...store.zernio, own: {} } });
   res.json({ ok: true });
 });
 
-router.post("/tiktok/connect", async (req, res) => {
+router.post("/tiktok/connect", refuseAgentCalls, async (req, res) => {
   if (!zernioApiKey()) return res.status(503).json({ ok: false, error: "TikTok posting is not set up on this server yet." });
   if (isOwnerCtx(req.ctx) && String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim()) {
     return res.status(400).json({ ok: false, error: "Your TikTok is already connected through the server settings." });
@@ -997,7 +1034,7 @@ router.post("/tiktok/connect", async (req, res) => {
   }
 });
 
-router.post("/tiktok/disconnect", async (req, res) => {
+router.post("/tiktok/disconnect", refuseAgentCalls, async (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const accountId = store.zernio?.tiktok?.accountId;
   if (accountId) {
@@ -1095,7 +1132,7 @@ async function newWebhookRefusal(incoming, stored) {
   return null;
 }
 
-router.post("/config", answerErrors(async (req, res) => {
+router.post("/config", refuseAgentCalls, answerErrors(async (req, res) => {
   const payload = req.body || {};
   const store = readSocialStore(req.ctx.dataDir);
   const buffer = payload.buffer || store.buffer || {};
@@ -1105,6 +1142,9 @@ router.post("/config", answerErrors(async (req, res) => {
   // The page only ever saw has<Secret> flags, so a blank secret means "keep it".
   const direct = mergeDirectSecrets(payload.direct, store.direct);
   const schedules = Array.isArray(payload.schedules) ? payload.schedules : (store.schedules || []);
+  // R39: a new or re-timed schedule runs at most hourly; one saved before the rule keeps its cron.
+  const tooOften = changedCronProblem(schedules, store.schedules);
+  if (tooOften) return res.status(400).json({ ok: false, error: tooOften });
 
   const next = {
     buffer: {
@@ -1181,11 +1221,33 @@ router.post("/schedules", (req, res) => {
     const store = readSocialStore(req.ctx.dataDir);
     const list = Array.isArray(store.schedules) ? store.schedules : [];
     const index = list.findIndex((x) => String(x.id) === schedule.id);
+    // R39, for the app and agents alike: at most hourly (pausing an older schedule keeps its cron).
+    const tooOften = changedCronProblem([schedule], list);
+    if (tooOften) return res.status(400).json({ ok: false, error: tooOften });
     // Word-by-word captions: the value sent, else the one already saved, else
     // the store's default. Leaving it out made the store default it back to
     // true, so pausing a schedule turned its captions back on.
     if (incoming.kineticCaptions !== undefined) schedule.kineticCaptions = Boolean(incoming.kineticCaptions);
     else if (index >= 0 && list[index]?.kineticCaptions !== undefined) schedule.kineticCaptions = list[index].kineticCaptions;
+    // Which agent key created it (sent by the MCP schedules tool), so agent
+    // schedules can be counted (R35). Kept when the app re-saves the schedule.
+    const agentKeyId = typeof incoming.createdByAgentKeyId === "string" && /^[\w-]{1,100}$/.test(incoming.createdByAgentKeyId)
+      ? incoming.createdByAgentKeyId
+      : (index >= 0 ? list[index]?.createdByAgentKeyId : undefined);
+    if (agentKeyId) schedule.createdByAgentKeyId = agentKeyId;
+    // R35, checked here in the same synchronous read-and-write as the save, so two
+    // agent calls at once cannot both pass it. The app's own schedules never count.
+    const addsAgentSchedule = Boolean(agentKeyId) && !(index >= 0 && list[index]?.createdByAgentKeyId);
+    const agentMade = agentScheduleCount(list, schedule.id);
+    if (addsAgentSchedule && agentMade >= MAX_AGENT_SCHEDULES) {
+      return res.status(409).json({
+        ok: false,
+        error: "SCHEDULE_LIMIT",
+        hint: `Agents have already created ${agentMade} schedules for this account (the limit is ${MAX_AGENT_SCHEDULES}). Remove one first.`,
+        limit: MAX_AGENT_SCHEDULES,
+        used: agentMade,
+      });
+    }
     if (index >= 0) list[index] = schedule;
     else list.unshift(schedule);
 
@@ -1207,7 +1269,7 @@ router.delete("/schedules/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/buffer/profiles", async (req, res) => {
+router.post("/buffer/profiles", refuseAgentCalls, async (req, res) => {
   try {
     const store = readSocialStore(req.ctx.dataDir);
     const accessToken = String(req.body?.accessToken || store.buffer?.accessToken || "").trim();
@@ -1438,7 +1500,7 @@ router.get("/webhooks", (req, res) => {
   });
 });
 
-router.post("/webhooks", answerErrors(async (req, res) => {
+router.post("/webhooks", refuseAgentCalls, answerErrors(async (req, res) => {
   const name = String(req.body?.name || "").trim();
   const url = String(req.body?.url || "").trim();
   if (!name) return res.status(400).json({ ok: false, error: "name required" });
@@ -1463,7 +1525,7 @@ router.post("/webhooks", answerErrors(async (req, res) => {
   res.json({ ok: true, webhook: entry });
 }));
 
-router.delete("/webhooks/:id", (req, res) => {
+router.delete("/webhooks/:id", refuseAgentCalls, (req, res) => {
   const id = String(req.params.id || "").trim();
   if (!id) return res.status(400).json({ ok: false, error: "id required" });
   const store = readSocialStore(req.ctx.dataDir);
@@ -1472,7 +1534,7 @@ router.delete("/webhooks/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/webhooks/:id/test", async (req, res) => {
+router.post("/webhooks/:id/test", refuseAgentCalls, async (req, res) => {
   const id = String(req.params.id || "").trim();
   const store = readSocialStore(req.ctx.dataDir);
   const hook = (store.webhooks || []).find((w) => w.id === id);
@@ -1605,7 +1667,7 @@ router.get("/youtube/status", (req, res) => {
   });
 });
 
-router.get("/youtube/connect", (req, res) => {
+router.get("/youtube/connect", refuseAgentCalls, (req, res) => {
   let oauth;
   try { oauth = youtubeOauthClient(); }
   catch (e) { return res.status(503).json({ ok: false, error: String(e?.message || e) }); }
@@ -1645,7 +1707,7 @@ export function _resetYoutubeRevokeImpl() { _revokeYoutubeToken = (token) => you
 // POST /youtube/disconnect — revoke at Google, then forget the token here.
 // Only blanking the local copy left the grant live at Google. Local removal
 // happens even if Google can't be reached; `revoked` says whether it was.
-router.post("/youtube/disconnect", async (req, res) => {
+router.post("/youtube/disconnect", refuseAgentCalls, async (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const yt = store.direct?.youtube || {};
   let revoked = false;

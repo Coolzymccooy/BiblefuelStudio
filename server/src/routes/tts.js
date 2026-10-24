@@ -26,23 +26,63 @@ import {
   listChatterboxVoices,
   removeChatterboxVoice,
 } from "../lib/chatterboxVoicesStore.js";
+import { confineUserPath, isSharedTtsFile, sendUserPathError, UserPathError } from "../lib/userPathScope.js";
+import { isOwnerCtx } from "../lib/paths.js";
+
+const CHATTERBOX_CLONE_ID = /^cb:[\w-]+$/;
+const INVALID_CHATTERBOX_VOICE =
+  "A Chatterbox voice must be one of your saved clones (cb:<id>), or left empty for the default voice.";
 
 /**
- * If `voiceId` is a saved-clone alias (`cb:<uuid>`), translate it to the
- * absolute reference-path the Chatterbox bridge stored at /upload time.
- * Returns the original value unchanged for non-alias inputs.
+ * A voice addressed to Chatterbox: empty (the bridge's default voice) or a
+ * saved-clone alias (`cb:<uuid>`) from the caller's own store, translated to
+ * the reference path the bridge stored at /upload time. Anything else is
+ * refused: the bridge opens the value as a file on its own host (#112).
  *
- * @returns {{ ok: true, voiceId: string } | { ok: false, status: number, error: string }}
+ * Ruling R36: the owner runs the bridge on their own machine, so the owner
+ * alone may still name a reference file on it as free text. Other
+ * super-admins are held to saved clones like everyone else.
+ *
+ * @returns {{ ok: true, voiceId: string } | { ok: false, status: number, error: string, message?: string }}
  */
 function resolveChatterboxVoiceId(req, voiceId) {
   const raw = String(voiceId || "").trim();
   if (!raw) return { ok: true, voiceId: "" };
-  if (!raw.startsWith("cb:")) return { ok: true, voiceId: raw };
+  if (!raw.startsWith("cb:") && isOwnerCtx(req?.ctx)) return { ok: true, voiceId: raw };
+  if (!CHATTERBOX_CLONE_ID.test(raw)) {
+    return { ok: false, status: 400, error: "INVALID_VOICE_ID", message: INVALID_CHATTERBOX_VOICE };
+  }
   const dataDir = req?.ctx?.dataDir;
   if (!dataDir) return { ok: false, status: 500, error: "User scope unavailable" };
   const entry = getChatterboxVoiceById(dataDir, raw);
   if (!entry) return { ok: false, status: 404, error: "Cloned voice not found" };
   return { ok: true, voiceId: entry.refPath };
+}
+
+/** Answer a refused Chatterbox voice. */
+function sendVoiceRefusal(res, resolved) {
+  return res.status(resolved.status).json({
+    ok: false,
+    error: resolved.error,
+    ...(resolved.message ? { message: resolved.message } : {}),
+  });
+}
+
+/**
+ * Category overrides with any Chatterbox voice resolved through the caller's
+ * own clone store. Returns a new object; the request body is left alone.
+ *
+ * @returns {{ ok: true, overrides: object|undefined } | { ok: false, status: number, error: string, message?: string }}
+ */
+function resolveCategoryOverrides(req, overrides) {
+  if (!overrides || typeof overrides !== "object") return { ok: true, overrides: undefined };
+  const voiceIds = overrides.voiceIds && typeof overrides.voiceIds === "object" ? overrides.voiceIds : null;
+  if (!voiceIds || voiceIds.chatterbox == null) return { ok: true, overrides };
+  const resolved = resolveChatterboxVoiceId(req, voiceIds.chatterbox);
+  if (!resolved.ok) return resolved;
+  const { chatterbox: _dropped, ...rest } = voiceIds;
+  const nextVoiceIds = resolved.voiceId ? { ...rest, chatterbox: resolved.voiceId } : rest;
+  return { ok: true, overrides: { ...overrides, voiceIds: nextVoiceIds } };
 }
 
 // Supported voice-cloning providers. Azure (Custom Neural Voice / Personal
@@ -126,27 +166,12 @@ function mimeFromExt(ext) {
   }
 }
 
-function resolveSampleAudioPath(inputPath) {
-  const raw = String(inputPath || "").trim();
-  if (!raw) return null;
-
-  const candidates = new Set();
-  candidates.add(raw);
-  candidates.add(path.resolve(raw));
-  candidates.add(path.resolve(process.cwd(), raw));
-  candidates.add(path.resolve(process.cwd(), "..", raw));
-
-  if (raw.startsWith("server/") || raw.startsWith("server\\")) {
-    const withoutServerPrefix = raw.replace(/^server[\\/]/, "");
-    candidates.add(path.resolve(process.cwd(), withoutServerPrefix));
-    candidates.add(path.resolve(process.cwd(), "..", withoutServerPrefix));
-  }
-
-  for (const candidate of candidates) {
-    if (candidate && fs.existsSync(candidate)) return candidate;
-  }
-
-  return null;
+/**
+ * A clone sample: the caller's own file, or a shared tts-* voice file (#112).
+ * Throws a UserPathError for anything else.
+ */
+function resolveSampleAudioPath(req, inputPath) {
+  return confineUserPath(inputPath, req.ctx, { allowShared: isSharedTtsFile });
 }
 
 router.get("/voices", async (req, res) => {
@@ -261,12 +286,23 @@ router.post("/clone-voice", async (req, res) => {
       });
     }
 
-    const files = [];
+    // Check every sample before reading any, so a refused one stops the clone.
+    const resolvedSamples = [];
     for (const p of samplePaths) {
-      const resolved = resolveSampleAudioPath(p);
-      if (!resolved || !fs.existsSync(resolved)) {
-        return res.status(400).json({ ok: false, error: `Sample file not found: ${p}` });
+      try {
+        resolvedSamples.push(resolveSampleAudioPath(req, p));
+      } catch (err) {
+        if (err instanceof UserPathError && err.code === "FILE_NOT_FOUND") {
+          return res.status(400).json({ ok: false, error: `Sample file not found: ${p}` });
+        }
+        if (sendUserPathError(res, err)) return;
+        throw err;
       }
+    }
+
+    const files = [];
+    for (const [i, resolved] of resolvedSamples.entries()) {
+      const p = samplePaths[i];
       const ext = path.extname(resolved).toLowerCase();
       if (!allowedAudioExt.has(ext)) {
         return res.status(400).json({ ok: false, error: `Unsupported sample format: ${ext}` });
@@ -395,7 +431,9 @@ router.post("/clone-voice", async (req, res) => {
 router.get("/chatterbox-voices", (req, res) => {
   const dataDir = req?.ctx?.dataDir;
   if (!dataDir) return res.status(500).json({ ok: false, error: "User scope unavailable" });
-  res.json({ ok: true, voices: listChatterboxVoices(dataDir) });
+  // freeTextReference: may this account name a reference file on the bridge
+  // host instead of a saved clone? The owner only (ruling R36).
+  res.json({ ok: true, voices: listChatterboxVoices(dataDir), freeTextReference: isOwnerCtx(req.ctx) });
 });
 
 router.delete("/chatterbox-voices/:id", async (req, res) => {
@@ -562,8 +600,11 @@ router.get("/animations", (_req, res) => {
 });
 
 router.post("/synthesize-category", async (req, res) => {
-  const { category, withTimestamps, preferredProvider, overrides } = req.body || {};
+  const { category, withTimestamps, preferredProvider } = req.body || {};
   const text = cleanSpeakableText(req.body?.text);
+  const scoped = resolveCategoryOverrides(req, req.body?.overrides);
+  if (!scoped.ok) return sendVoiceRefusal(res, scoped);
+  const { overrides } = scoped;
   try {
     if (String(preferredProvider || "").toLowerCase() === "elevenlabs" && !elevenLabsAllowed(req)) {
       return denyElevenLabs(req, res);
@@ -621,7 +662,7 @@ router.post("/chatterbox", async (req, res) => {
   // Resolve `cb:<uuid>` aliases to the bridge-side reference path before
   // handing off to the orchestrator/provider.
   const resolved = resolveChatterboxVoiceId(req, voiceId);
-  if (!resolved.ok) return res.status(resolved.status).json({ ok: false, error: resolved.error });
+  if (!resolved.ok) return sendVoiceRefusal(res, resolved);
   const effectiveVoiceId = resolved.voiceId;
   try {
     const voiceSettings = {};
@@ -810,9 +851,21 @@ router.post("/compare", async (req, res) => {
           latencyMs: 0,
         };
       }
+      // A Chatterbox voice is a file on the bridge host: only a saved clone.
+      let voiceId = c.voiceId;
+      if (c.provider === "chatterbox") {
+        const resolved = resolveChatterboxVoiceId(req, voiceId);
+        if (!resolved.ok) {
+          return {
+            id, provider: c.provider, voiceId: c.voiceId, label: c.label, status: "error",
+            error: resolved.message || resolved.error, latencyMs: 0,
+          };
+        }
+        voiceId = resolved.voiceId;
+      }
       const result = await _compareSynthImpl({
         text,
-        voiceIds: c.voiceId ? { [c.provider]: c.voiceId } : undefined,
+        voiceIds: voiceId ? { [c.provider]: voiceId } : undefined,
         preferredProvider: c.provider,
         withTimestamps: withTimestamps === undefined ? true : Boolean(withTimestamps),
       });

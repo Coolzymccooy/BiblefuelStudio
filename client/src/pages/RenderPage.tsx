@@ -14,6 +14,7 @@ import { Button } from '../components/ui/Button';
 import { Section } from '../components/ui/Section';
 import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
 import { api, DIRECT_UPLOAD_MAX_BYTES, RESUMABLE_UPLOAD_MAX_BYTES } from '../lib/api';
+import { postableWebhooks } from '../lib/postableWebhooks';
 import { uploadMedia } from '../lib/mediaUpload';
 import toast from 'react-hot-toast';
 import { Play, Library, Type, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon } from 'lucide-react';
@@ -773,8 +774,10 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     const loadSocialConfig = async () => {
         const res = await api.get('/api/social/config');
         if (res.ok && res.data) {
-            setWebhookOptions(res.data.webhooks || []);
-            setSelectedWebhook(res.data.webhooks?.[0]?.id || '');
+            // Enabled webhooks only: the server refuses a disabled or removed one (R40).
+            const postable = postableWebhooks(res.data.webhooks);
+            setWebhookOptions(postable);
+            setSelectedWebhook(postable[0]?.id || '');
             setBufferProfiles(res.data.buffer?.profileIds || []);
             setSelectedProfile(res.data.buffer?.profileIds?.[0] || '');
         }

@@ -1,4 +1,3 @@
-import jwt from "jsonwebtoken";
 import { getUsersStore } from "../auth.js";
 import { findByPlainKey, toPublic } from "../lib/agentKeys/store.js";
 
@@ -26,46 +25,35 @@ function resolveAgentKey(plain) {
   };
 }
 
+const KEY_REQUIRED = {
+  ok: false,
+  error: "AGENT_KEY_REQUIRED",
+  message: "Connect with an agent key from Settings → Connected agents.",
+};
+
 /**
- * Auth for the MCP endpoint only: an agent key (`bfk_...`) or an app JWT, taken
- * from the Authorization header alone (there is deliberately no ?token= fallback).
+ * Auth for the MCP endpoint only: an agent key (`bfk_...`) taken from the
+ * Authorization header alone (there is deliberately no ?token= fallback).
+ * Any other bearer, an app JWT included, is refused: the app's own session
+ * never drives the MCP surface (ruling R25).
  */
-export function requireAgentKeyOrJwt(req, res, next) {
+export function requireAgentKey(req, res, next) {
   const header = req.headers["authorization"] || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   if (!token) return res.status(401).json({ ok: false, error: "Missing Bearer token" });
+  if (!token.startsWith(KEY_PREFIX)) return res.status(401).json(KEY_REQUIRED);
 
-  if (token.startsWith(KEY_PREFIX)) {
-    let resolved;
-    try {
-      resolved = resolveAgentKey(token);
-    } catch (err) {
-      console.warn("[MCP] key lookup failed:", err?.message || String(err));
-      return keyInvalid(res);
-    }
-    if (!resolved) return keyInvalid(res);
-    req.user = resolved.user;
-    req.agentKey = resolved.key;
-    return next();
-  }
-
+  let resolved;
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "dev_secret_change_me");
-    // Same rule as requireAuth: a single-purpose token is never a login.
-    if (decoded && typeof decoded === "object" && decoded.purpose) {
-      return res.status(401).json({ ok: false, error: "Invalid token" });
-    }
-    // Internal loopback tokens (via: "mcp") act inside the app only; one
-    // presented here would let a leaked 60 s token drive the MCP surface.
-    if (decoded && typeof decoded === "object" && decoded.via !== undefined) {
-      return res.status(401).json({ ok: false, error: "AGENT_KEY_INVALID", message: "Invalid token" });
-    }
-    req.user = decoded;
-    req.agentKey = null;
-    return next();
-  } catch {
-    return res.status(401).json({ ok: false, error: "Invalid token" });
+    resolved = resolveAgentKey(token);
+  } catch (err) {
+    console.warn("[MCP] key lookup failed:", err?.message || String(err));
+    return keyInvalid(res);
   }
+  if (!resolved) return keyInvalid(res);
+  req.user = resolved.user;
+  req.agentKey = resolved.key;
+  return next();
 }
 
 /**

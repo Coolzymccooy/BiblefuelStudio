@@ -89,3 +89,13 @@ describe("generateVideoThumbnail with URL-like input", () => {
     }
   });
 });
+
+test("safeThumbName keeps a thumbnail name to one plain file name", async () => {
+  const { safeThumbName } = await import("./mediaThumb.js");
+  for (const raw of ["x/../../evil", "..", "a\u0000b", "c:/windows/x", "..hidden"]) {
+    const name = safeThumbName(raw);
+    assert.ok(!/[/:\u0000]/.test(name), `${raw} -> ${name}`);
+    assert.ok(!name.startsWith("."), `${raw} -> ${name}`);
+  }
+  assert.equal(safeThumbName("thumb-pexels-123"), "thumb-pexels-123");
+});

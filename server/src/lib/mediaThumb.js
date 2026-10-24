@@ -71,16 +71,25 @@ function canUseFfmpeg() {
   return ffmpegAvailable;
 }
 
+/** A thumbnail base name with nothing but word characters, dots and dashes, and no leading dot. */
+export function safeThumbName(value) {
+  return String(value || "").replace(/[^\w.-]/g, "_").replace(/^\.+/, "_").slice(0, 220);
+}
+
 export function generateVideoThumbnail(inputPath, options = {}) {
   const resolved = resolveOutputAlias(inputPath);
   if (!resolved || isUrlLike(resolved)) return "";
   if (!fs.existsSync(resolved)) return "";
 
-  const outputBaseName = String(options.outputBaseName || "").trim() || path.basename(resolved).replace(/\.[^.]+$/, "");
+  // A plain file name only: the base name can come from a stored id, and a
+  // separator or ".." in it must not move the thumbnail out of its folder.
+  const outputBaseName = safeThumbName(String(options.outputBaseName || "").trim() || path.basename(resolved).replace(/\.[^.]+$/, ""));
   if (!outputBaseName) return "";
 
-  ensureDir(OUTPUT_DIR);
-  const outputFile = path.join(OUTPUT_DIR, `${outputBaseName}.jpg`);
+  // The caller's own outputs folder when given (served under their /outputs path), else the global one.
+  const outputDir = typeof options.outputDir === "string" && options.outputDir.trim() ? options.outputDir : OUTPUT_DIR;
+  ensureDir(outputDir);
+  const outputFile = path.join(outputDir, `${outputBaseName}.jpg`);
   if (fs.existsSync(outputFile)) {
     return `/outputs/${path.basename(outputFile)}`;
   }

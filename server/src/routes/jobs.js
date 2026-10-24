@@ -7,6 +7,8 @@ import { readLibrary } from "../lib/library.js";
 import { consumeQuota } from "../middleware/quota.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
 import { isOwnerCtx } from "../lib/paths.js";
+import { assertLibraryItemInScope, assertPayloadPathsInScope, resolveOutputAliasForCtx, scopeMediaInput } from "../lib/mediaInputScope.js";
+import { sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 import { tiktokAccountFor } from "../lib/social/zernioConnect.js";
 import { generateScripts } from "../lib/generateScripts.js";
 import { synthesizeTts } from "../lib/ttsOrchestrator.js";
@@ -142,6 +144,10 @@ export function _setJobCtxForTest(ctx) { currentJobCtx = ctx; }
 export function _resetJobCtxForTest() { currentJobCtx = null; }
 // Test-only: run a render the way the worker does, without the queue.
 export function _executeJobForTest(job) { return executeJob(job); }
+// What the worker runs for a job; tests swap in a fake renderer to drive the completion path.
+let executeJobImpl = (job) => executeJob(job);
+/** Test seam: the worker runs `fn(job)` instead of the real renderer. Pass null to restore. */
+export function _setExecuteJobForTests(fn) { executeJobImpl = typeof fn === "function" ? fn : (job) => executeJob(job); }
 export function _renderVideoCoreForTest(payload, jobId) { return renderVideoCore(payload, jobId); }
 
 // Monotonic counter backing the script-type rotation. Persisted per-tenant so
@@ -350,6 +356,44 @@ function safeUpdateJob(id, patch) {
  * tenant's library and either misses the user's own item or matches a
  * different tenant's item that happens to share an id.
  */
+/**
+ * The job now running: its ctx and the local copies it downloaded through the
+ * SSRF guard (localiseJobInputs). Those copies sit in the shared remote cache,
+ * outside every account's folder, and are resolved again later in the same
+ * run. They count as the server's own only for that run's ctx object: a
+ * request handler (or another job) builds a fresh ctx, so it never matches.
+ * Set when a job starts, cleared when the worker finishes it.
+ */
+let currentJobRun = null;
+
+/** Did the running job, under this very ctx, download `file` itself? */
+function isOwnJobDownload(file) {
+  return Boolean(currentJobRun && currentJobRun.ctx === currentJobCtx && currentJobRun.made.has(path.resolve(file)));
+}
+
+/** A non-owner's local input, held to their scope (#112); a refusal fails the job. */
+function confineJobInput(value) {
+  try {
+    return scopeMediaInput(value, currentJobCtx);
+  } catch (err) {
+    if (err instanceof UserPathError) throw new Error(`${err.code}: ${err.message}`);
+    throw err;
+  }
+}
+
+const PLAIN_LIBRARY_ID = /^[A-Za-z0-9_-]{1,200}$/;
+
+/**
+ * The library items a job may pick by itself (auto backgrounds, campaign
+ * scenes). For a non-owner only items with a plain id (#112): an id shaped
+ * like a path would be resolved as that path. The owner keeps every item.
+ */
+function pickableLibraryItems(items) {
+  const list = Array.isArray(items) ? items : [];
+  if (!currentJobCtx || isOwnerCtx(currentJobCtx)) return list;
+  return list.filter((item) => PLAIN_LIBRARY_ID.test(String(item?.id ?? "")));
+}
+
 export function resolveAssetPath(pathOrId, dataDir) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
@@ -371,27 +415,56 @@ export function resolveAssetPath(pathOrId, dataDir) {
   // An unresolved library ref is a missing track, not a URL: answer null so
   // callers report "not found" instead of a scheme refusal.
   if (/^(library|mylib):/i.test(normalized)) return null;
-  const direct = resolveOutputAlias(normalized);
+  // The `/outputs/` alias follows the job's own ctx (#112): a non-owner's
+  // maps into their own folder (or a shared voice file / generated image in
+  // the global one), the owner's to the global folder as before. Request
+  // paths are checked against the scope by assertPayloadPathsInScope at
+  // enqueue, retry and run time; here a non-owner's bare name never resolves
+  // against the server's working folder.
+  const unconfined = !currentJobCtx || isOwnerCtx(currentJobCtx);
+  const usable = (p) => Boolean(p) && (unconfined || path.isAbsolute(p)) && fs.existsSync(p);
+  const direct = resolveOutputAliasForCtx(normalized, currentJobCtx);
   if (isRemoteUrl(direct)) return direct;
-  if (fs.existsSync(direct)) return direct;
+  if (usable(direct)) {
+    // A path a non-owner names (a payload field or a picked id that looks
+    // like one) is theirs or shared, or refused (#112). A copy this job just
+    // downloaded through the SSRF guard is the server's own, not a request.
+    if (unconfined || isOwnJobDownload(direct)) return direct;
+    return confineJobInput(direct);
+  }
 
   // Try to find in library
   const lib = readLibrary(dataDir || currentDataDir());
   const item = lib.items.find(x => String(x.id) === normalized);
   if (item) {
+    // A saved item's local links must be the caller's own (#112). Ids are
+    // also picked at RUN time (auto backgrounds, campaign scenes), past the
+    // payload check, so this is where they are confined.
+    // The item's OWN links are checked, whatever its id looks like: an id
+    // shaped like a path must not stand in for them.
+    if (!unconfined) {
+      try {
+        assertLibraryItemInScope(item, currentJobCtx);
+      } catch (err) {
+        if (err instanceof UserPathError) throw new Error(`${err.code}: ${err.message}`);
+        throw err;
+      }
+    }
     if (Array.isArray(item.files) && item.files.length > 0) {
       const sorted = item.files.slice().sort((a, b) => (b.width || 0) - (a.width || 0));
       const hd = sorted.find(f => f.quality === 'hd') || sorted[0];
       if (hd?.link) return hd.link;
     }
-    const localUrl = resolveOutputAlias(item.url);
-    if (localUrl && !String(localUrl).startsWith("http") && fs.existsSync(localUrl)) return localUrl;
-    const preview = resolveOutputAlias(item.previewUrl);
+    const localUrl = resolveOutputAliasForCtx(item.url, currentJobCtx);
+    if (localUrl && !String(localUrl).startsWith("http") && usable(localUrl)) return localUrl;
+    const preview = resolveOutputAliasForCtx(item.previewUrl, currentJobCtx);
     if (preview && String(preview).startsWith("http")) return preview;
-    if (preview && fs.existsSync(preview)) return preview;
-    if (localUrl) return localUrl;
-    if (preview) return preview;
+    if (usable(preview)) return preview;
+    if (isRemoteUrl(localUrl)) return localUrl;
+    if (unconfined && localUrl) return localUrl;
+    if (unconfined && preview) return preview;
   }
+  if (!unconfined) return null;
 
   return direct; // Return as is (might be external URL)
 }
@@ -562,12 +635,30 @@ async function localiseJobInputs(payload, { background = false } = {}) {
     } catch (err) {
       throw new Error(remoteInputFailure(err, what).error);
     }
+    currentJobRun?.made.add(path.resolve(local));
     next = { ...next, [field]: local };
   }
   return next;
 }
 
+/**
+ * #112: every path the payload names must be in the job's scope (its own
+ * folder, shared voice files, its generated images). Checked at enqueue and
+ * retry, and again here when the job runs, so a payload stored before the
+ * check existed cannot read another tenant's file.
+ */
+function assertJobPathsInScope(payload, ctx) {
+  try {
+    assertPayloadPathsInScope(payload, ctx, { ignoreMissing: true });
+  } catch (err) {
+    if (err instanceof UserPathError) throw new Error(`${err.code}: ${err.message}`);
+    throw err;
+  }
+}
+
 async function executeJob(job) {
+  currentJobRun = { ctx: currentJobCtx, made: new Set() };
+  assertJobPathsInScope(job?.payload, currentJobCtx);
   if (!ensureFfmpegAvailable()) {
     throw new Error("FFmpeg not available on server");
   }
@@ -724,7 +815,7 @@ async function executeJob(job) {
 // when nothing can be sourced. Pure selection logic lives in lib/autoBackground.
 async function applyAutoBackground(payload) {
   const lib = readLibrary(currentDataDir());
-  const pool = Array.isArray(lib?.items) ? lib.items : [];
+  const pool = pickableLibraryItems(lib?.items);
   const lines = Array.isArray(payload?.lines) ? payload.lines.filter(Boolean) : [];
   const total = clampDuration(payload?.durationSec || 20);
   const aspect = String(payload?.aspect || "portrait");
@@ -1429,7 +1520,7 @@ async function runCampaignAutoPost(payload, jobId) {
   // 2. Library check — we'll pick backgrounds per beat after TTS so each
   // scene matches its own text mood.
   const lib = readLibrary(currentDataDir());
-  const pool = Array.isArray(lib?.items) ? lib.items : [];
+  const pool = pickableLibraryItems(lib?.items);
   if (pool.length === 0) throw new Error("campaign: library is empty — add at least one background before running auto-post");
   safeUpdateJob(jobId, { progress: 18 });
 
@@ -1881,7 +1972,7 @@ async function workerTick() {
   safeUpdateJob(next.id, { status: "running", startedAt: new Date().toISOString(), progress: 0 });
   currentJobCtx = next.ctx || null;
   try {
-    const result = await executeJob(next);
+    const result = await executeJobImpl(next);
     volatileProgressByJob.set(next.id, 100);
     safeUpdateJob(next.id, { status: "done", progress: 100, finishedAt: new Date().toISOString(), result });
     if (next.type === "render_video" || next.type === "render_waveform") {
@@ -1901,6 +1992,7 @@ async function workerTick() {
     volatileProgressByJob.delete(next.id);
     running = false;
     currentJobCtx = null;
+    currentJobRun = null;
   }
 }
 
@@ -1945,6 +2037,9 @@ router.get("/:id", (req, res) => {
   res.json({ ok: true, job: withVolatileProgress(j) });
 });
 
+// Job types that render, so enqueue and retry each spend one unit of the plan's render quota.
+const RETRY_COUNTED_TYPES = new Set(["render_video", "render_waveform", "campaign_auto_post"]);
+
 router.post("/enqueue", (req, res) => {
   const type = String(req.body?.type || "").trim();
   const payload = req.body?.payload || {};
@@ -1954,9 +2049,22 @@ router.post("/enqueue", (req, res) => {
   const prevCtx = currentJobCtx;
   currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) };
   let validation;
-  try { validation = validatePayloadForEnqueue(type, payload); }
-  finally { currentJobCtx = prevCtx; }
+  try {
+    // Paths first (#112): 403 for one outside the caller's scope.
+    assertPayloadPathsInScope(payload, currentJobCtx, { ignoreMissing: true });
+    validation = validatePayloadForEnqueue(type, payload);
+  } catch (err) {
+    if (sendUserPathError(res, err)) return;
+    throw err;
+  } finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
+
+  // A queued render spends the plan's render quota exactly as a retry does
+  // (R34); without this, the queue was an unmetered way to render.
+  if (RETRY_COUNTED_TYPES.has(type)) {
+    const spent = consumeQuota(req.ctx, "render");
+    if (!spent.ok) return res.status(spent.status).json(spent.body);
+  }
 
   const id = `job_${uuid()}`;
   const job = {
@@ -1967,7 +2075,11 @@ router.post("/enqueue", (req, res) => {
     // when no per-user webhook is configured).
     ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) },
     status: "queued",
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    // `{ "autoPublish": false }` next to type and payload keeps this render
+    // from posting through Postiz when it finishes (agents without publish
+    // consent), the same switch the retry route takes.
+    ...(req.body?.autoPublish === false ? { suppressAutoPublish: true } : {}),
   };
   store = loadJobs();
   store.jobs.push(job);
@@ -1989,8 +2101,6 @@ router.post("/enqueue", (req, res) => {
  * Ownership: only the job's owner (or super-admin) can retry. Anything
  * else returns 404 to avoid leaking job existence across tenants.
  */
-const RETRY_COUNTED_TYPES = new Set(["render_video", "render_waveform", "campaign_auto_post"]);
-
 router.post("/:id/retry", (req, res) => {
   store = loadJobs();
   const original = store.jobs.find((j) => j.id === req.params.id);
@@ -2010,8 +2120,14 @@ router.post("/:id/retry", (req, res) => {
   const prevCtx = currentJobCtx;
   currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) };
   let validation;
-  try { validation = validatePayloadForEnqueue(type, payload); }
-  finally { currentJobCtx = prevCtx; }
+  try {
+    // Paths first (#112): 403 for one outside the caller's scope.
+    assertPayloadPathsInScope(payload, currentJobCtx, { ignoreMissing: true });
+    validation = validatePayloadForEnqueue(type, payload);
+  } catch (err) {
+    if (sendUserPathError(res, err)) return;
+    throw err;
+  } finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
 
   // A retry renders again, so it spends the plan's render quota; without this
@@ -2067,6 +2183,31 @@ export function buildCampaignJob(id, payload, ctx) {
   };
 }
 
+/**
+ * validatePayloadForEnqueue("campaign_auto_post", payload) under the caller's scope (their Library).
+ * Throws first when a payload path is outside the caller's scope (#112).
+ */
+function validateCampaignFor(payload, ctx) {
+  const normalizedCtx = ctx
+    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin), isOwner: isOwnerCtx(ctx) }
+    : null;
+  const prevCtx = currentJobCtx;
+  currentJobCtx = normalizedCtx;
+  try {
+    assertJobPathsInScope(payload, normalizedCtx);
+    return validatePayloadForEnqueue("campaign_auto_post", payload || {});
+  } finally { currentJobCtx = prevCtx; }
+}
+
+/**
+ * Why enqueueCampaignAutoPost would refuse every campaign for this caller (an empty Library), or null.
+ * Lets a caller that enqueues several (a series) refuse before it spends anything.
+ */
+export function campaignPreconditionError(ctx) {
+  const validation = validateCampaignFor({}, ctx);
+  return validation.ok ? null : validation.error;
+}
+
 // Programmatic enqueue helper for in-process callers (e.g. cron-driven
 // schedules in social.js). Skips HTTP/auth, performs the same validation.
 export async function enqueueCampaignAutoPost(payload, ctx) {
@@ -2074,14 +2215,7 @@ export async function enqueueCampaignAutoPost(payload, ctx) {
   //   { dataDir, outputDir, userId, isSuperAdmin }
   // Callers that don't pass ctx (legacy cron in social.js pre-refactor) get
   // the global super-admin paths, matching pre-multi-tenant behaviour.
-  const normalizedCtx = ctx
-    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin), isOwner: isOwnerCtx(ctx) }
-    : null;
-  const prevCtx = currentJobCtx;
-  currentJobCtx = normalizedCtx;
-  let validation;
-  try { validation = validatePayloadForEnqueue("campaign_auto_post", payload || {}); }
-  finally { currentJobCtx = prevCtx; }
+  const validation = validateCampaignFor(payload, ctx);
   if (!validation.ok) throw new Error(validation.error);
   const job = buildCampaignJob(`job_${uuid()}`, payload, ctx);
   store = loadJobs();

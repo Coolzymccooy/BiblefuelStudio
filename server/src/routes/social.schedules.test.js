@@ -164,3 +164,31 @@ describe('POST /config — the "Save Schedules" button path', () => {
     assert.deepEqual(second, first, 'a no-op save from a second device must not change the schedule');
   });
 });
+
+describe('social schedules — agent-created marker (R35)', () => {
+  const AUTO = { name: 'Agent post', type: 'auto_generate', cron: '0 6 * * *', timezone: 'UTC', destination: 'webhook', enabled: false };
+
+  test('a schedule saved with createdByAgentKeyId keeps it on disk and in the list', async () => {
+    const { a, dataDir } = app();
+    const res = await request(a).post('/api/social/schedules').send({ schedule: { ...AUTO, createdByAgentKeyId: 'ak_123' } });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.schedule.createdByAgentKeyId, 'ak_123');
+    const onDisk = JSON.parse(fs.readFileSync(path.join(dataDir, 'social.json'), 'utf8'));
+    assert.equal(onDisk.schedules[0].createdByAgentKeyId, 'ak_123');
+  });
+
+  test('a schedule saved without it has no marker, and re-saving an agent schedule from the app keeps the marker', async () => {
+    const { a } = app();
+    const plain = await request(a).post('/api/social/schedules').send(AUTO).expect(200);
+    assert.equal(Object.hasOwn(plain.body.schedule, 'createdByAgentKeyId'), false);
+    const made = await request(a).post('/api/social/schedules').send({ schedule: { ...AUTO, createdByAgentKeyId: 'ak_9' } }).expect(200);
+    const resaved = await request(a).post('/api/social/schedules').send({ ...AUTO, id: made.body.schedule.id, name: 'Renamed' }).expect(200);
+    assert.equal(resaved.body.schedule.createdByAgentKeyId, 'ak_9');
+  });
+
+  test('a marker that is not a plain id is dropped', async () => {
+    const { a } = app();
+    const res = await request(a).post('/api/social/schedules').send({ schedule: { ...AUTO, createdByAgentKeyId: { $gt: '' } } }).expect(200);
+    assert.equal(Object.hasOwn(res.body.schedule, 'createdByAgentKeyId'), false);
+  });
+});

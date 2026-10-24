@@ -19,13 +19,13 @@ const keysFile = path.join(dir, "agent-keys.json");
 
 const store = await import("../lib/agentKeys/store.js");
 const auth = await import("../auth.js");
-const { requireAgentKeyOrJwt, refuseAgentCalls } = await import("./agentAuth.js");
+const { requireAgentKey, refuseAgentCalls } = await import("./agentAuth.js");
 
 const app = express();
-app.get("/p", requireAgentKeyOrJwt, (req, res) => res.json({ user: req.user, key: req.agentKey }));
+app.get("/p", requireAgentKey, (req, res) => res.json({ user: req.user, key: req.agentKey }));
 app.delete("/me", auth.requireAuth, refuseAgentCalls, (_req, res) => res.json({ ok: true }));
 app.delete("/anon", refuseAgentCalls, (_req, res) => res.json({ ok: true }));
-app.delete("/agent-me", requireAgentKeyOrJwt, refuseAgentCalls, (_req, res) => res.json({ ok: true }));
+app.delete("/agent-me", requireAgentKey, refuseAgentCalls, (_req, res) => res.json({ ok: true }));
 app.get("/app-only", auth.requireAuth, (_req, res) => res.json({ ok: true }));
 
 beforeEach(() => {
@@ -83,18 +83,23 @@ test("a corrupt key store fails closed with 401 AGENT_KEY_INVALID", async () => 
   assert.deepEqual(res.body, { ok: false, error: "AGENT_KEY_INVALID" });
 });
 
-test("an app JWT authenticates with agentKey null", async () => {
+const KEY_REQUIRED = {
+  ok: false,
+  error: "AGENT_KEY_REQUIRED",
+  message: "Connect with an agent key from Settings → Connected agents.",
+};
+
+test("a valid app JWT is refused with 401 AGENT_KEY_REQUIRED", async () => {
   const token = auth.signToken({ id: "u_1", email: "one@example.com", role: "user", emailVerified: true });
   const res = await request(app).get("/p").set("Authorization", `Bearer ${token}`);
-  assert.equal(res.status, 200);
-  assert.equal(res.body.user.sub, "u_1");
-  assert.equal(res.body.key, null);
+  assert.equal(res.status, 401);
+  assert.deepEqual(res.body, KEY_REQUIRED);
 });
 
-test("a bad JWT is 401 Invalid token", async () => {
+test("any other non-key bearer is 401 AGENT_KEY_REQUIRED", async () => {
   const res = await request(app).get("/p").set("Authorization", "Bearer not.a.jwt");
   assert.equal(res.status, 401);
-  assert.deepEqual(res.body, { ok: false, error: "Invalid token" });
+  assert.deepEqual(res.body, KEY_REQUIRED);
 });
 
 test("a missing header is 401 Missing Bearer token", async () => {
@@ -137,11 +142,11 @@ test("signInternalToken expires in 60 seconds and carries via=mcp", () => {
   assert.equal(decoded.emailVerified, true);
 });
 
-test("an internal (via) token is refused at the MCP auth with 401 AGENT_KEY_INVALID", async () => {
+test("an internal (via) token is refused at the MCP auth with 401 AGENT_KEY_REQUIRED", async () => {
   const internal = auth.signInternalToken({ sub: "u_1", email: "one@example.com", role: "user", emailVerified: true });
   const res = await request(app).get("/p").set("Authorization", `Bearer ${internal}`);
   assert.equal(res.status, 401);
-  assert.deepEqual(res.body, { ok: false, error: "AGENT_KEY_INVALID", message: "Invalid token" });
+  assert.deepEqual(res.body, KEY_REQUIRED);
 });
 
 test("refuseAgentCalls refuses a request authenticated by an agent key", async () => {

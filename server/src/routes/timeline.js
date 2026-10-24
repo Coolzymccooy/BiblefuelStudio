@@ -7,13 +7,17 @@ import { fileURLToPath } from 'url';
 import { buildTimelineRenderPlan } from '../lib/timelineRender/planner.js';
 import { renderTimelineProof } from '../lib/timelineRender/proofRenderer.js';
 import { resolveProjectAssets } from '../lib/timelineRender/resolveProjectAssets.js';
-import { resolveAssetPath } from './jobs.js';
-import { resolveOutputAlias } from '../lib/mediaThumb.js';
 import { OUTPUT_DIR } from '../lib/paths.js';
 import { spawn } from 'child_process';
 import { downsamplePeaks, peaksCacheKey, PEAK_BUCKETS } from '../lib/audioPeaks.js';
 import { quota } from '../middleware/quota.js';
 import { brandLogoFor } from '../lib/branding.js';
+import { confineUserPath, isSharedStockFile, isSharedTtsFile, sendUserPathError, UserPathError } from '../lib/userPathScope.js';
+import { resolveLibraryTrack } from '../lib/musicLibrary.js';
+import { resolveTenantTrack } from '../lib/musicLibraryStore.js';
+import { readLibrary } from '../lib/library.js';
+import { isUrlLike } from '../lib/inputUrl.js';
+import { isSharedGeneratedImage } from '../lib/mediaInputScope.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -147,6 +151,18 @@ function serializeJob(job) {
   };
 }
 
+/**
+ * Where a render writes its video (R48). The owner (whose outputs ARE the
+ * global folder) keeps the flat timeline/<jobId>.mp4 that express.static
+ * serves. Anyone else renders into their own outputs, in a folder named by the
+ * unguessable job id: the per-user /outputs fallback serves a nested path only
+ * when one of its folders is such an id (lib/perUserOutputs.js).
+ */
+function timelineOutputPath(outputDir, jobId) {
+  if (path.resolve(outputDir) === path.resolve(OUTPUT_DIR)) return path.join(OUTPUT_DIR, 'timeline', `${jobId}.mp4`);
+  return path.join(outputDir, 'timeline', jobId, 'video.mp4');
+}
+
 async function runTimelineJob(job) {
   job.status = 'running';
   job.phase = 'rendering';
@@ -155,10 +171,13 @@ async function runTimelineJob(job) {
   persistTimelineJob(job);
 
   try {
+    const outputDir = job.outputDir || OUTPUT_DIR;
     const proofResult = await _renderTimelineProof(job.plan, {
       serverRoot: SERVER_ROOT,
-      outputDir: OUTPUT_DIR,
-      outputPath: path.join(OUTPUT_DIR, 'timeline', `${job.jobId}.mp4`),
+      outputDir,
+      // The shared files #112 let /render through, read from the global folder (R48).
+      allowShared: timelineFileScope({ userId: job.userId }).allowShared,
+      outputPath: timelineOutputPath(outputDir, job.jobId),
       typographyPreset: job.typographyPreset || undefined,
       captionEnergy: job.captionEnergy || undefined,
       captionSeed: job.captionSeed ?? undefined,
@@ -259,6 +278,55 @@ function extractPeaks(absPath) {
  * every step) and the trace takes its colour from the lane's ink in whichever
  * theme is on.
  */
+/**
+ * A bundled (`library:`) or saved (`mylib:`) music ref, resolved by its own
+ * store. Saved tracks come from the caller's own data dir. Null for anything
+ * that is not a resolvable ref.
+ */
+function resolveMusicRef(raw, dataDir) {
+  if (raw.startsWith('library:')) return resolveLibraryTrack(raw);
+  if (raw.startsWith('mylib:') && dataDir) return resolveTenantTrack(dataDir, raw);
+  return null;
+}
+
+// Shared voice files, downloaded Pexels/Pixabay stock and the caller's own
+// generated images, which "Send backgrounds to B-roll" puts on the timeline (#112).
+const timelineFileScope = (ctx) => ({
+  allowShared: (abs) => isSharedTtsFile(abs) || isSharedStockFile(abs) || isSharedGeneratedImage(abs, ctx?.userId),
+});
+
+/** Does the value name a path or URL rather than a saved library item id? */
+function looksLikeAssetPath(value) {
+  return path.isAbsolute(value) || value.includes('/') || value.includes('\\') || value.includes('\0') || isUrlLike(value);
+}
+
+/** The media a saved library item points at: its best stock link or a local path. */
+function libraryItemLink(item) {
+  if (Array.isArray(item.files) && item.files.length > 0) {
+    const sorted = item.files.slice().sort((a, b) => (b.width || 0) - (a.width || 0));
+    const hd = sorted.find((file) => file.quality === 'hd') || sorted[0];
+    if (hd?.link) return String(hd.link).trim();
+  }
+  return String(item.previewUrl || item.url || '').trim();
+}
+
+/**
+ * One timeline asset path, as media the caller may use (#112). Returns the
+ * value the renderer should read, null for a missing music ref, and throws a
+ * UserPathError for anything outside the caller's scope. Stock https links
+ * are returned as-is: the renderer localises them through the SSRF guard.
+ */
+function scopeTimelineAsset(raw, ctx) {
+  const music = resolveMusicRef(raw, ctx?.dataDir);
+  if (music) return music;
+  if (/^(library|mylib):/.test(raw)) return null;
+  if (looksLikeAssetPath(raw)) return confineUserPath(raw, ctx, timelineFileScope(ctx));
+  const item = ctx?.dataDir ? readLibrary(ctx.dataDir).items.find((x) => String(x.id) === raw) : null;
+  const link = item ? libraryItemLink(item) : '';
+  if (!link) throw new UserPathError('FILE_NOT_FOUND', 400, `Asset not found: ${raw}`);
+  return /^https?:\/\//i.test(link) ? link : confineUserPath(link, ctx, timelineFileScope(ctx));
+}
+
 router.get('/peaks', async (req, res) => {
   try {
     const raw = String(req.query?.path || '').trim();
@@ -268,37 +336,23 @@ router.get('/peaks', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'local asset path required' });
     }
 
-    // Multi-tenant is the DEFAULT: a non-admin's uploads live in
-    // DATA_DIR/users/<id>/outputs, not the global OUTPUT_DIR. Resolving the
-    // `/outputs/...` alias against the global dir (which is what
-    // resolveOutputAlias does) pointed every ordinary user's request at a file
-    // that is not theirs — 404 on the alias, 400 on the absolute path — so
-    // waveforms only ever loaded for the super-admin. Both the lookup and the
-    // cache write have to follow req.ctx, the way every sibling route does.
-    const roots = [];
-    if (req.ctx?.outputDir) roots.push(path.resolve(req.ctx.outputDir));
-    // The global dir stays readable: shared library audio and anything a
-    // single-tenant install wrote still lives there.
-    if (!roots.some((r) => r === path.resolve(OUTPUT_DIR))) roots.push(path.resolve(OUTPUT_DIR));
-
-    const aliasMatch = String(raw).replace(/\\/g, '/').match(/^\.?\/?outputs\/(.+)$/i);
-    const candidates = aliasMatch
-      ? roots.map((root) => path.resolve(path.join(root, aliasMatch[1])))
-      : [path.resolve(resolveOutputAlias(raw))];
-
-    // Confine to a root we own. The query string is user input, and without
-    // this a ../.. would read any file the process can reach.
-    const abs = candidates.find((candidate) => roots.some(
-      (root) => candidate === root || candidate.startsWith(root + path.sep),
-    ) && fs.existsSync(candidate));
-
+    // The caller's own output folder only (#112). For the owner that is the
+    // global OUTPUT_DIR; a non-owner's is DATA_DIR/users/<id>/outputs, and the
+    // global dir (the owner's files) is NOT readable to them. Shared tts-*
+    // voice files and bundled or saved music refs (a music bed lane) still
+    // draw. confineUserPath checks lexically, then again after realpath.
+    let abs = resolveMusicRef(raw, req.ctx?.dataDir);
+    if (!abs && /^(library|mylib):/.test(raw)) return res.status(404).json({ ok: false, error: 'asset not found' });
     if (!abs) {
-      const inRoot = candidates.some((candidate) => roots.some(
-        (root) => candidate === root || candidate.startsWith(root + path.sep),
-      ));
-      return inRoot
-        ? res.status(404).json({ ok: false, error: 'asset not found' })
-        : res.status(400).json({ ok: false, error: 'asset outside the output directory' });
+      try {
+        abs = confineUserPath(raw, req.ctx, { allowShared: isSharedTtsFile });
+      } catch (err) {
+        if (err instanceof UserPathError && err.code === 'FILE_NOT_FOUND') {
+          return res.status(404).json({ ok: false, error: 'asset not found' });
+        }
+        if (sendUserPathError(res, err)) return;
+        throw err;
+      }
     }
 
     const stat = fs.statSync(abs);
@@ -352,14 +406,14 @@ router.get('/projects/:projectId', (req, res) => {
 // action that costs one.
 router.post('/render', quota('render'), (req, res) => {
   try {
-    // Library ids (from 'Send backgrounds to B-roll') become real media here.
+    // Every asset path becomes media the caller may use (#112): their own
+    // file, a shared voice file, bundled or saved music, or a library id
+    // (from 'Send backgrounds to B-roll'). Stock https footage is kept for
+    // the renderer to localise. Anything else throws a UserPathError, so
+    // nothing is queued.
     const project = resolveProjectAssets(req.body?.project, {
-      exists: (v) => { try { return fs.existsSync(resolveOutputAlias(v)); } catch { return false; } },
-      // Scope library lookups to THIS user's data dir. Without it the helper
-      // falls back to the global DATA_DIR (there is no job context in a
-      // request), so a tenant's 'Send backgrounds to B-roll' either found
-      // nothing or picked up an item belonging to someone else.
-      resolve: (v) => { try { return resolveAssetPath(v, req.ctx?.dataDir); } catch { return null; } },
+      exists: () => false,
+      resolve: (v) => scopeTimelineAsset(v, req.ctx),
     });
     const plan = buildTimelineRenderPlan(project, {
       quality: req.body?.quality || req.body?.project?.renderSettings?.quality || 'proof_720p',
@@ -374,6 +428,8 @@ router.post('/render', quota('render'), (req, res) => {
       jobId,
       userId: req.ctx?.userId || 'anon',
       dataDir: req.ctx?.dataDir,
+      // The caller's own outputs (R48): the renderer accepts their files and writes the video there.
+      outputDir: req.ctx?.outputDir || OUTPUT_DIR,
       status: 'queued',
       phase: 'queued',
       progress: 0,
@@ -417,12 +473,15 @@ router.post('/render', quota('render'), (req, res) => {
 
     return res.status(202).json(serializeJob(job));
   } catch (e) {
+    if (sendUserPathError(res, e)) return;
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
 router.get('/render/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId);
+  // R49: another user's job reads exactly like an unknown one.
+  if (job && job.userId !== (req.ctx?.userId || 'anon')) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
   if (job) return res.json(serializeJob(job));
   const persisted = readPersistedTimelineJob(req.ctx?.dataDir, req.params.jobId);
   if (!persisted) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });

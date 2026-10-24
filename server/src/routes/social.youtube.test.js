@@ -186,6 +186,26 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(fake.calls.insert.length, 0);
   });
 
+  test("a junction inside the caller's outputs cannot lead the video or thumbnail out (#112)", async (t) => {
+    const { a, outputDir, dataDir } = app();
+    fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
+    const other = path.join(dataDir, "not-outputs");
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(path.join(other, "private.mp4"), "vid");
+    fs.writeFileSync(path.join(other, "pic.png"), "img");
+    const door = path.join(outputDir, "door");
+    fs.symlinkSync(other, door, "junction");
+    t.after(() => { try { fs.unlinkSync(door); } catch {} });
+    const video = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "/outputs/door/private.mp4", title: "T" });
+    assert.equal(video.status, 400, JSON.stringify(video.body));
+    assert.match(video.body.error, /videoUrl must point inside your outputs folder/);
+    const thumb = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T", thumbnailPath: "/outputs/door/pic.png" });
+    assert.equal(thumb.status, 400, JSON.stringify(thumb.body));
+    assert.match(thumb.body.error, /thumbnailPath/);
+    assert.equal(fake.calls.insert.length, 0);
+    assert.equal(fake.calls.set.length, 0);
+  });
+
   test("rejects a videoUrl that resolves outside the caller's outputs by name", async () => {
     const { a, dataDir } = app();
     const elsewhere = path.join(dataDir, "not-outputs", "clip.mp4");
@@ -199,13 +219,12 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(fake.calls.insert.length, 0);
   });
 
-  test("a non-admin tenant can use a genImg scene image from the global outputs dir as the thumbnail", async (t) => {
+  test("a non-admin tenant can use their own generated picture from the global genImg dir as the thumbnail", async (t) => {
     const { a, outputDir } = app();
     fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
-    const genImgDir = path.join(OUTPUT_DIR, "genImg", `yt-test-${process.pid}`);
+    const genImgDir = path.join(OUTPUT_DIR, "genImg", `genvis-u1-yt${process.pid}`);
     fs.mkdirSync(genImgDir, { recursive: true });
-    const scene = path.join(genImgDir, "part-1.png");
-    fs.writeFileSync(scene, "img");
+    fs.writeFileSync(path.join(genImgDir, "part-1.png"), "img");
     t.after(() => { try { fs.rmSync(genImgDir, { recursive: true, force: true }); } catch {} });
     const res = await request(a).post("/api/social/post").send({
       destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T",
@@ -213,6 +232,24 @@ describe("POST /api/social/post destination=youtube", () => {
     });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(fake.calls.set.length, 1);
+  });
+
+  test("a non-admin tenant cannot use another account's picture from the global genImg dir (#112)", async (t) => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
+    const genImgDir = path.join(OUTPUT_DIR, "genImg", `yt-test-${process.pid}`);
+    fs.mkdirSync(genImgDir, { recursive: true });
+    fs.writeFileSync(path.join(genImgDir, "part-1.png"), "img");
+    t.after(() => { try { fs.rmSync(genImgDir, { recursive: true, force: true }); } catch {} });
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T",
+      thumbnailPath: `/outputs/genImg/${path.basename(genImgDir)}/part-1.png`,
+    });
+    // The value names the caller's own genImg folder, where no such picture is:
+    // the video goes up and the thumbnail is reported, never read from theirs.
+    assert.equal(fake.calls.set.length, 0);
+    assert.match(String(res.body.thumbnailError), /not found/);
+    assert.ok(!String(res.body.thumbnailError).includes(path.resolve(OUTPUT_DIR, "genImg")), res.body.thumbnailError);
   });
 
   test("streams a remote videoUrl to disk instead of buffering it", async () => {

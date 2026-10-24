@@ -149,6 +149,17 @@ test("csv has the header row", async () => {
   assert.ok(res.text.includes("key:created"));
 });
 
+test("the own-activity csv defuses cells a spreadsheet would run as a formula", async () => {
+  const { logActivity } = await import("../lib/agentKeys/activity.js");
+  logActivity({ keyId: "k_x", keyName: "+evil", userId: "u_one", email: "one@example.com", tool: "whoami", input: {}, ok: false, error: "=1+2", ms: 1 });
+  const res = await request(app).get("/api/agent-keys/activity.csv").set(bearer("u_one"));
+  assert.equal(res.status, 200);
+  const row = res.text.split("\n").find((line) => line.includes(",k_x,"));
+  assert.ok(row, res.text);
+  assert.ok(row.includes(",'+evil,"), row);
+  assert.ok(row.includes(",false,'=1+2,"), row);
+});
+
 test("an internal token is refused on every agent-keys route", async () => {
   const internal = { Authorization: `Bearer ${signInternalToken({ sub: "u_one", email: "one@example.com", role: "user" })}` };
   const calls = [

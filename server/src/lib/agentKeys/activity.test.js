@@ -156,3 +156,79 @@ test("pruneActivity removes files older than 90 days and keeps the rest", () => 
   fs.rmSync(activityDir, { recursive: true, force: true });
   assert.equal(pruneActivity(), 0);
 });
+
+test("readActivity filters by tool and outcome", () => {
+  at("2026-10-23T08:00:00.000Z");
+  logActivity(entry({ tool: "render" }));
+  at("2026-10-23T08:01:00.000Z");
+  logActivity(entry({ tool: "render", ok: false, error: "MCP_CAP_REACHED: x" }));
+  at("2026-10-23T08:02:00.000Z");
+  logActivity(entry({ tool: "whoami" }));
+
+  assert.deepEqual(readActivity({ tool: "render" }).map((e) => e.ok), [false, true]);
+  assert.deepEqual(readActivity({ ok: false }).map((e) => e.tool), ["render"]);
+  assert.deepEqual(readActivity({ ok: true }).map((e) => e.tool), ["whoami", "render"]);
+});
+
+test("queryActivity returns the newest rows, counts over every match and the total", () => {
+  at("2026-10-23T08:00:00.000Z");
+  logActivity(entry({ tool: "render", email: "one@example.com" }));
+  at("2026-10-23T08:01:00.000Z");
+  logActivity(entry({ tool: "render", ok: false, error: "boom", email: "one@example.com" }));
+  at("2026-10-23T08:02:00.000Z");
+  logActivity(entry({ tool: "whoami", userId: "u_2", email: "two@example.com" }));
+  at("2026-10-23T08:03:00.000Z");
+  logKeyEvent("u_2", "k_9", "created", { name: "Codex" });
+
+  const result = activity.queryActivity({ from: "2026-10-23", to: "2026-10-23", limit: 2 });
+  assert.equal(result.total, 4);
+  assert.deepEqual(result.rows.map((e) => e.tool), ["key:created", "whoami"]);
+  assert.deepEqual(result.counts.byTool, {
+    render: { calls: 2, errors: 1 },
+    whoami: { calls: 1, errors: 0 },
+    "key:created": { calls: 1, errors: 0 },
+  });
+  // byUser is keyed by user id: u_2's tool call and key event (which has no email) share one row.
+  assert.deepEqual(result.counts.byUser, {
+    u_1: { calls: 2, errors: 1 },
+    u_2: { calls: 2, errors: 0 },
+  });
+  assert.deepEqual(result.counts.emails, { u_1: "one@example.com", u_2: "two@example.com" });
+
+  const filtered = activity.queryActivity({ from: "2026-10-23", to: "2026-10-23", tool: "render", ok: false });
+  assert.equal(filtered.total, 1);
+  assert.deepEqual(filtered.counts.byTool, { render: { calls: 1, errors: 1 } });
+});
+
+test("activityCsv prefixes cells that a spreadsheet would run as a formula", () => {
+  const risky = ["=HYPERLINK(\"x\")", "+1", "-2", "@SUM(A1)", "\tlead"];
+  const csv = activityCsv(
+    risky.map((text, i) => ({ ts: `2026-10-23T08:0${i}:00.000Z`, ...entry({ tool: text, keyName: text, error: text, ok: false }) })),
+  );
+  const rows = csv.trim().split("\n").slice(1);
+  assert.equal(rows.length, risky.length);
+  assert.ok(rows[0].includes(`"'=HYPERLINK(""x"")"`), rows[0]);
+  assert.ok(rows[1].includes(",'+1,"), rows[1]);
+  assert.ok(rows[2].includes(",'-2,"), rows[2]);
+  assert.ok(rows[3].includes(",'@SUM(A1),"), rows[3]);
+  assert.ok(rows[4].includes("'\tlead"), rows[4]);
+  assert.ok(!/,[=+\-@]/.test(rows.join("\n").replace(/,'[=+\-@]/g, "")), "no bare formula cell left");
+  // Ordinary values are untouched.
+  const plain = activityCsv([{ ts: "2026-10-23T08:00:00.000Z", ...entry({ tool: "render", ms: 5 }) }]);
+  assert.ok(plain.trim().split("\n")[1].startsWith("2026-10-23T08:00:00.000Z,k_1,Claude,u_1,one@example.com,render,true,,5"));
+});
+
+test("summariseActivity keys users by id and takes the email from any row that has one", () => {
+  const counts = activity.summariseActivity([
+    { userId: "u_7", email: null, tool: "key:created", ok: true },
+    { userId: "u_7", email: "seven@example.com", tool: "whoami", ok: false },
+    { userId: "u_8", email: null, tool: "key:revoked", ok: true },
+    { userId: null, email: null, tool: "whoami", ok: true },
+  ]);
+  assert.deepEqual(counts.byUser, {
+    u_7: { calls: 2, errors: 1 },
+    u_8: { calls: 1, errors: 0 },
+    unknown: { calls: 1, errors: 0 },
+  });
+  assert.deepEqual(counts.emails, { u_7: "seven@example.com", u_8: null });
+});

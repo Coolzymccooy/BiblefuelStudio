@@ -7,7 +7,7 @@ import { api } from './api';
  */
 
 /** Daily cap buckets, named as the server names them (server/src/lib/agentKeys/caps.js). */
-export const CAP_BUCKETS = ['renders', 'aiVideoUsd', 'images', 'tts', 'publishes'] as const;
+export const CAP_BUCKETS = ['renders', 'aiVideoUsd', 'images', 'tts', 'publishes', 'imports'] as const;
 export type CapBucket = (typeof CAP_BUCKETS)[number];
 export type Caps = Record<CapBucket, number>;
 

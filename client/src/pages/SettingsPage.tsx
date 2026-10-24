@@ -7,6 +7,7 @@ import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
+import { testWebhookId } from '../lib/postableWebhooks';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
 import { SCHEDULE_TIMEZONE, scheduleSnapshot, isScheduleUnsaved, scheduleSavedMessage, scheduleFromServer, type SocialSchedule } from '../lib/socialSchedules';
@@ -236,7 +237,8 @@ export function SettingsPage() {
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         const res = await api.post('/api/social/post', {
             destination: 'webhook',
-            webhookId: selected.id,
+            // A disabled webhook is tested by its URL: the server refuses its id (R40).
+            webhookId: testWebhookId(selected),
             webhookUrl: selected.url,
             caption: `Webhook smoke test - ${stamp}. Psalm 23:1`,
             videoUrl: 'https://download.samplelib.com/mp4/sample-5s.mp4',

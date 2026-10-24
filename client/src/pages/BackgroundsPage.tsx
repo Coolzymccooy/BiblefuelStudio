@@ -122,6 +122,8 @@ export function BackgroundsPage() {
     const [isBulkDownloadingAnimated, setIsBulkDownloadingAnimated] = useState(false);
     const [localFolder, setLocalFolder] = useState('');
     const [importedLocal, setImportedLocal] = useState<PexelsVideo[]>([]);
+    // Import-local reads a folder on the server: the owner's alone (#112).
+    const [canImportLocal, setCanImportLocal] = useState(false);
     const [categoryFilter, setCategoryFilter] = useState<string>('');
     const [editingCategoriesFor, setEditingCategoriesFor] = useState<string | number | null>(null);
 
@@ -222,6 +224,16 @@ export function BackgroundsPage() {
             loadLibrary();
         }
     }, [activeTab]);
+
+    useEffect(() => {
+        let cancelled = false;
+        api.get('/api/library/import-local')
+            .then((response) => {
+                if (!cancelled) setCanImportLocal(Boolean(response.ok && response.data?.allowed));
+            })
+            .catch(() => { /* the tab stays hidden */ });
+        return () => { cancelled = true; };
+    }, []);
 
     const handleSaveToLibrary = async (video: PexelsVideo) => {
         try {
@@ -324,7 +336,7 @@ export function BackgroundsPage() {
                 setImportedLocal(response.data.imported);
                 toast.success(`Imported ${response.data.imported.length} files`);
             } else {
-                toast.error(response.error || 'Import failed');
+                toast.error(response.data?.message || response.error || 'Import failed');
             }
         } catch (error) {
             toast.error('An error occurred');
@@ -494,13 +506,15 @@ export function BackgroundsPage() {
                         <Sparkles size={14} />
                         Animated
                     </button>
-                    <button
-                        onClick={() => setActiveTab('local')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'local' ? 'bg-primary-500 text-black shadow-lg' : 'text-gray-400 hover:text-editor-text'}`}
-                    >
-                        <FolderUp size={14} />
-                        Local Packs
-                    </button>
+                    {canImportLocal && (
+                        <button
+                            onClick={() => setActiveTab('local')}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'local' ? 'bg-primary-500 text-black shadow-lg' : 'text-gray-400 hover:text-editor-text'}`}
+                        >
+                            <FolderUp size={14} />
+                            Local Packs
+                        </button>
+                    )}
                     <button
                         onClick={() => setActiveTab('library')}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'library' ? 'bg-primary-500 text-black shadow-lg' : 'text-gray-400 hover:text-editor-text'}`}
@@ -608,14 +622,14 @@ export function BackgroundsPage() {
                         </div>
                     )}
                 </>
-            ) : activeTab === 'local' ? (
+            ) : activeTab === 'local' && canImportLocal ? (
                 <div className="space-y-4">
                     <Card className="bg-white/5 border-white/10 backdrop-blur-xl">
                         <div className="flex gap-2">
                             <Input
                                 value={localFolder}
                                 onChange={(e) => setLocalFolder(e.target.value)}
-                                placeholder="e.g. C:\\videos\\studio-packs"
+                                placeholder="e.g. /outputs/imports/studio-packs"
                                 className="bg-black/20 border-white/10"
                             />
                             <Button onClick={handleImportLocal} className="px-6">
@@ -623,7 +637,7 @@ export function BackgroundsPage() {
                             </Button>
                         </div>
                         <p className="text-help mt-2">
-                            Imports .mp4/.mov/.webm/.m4v from the folder into the library and outputs.
+                            Imports .mp4/.mov/.webm/.m4v into the library and outputs, from a folder inside your outputs folder.
                         </p>
                     </Card>
                     {importedLocal.length > 0 && (

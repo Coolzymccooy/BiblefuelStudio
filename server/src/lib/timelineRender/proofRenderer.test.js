@@ -10,6 +10,7 @@ import {
   resolveTimelineAssetPath,
 } from './proofRenderer.js';
 import { _setLibassForTest } from '../kinetic/capability.js';
+import { OUTPUT_DIR } from '../paths.js';
 import { resolveLook } from '../kinetic/looks.js';
 import { _clearFontCache } from '../fontMetrics.js';
 
@@ -42,6 +43,23 @@ describe('timeline proofRenderer', () => {
     assert.equal(resolveTimelineAssetPath('uploads/main.mp4', { serverRoot: root }), path.join(root, 'uploads/main.mp4'));
     assert.equal(resolveTimelineAssetPath('/outputs/videoGen/rays.mp4', { outputDir: path.join(root, 'outputs') }), path.join(root, 'outputs/videoGen/rays.mp4'));
     assert.equal(resolveTimelineAssetPath('../secret.env', { serverRoot: root }), null);
+  });
+
+  test("a non-owner's render reads only the shared files allowShared accepts from the global folder (R48)", () => {
+    const own = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-own-out-'));
+    const mine = path.join(OUTPUT_DIR, 'genImg', 'genvis-me-1', 'bg.png');
+    const theirs = path.join(OUTPUT_DIR, 'genImg', 'genvis-them-1', 'bg.png');
+    const allowShared = (abs) => abs.includes(`${path.sep}genvis-me-`);
+    // The global folder sits inside the server root here, which alone must not let a file through.
+    const opts = { serverRoot: path.dirname(OUTPUT_DIR), outputDir: own, allowShared };
+    assert.equal(resolveTimelineAssetPath(mine, opts), mine);
+    assert.equal(resolveTimelineAssetPath('/outputs/genImg/genvis-me-1/bg.png', opts), mine);
+    assert.equal(resolveTimelineAssetPath(theirs, opts), null);
+    assert.equal(resolveTimelineAssetPath('/outputs/genImg/genvis-them-1/bg.png', opts), path.join(own, 'genImg/genvis-them-1/bg.png'));
+    assert.equal(resolveTimelineAssetPath(mine, { ...opts, allowShared: undefined }), null);
+    // The caller's own files and the owner's global ones are unchanged.
+    assert.equal(resolveTimelineAssetPath(path.join(own, 'a.mp4'), opts), path.join(own, 'a.mp4'));
+    assert.equal(resolveTimelineAssetPath(theirs, { serverRoot: path.dirname(OUTPUT_DIR), outputDir: OUTPUT_DIR }), theirs);
   });
 
   test('buildProofRenderCommand produces low-res ffmpeg command with main video and optional B-roll input', () => {
