@@ -5,6 +5,8 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { OUTPUT_DIR } from '../paths.js';
+import { localiseInput } from '../remoteInputs.js';
+import { urlGuardMessage } from '../safeDownload.js';
 import { get as getVoiceProvider } from '../voice/index.js';
 import {
   escapeDrawText, escapeFontPath, fontFileFor, resolveTypographyPreset,
@@ -587,9 +589,41 @@ export function runFfmpeg(args, opts = {}) {
   });
 }
 
+/**
+ * A copy of `plan` in which every clip whose media is a remote URL (on the
+ * clip or on its asset) carries a local copy as `clip.path`, which
+ * clipMediaPath prefers. ffmpeg would otherwise fetch the URL itself with no
+ * SSRF check. Only media a clip actually references is downloaded.
+ * @param {object} plan
+ * @param {(value: string) => Promise<string>} [localise]
+ */
+export async function localiseRemoteMedia(plan, localise = localiseInput) {
+  const tracks = [];
+  for (const track of plan?.tracks || []) {
+    const clips = [];
+    for (const clip of track.clips || []) {
+      const media = clipMediaPath(clip, plan);
+      clips.push(/^https?:\/\//i.test(String(media || '')) ? { ...clip, path: await localise(media) } : clip);
+    }
+    tracks.push({ ...track, clips });
+  }
+  return { ...plan, tracks };
+}
+
+async function localisePlanOrFail(plan, localise) {
+  try {
+    return { ok: true, plan: await localiseRemoteMedia(plan, localise) };
+  } catch (err) {
+    return { ok: false, error: urlGuardMessage(err) || `Could not fetch timeline media: ${err?.message || err}` };
+  }
+}
+
 export async function renderTimelineProof(plan, opts = {}) {
-  const prepared = await prepareVoiceoverAssets(plan, opts);
-  if (!prepared.ok) return prepared;
+  const voiced = await prepareVoiceoverAssets(plan, opts);
+  if (!voiced.ok) return voiced;
+  const localised = await localisePlanOrFail(voiced.plan, opts.localise);
+  if (!localised.ok) return { ...localised, generatedVoiceovers: voiced.generatedVoiceovers };
+  const prepared = { ...voiced, plan: localised.plan };
   let command = buildProofRenderCommand(prepared.plan, opts);
   if (!command.ok) return command;
   fs.mkdirSync(path.dirname(command.outputPath), { recursive: true });
