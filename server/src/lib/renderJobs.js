@@ -1,6 +1,7 @@
 import { v4 as uuid } from "uuid";
 import fs from "fs";
 import path from "path";
+import { reportRenderFailure } from "./ops/renderFailures.js";
 
 // In-memory job registry for async render endpoints. The /captioned-video
 // route hands ffmpeg a long-running spawn (a 1-min sermon at 4K takes 40s+)
@@ -110,7 +111,11 @@ export function markError(jobId, error) {
   // Keep the "Render cancelled" message rather than the SIGKILL'd ffmpeg's
   // non-zero-exit error that arrives right after a cancel.
   if (record?.cancelled) return record;
-  return updateJob(jobId, { status: "error", error: String(error || "render failed") });
+  // Read before the update, which changes the record in place.
+  const firstFailure = Boolean(record) && record.status !== "error";
+  const failed = updateJob(jobId, { status: "error", error: String(error || "render failed") });
+  if (firstFailure) reportRenderFailure("render", { jobId, userId: record.userId, error });
+  return failed;
 }
 
 /** Register the live ffmpeg process for a job so it can be cancelled. */

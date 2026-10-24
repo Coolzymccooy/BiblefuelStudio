@@ -4,6 +4,7 @@
 
 import { renderAccessRequestEmail } from './templates/accessRequest.js';
 import { renderAccessApprovedEmail, renderAccessDeniedEmail } from './templates/accessDecision.js';
+import { renderOpsAlertEmail } from './templates/opsAlert.js';
 
 export function renderEmailRequest(req) {
   if (!req || typeof req !== 'object') throw new Error('renderEmailRequest: missing request');
@@ -21,6 +22,11 @@ export function renderEmailRequest(req) {
     case 'access-denied': {
       const { to, ...fields } = req;
       const rendered = renderAccessDeniedEmail(fields);
+      return { ...rendered, to };
+    }
+    case 'ops-alert': {
+      const { to, ...fields } = req;
+      const rendered = renderOpsAlertEmail(fields);
       return { ...rendered, to };
     }
     default:
