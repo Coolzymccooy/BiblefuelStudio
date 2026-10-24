@@ -119,23 +119,69 @@ function storyUrl(projectId, outputPath) {
   return name && safeId ? `/outputs/story/${safeId}/${name}` : null;
 }
 
+const AI_IN_FLIGHT = ["queued", "generating"];
+const IMAGE_IN_FLIGHT = new Set(["generating", "pending"]);
+// Steps the project itself is still running; AI clips in flight do not replace them as the phase.
+const STORY_BUSY = new Set(["transcribing", "segmenting", "generating_images", "rendering", "narrating", "error"]);
+
+/** How many scenes' AI motion clips are queued, generating, done or failed; null when none was ever ordered. */
+function animationCounts(scenes) {
+  const counts = { queued: 0, generating: 0, done: 0, failed: 0 };
+  let ordered = false;
+  for (const scene of scenes) {
+    const key = scene?.aiVideoStatus === "error" ? "failed" : scene?.aiVideoStatus;
+    if (!Object.hasOwn(counts, key)) continue;
+    counts[key] += 1;
+    ordered = true;
+  }
+  return ordered ? counts : null;
+}
+
+/**
+ * The images step ended with scenes that have no picture (the daily image quota, a provider
+ * refusal): the project stays at generating_images with nothing running, so it reads failed.
+ */
+function imagesStoppedError(status, scenes) {
+  if (status !== "generating_images" || scenes.length === 0) return null;
+  if (scenes.some((s) => !s?.imageStatus || IMAGE_IN_FLIGHT.has(s.imageStatus))) return null;
+  const failed = scenes.filter((s) => s?.imageStatus === "error");
+  if (failed.length === 0) return null;
+  return `${failed.length} of ${scenes.length} scenes have no picture: ${text(failed[0].imageError) || "image generation failed"}`;
+}
+
+/** The status, phase and error a story handle shows, from the project's own status, its scenes and their AI clips. */
+function storyState(project) {
+  const status = String(project.status || "");
+  const scenes = Array.isArray(project.scenes) ? project.scenes : [];
+  const animation = animationCounts(scenes);
+  const imagesError = imagesStoppedError(status, scenes);
+  if (imagesError) return { rawStatus: "failed", phase: status, error: imagesError, animation };
+  const animating = animation && AI_IN_FLIGHT.some((key) => animation[key] > 0) && !STORY_BUSY.has(status);
+  if (animating) return { rawStatus: "running", phase: "animating", animation, keepOutput: true };
+  // The pictures are all in: the step an agent waited for is over, and no new video exists yet.
+  if (status === "ready_to_render") return { rawStatus: "done", phase: status, animation };
+  const phase = status === "rendering" ? text(project.render?.phase) || "rendering" : null;
+  return { rawStatus: status, phase, error: project.error, animation, keepOutput: true };
+}
+
 function fromStory(payload, ctx) {
   const project = payload?.project || {};
   const render = project.render || {};
-  const status = String(project.status || "");
-  return toHandle(
+  const state = storyState(project);
+  const handle = toHandle(
     {
       kind: "story",
       id: project.projectId,
-      rawStatus: status,
-      percent: toPercent(render.percent),
-      phase: status === "rendering" ? text(render.phase) || "rendering" : null,
-      file: render.outputPath,
-      url: storyUrl(project.projectId, render.outputPath),
-      error: project.error,
+      rawStatus: state.rawStatus,
+      percent: state.keepOutput ? toPercent(render.percent) : null,
+      phase: state.phase,
+      file: state.keepOutput ? render.outputPath : null,
+      url: state.keepOutput ? storyUrl(project.projectId, render.outputPath) : null,
+      error: state.error ?? null,
     },
     ctx,
   );
+  return state.animation ? { ...handle, animation: state.animation } : handle;
 }
 
 function fromTimeline(payload, ctx) {

@@ -104,12 +104,90 @@ test("captioned: error maps to failed and a cancel maps to cancelled", () => {
 });
 
 test("story: pre-render statuses are running with the status as phase", () => {
-  for (const status of ["transcribing", "segmenting", "generating_images", "ready_to_render"]) {
+  for (const status of ["transcribing", "segmenting", "generating_images"]) {
     const handle = NORMALISERS.story.normalise({ ok: true, project: { projectId: "p1", status, error: null } }, { outputUrl: toUrl });
     assert.equal(handle.status, "running", status);
     assert.equal(handle.phase, status);
     assert.equal(handle.percent, null);
   }
+});
+
+const scene = (id, fields) => ({ id, imageStatus: "done", imagePath: `/srv/genImg/p1/${id}.png`, ...fields });
+
+test("story: ready_to_render is done (the pictures step finished) with no video yet", () => {
+  const payload = { project: { projectId: "p1", status: "ready_to_render", error: null, scenes: [scene("s1"), scene("s2")] } };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.deepEqual(handle, { kind: "story", id: "p1", status: "done", percent: 100, phase: "ready_to_render", output: null, error: null });
+});
+
+test("story: images that stopped with failed scenes are failed, with the first reason", () => {
+  const payload = {
+    project: {
+      projectId: "p1",
+      status: "generating_images",
+      scenes: [scene("s1"), scene("s2", { imageStatus: "error", imageError: "Daily free image quota used up." }), scene("s3", { imageStatus: "error", imageError: "x" })],
+    },
+  };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "failed");
+  assert.equal(handle.phase, "generating_images");
+  assert.equal(handle.error, "2 of 3 scenes have no picture: Daily free image quota used up.");
+});
+
+test("story: images still being made, or not started, keep running", () => {
+  const making = { project: { projectId: "p1", status: "generating_images", scenes: [scene("s1"), scene("s2", { imageStatus: "generating" })] } };
+  assert.equal(NORMALISERS.story.normalise(making, { outputUrl: toUrl }).status, "running");
+  const waiting = { project: { projectId: "p1", status: "generating_images", scenes: [scene("s1", { imageStatus: "pending" })] } };
+  assert.equal(NORMALISERS.story.normalise(waiting, { outputUrl: toUrl }).status, "running");
+});
+
+test("story: AI motion in flight keeps a ready project running as animating, with counts", () => {
+  const payload = {
+    project: {
+      projectId: "p1",
+      status: "ready_to_render",
+      scenes: [
+        scene("s1", { aiVideoStatus: "done" }),
+        scene("s2", { aiVideoStatus: "generating" }),
+        scene("s3", { aiVideoStatus: "queued" }),
+        scene("s4", { aiVideoStatus: "error", aiVideoError: "provider said no" }),
+        scene("s5"),
+      ],
+    },
+  };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "running");
+  assert.equal(handle.phase, "animating");
+  assert.deepEqual(handle.animation, { queued: 1, generating: 1, done: 1, failed: 1 });
+});
+
+test("story: finished AI motion reports its counts and the project's own status", () => {
+  const payload = {
+    project: {
+      projectId: "p1",
+      status: "done",
+      render: { outputPath: "/srv/outputs/story/p1/video.mp4" },
+      scenes: [scene("s1", { aiVideoStatus: "done" }), scene("s2", { aiVideoStatus: "none" })],
+    },
+  };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "done");
+  assert.deepEqual(handle.animation, { queued: 0, generating: 0, done: 1, failed: 0 });
+});
+
+test("story: a render in progress stays the render even while clips are in flight", () => {
+  const payload = {
+    project: { projectId: "p1", status: "rendering", render: { percent: 30 }, scenes: [scene("s1", { aiVideoStatus: "generating" })] },
+  };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "running");
+  assert.equal(handle.phase, "rendering");
+  assert.equal(handle.percent, 30);
+});
+
+test("story: a cancelled project reads cancelled", () => {
+  const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", status: "error", error: "Cancelled." } }, { outputUrl: toUrl });
+  assert.equal(handle.status, "cancelled");
 });
 
 test("story: rendering reads render.percent", () => {
