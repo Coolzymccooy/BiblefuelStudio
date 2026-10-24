@@ -8,6 +8,7 @@ import { ApiError } from "./api.js";
 import { fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "./toolResult.js";
 import { lacksPublishConsent } from "./autoPublish.js";
 import { planAllows } from "../middleware/featureGate.js";
+import { registerJobResource } from "./resources.js";
 
 export { PUBLISH_NOT_ALLOWED_MESSAGE };
 
@@ -261,5 +262,6 @@ export function buildServer(ctx) {
     { title: "Connect an agent to BibleFuel", description: "How to use the BibleFuel tools.", mimeType: "text/markdown" },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: readGuide() }] }),
   );
+  registerJobResource(server, ctx);
   return server;
 }
