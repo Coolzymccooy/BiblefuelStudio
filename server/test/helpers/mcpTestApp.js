@@ -34,6 +34,13 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: videogenRouter } = await import("../../src/routes/videogen.js");
   const { default: postizRouter } = await import("../../src/routes/postiz.js");
   const { default: agentKeysRouter } = await import("../../src/routes/agentKeys.js");
+  const { quota } = await import("../../src/middleware/quota.js");
+  const { default: scriptsRouter } = await import("../../src/routes/scripts.js");
+  const { default: bibleRouter } = await import("../../src/routes/bible.js");
+  const { default: ttsRouter } = await import("../../src/routes/tts.js");
+  const { default: transcriptsRouter } = await import("../../src/routes/transcripts.js");
+  const { default: audioRouter } = await import("../../src/routes/audio.js");
+  const { default: audioAdvancedRouter } = await import("../../src/routes/audio_advanced.js");
   const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
   const { createMcpRouter } = await import("../../src/mcp/transport.js");
   const { createKey } = await import("../../src/lib/agentKeys/store.js");
@@ -47,6 +54,12 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/media", requireAuth, withUserScope, mediaRouter);
   app.use("/api/video-gen", requireAuth, withUserScope, requireVerifiedEmail, videogenRouter);
   app.use("/api/postiz", requireAuth, withUserScope, requireVerifiedEmail, postizRouter);
+  app.use("/api/scripts", requireAuth, withUserScope, requireVerifiedEmail, quota("scripts"), scriptsRouter);
+  app.use("/api/bible", requireAuth, withUserScope, bibleRouter);
+  app.use("/api/tts", requireAuth, withUserScope, requireVerifiedEmail, quota("tts"), ttsRouter);
+  app.use("/api/transcripts", requireAuth, withUserScope, transcriptsRouter);
+  app.use("/api/audio", requireAuth, withUserScope, requireVerifiedEmail, audioRouter);
+  app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail, audioAdvancedRouter);
   // STUB: index.js's real /api/health shells out to ffmpeg; tools only need its shape.
   app.get("/api/health", (_req, res) => {
     res.json({
