@@ -12,6 +12,7 @@ BibleFuel runs a Model Context Protocol (MCP) server. An agent connects to one U
 - Identity: the agent acts as you. It gets your plan, your quotas and your files, and nothing more.
 - Rate limit: 120 requests per minute per key. Past that you get HTTP 429 with `RATE_LIMITED`.
 - Guide: this document is also the MCP resource `biblefuel://guide`, so an agent can read it before its first call.
+- Instructions: when an agent connects, the server sends a short paragraph of instructions (call `whoami` first, use `bible_lookup` for verse text, wait for jobs with `jobs_wait`, read this guide for the pipelines). Most clients hand it to the model before its first call.
 
 ## Get a key
 
@@ -86,7 +87,7 @@ A success looks like this (`whoami`, shortened):
 A failure has `isError: true`. The text block reads `CODE: message`, and `structuredContent` holds the same as an object:
 
 ```json
-{ "error": "MCP_CAP_REACHED", "message": "Daily renders cap reached for this agent (10 of 10).", "bucket": "renders", "scope": "key", "used": 10, "limit": 10, "resetsAt": "2026-10-24T00:00:00.000Z" }
+{ "error": "MCP_CAP_REACHED", "message": "Daily renders cap reached for this agent (10 of 10).", "bucket": "renders", "scope": "key", "used": 10, "limit": 10, "needed": 1, "resetsAt": "2026-10-24T00:00:00.000Z" }
 ```
 
 Branch on the `CODE`, not on the message. Errors that come from the app's own routes also carry `hint` (what to do) and `status` (the HTTP status).
@@ -103,7 +104,7 @@ Every call passes the same checks, in this order:
 | Tool | What it does |
 |---|---|
 | `whoami` | Who you act as, your plan, remaining plan `quota`, this key's daily `caps`, your account's `accountCaps` (all your keys together) and the publish permission. Call it first. |
-| `capabilities` | What this server can do right now: ffmpeg, which providers are configured, vocal removal, AI video. |
+| `capabilities` | What this server can do right now: ffmpeg, which providers are configured, vocal removal, AI video. It describes the server, not this key: a free plan cannot use ElevenLabs even when it is configured. |
 | `media_list` | `{ kind: "audio" or "video" }`. Your files, newest first, each with `name`, `path`, `size`, `mtime`. |
 | `media_import_url` | `{ url, kind?, filename? }`. Download a public file into your media. `kind` is `audio` (default), `video` or `image`. One daily `imports`, spent even when the download fails. |
 | `media_trim` | `{ inputPath, startSec, endSec }`. Cut a file into a new file. The original stays. |
@@ -114,7 +115,7 @@ Every call passes the same checks, in this order:
 | `jobs_wait` | `{ kind, id, projectId?, timeoutSec? }`. Wait for any background job. See the next section. |
 | `scripts_generate` | Short Bible video scripts (hook, verse, reflection, call to action, hashtags). Every field optional. Counts against the plan's `scripts` quota. |
 | `bible_lookup` | `{ mode: "verse" or "parse" or "translations", reference?, translation? }`. Verse text, reference parsing, or the translation list. Free. |
-| `voice_list` | `{ provider? }`. Voices of one provider (`edge` by default, or `elevenlabs`), every provider's status, the voice profiles and your cloned voices. |
+| `voice_list` | `{ provider?, locale? }`. Voices of one provider (`edge` by default, or `elevenlabs`), every provider's status, the voice profiles and your cloned voices. Pass `locale` (`en`, `en-GB`): the whole edge list is over 300 voices. |
 | `voice_synthesize` | `{ text, voiceId?, provider? }`. Text to speech. Returns `path` and `url`. One daily `tts` call. |
 | `voice_clone` | `{ name, samplePaths, consent, provider? }`. Clone a voice from files in your media. Premium plans. One daily `tts` call. |
 | `transcripts` | `{ action: "list" or "add" or "remove", ... }`. Your saved, edited transcripts. |
@@ -177,7 +178,7 @@ Every call passes the same checks, in this order:
 | `schedules` | `{ action: "list" or "create" or "remove", ... }`. Recurring posts, at most hourly. `create` and `remove` need publish consent; `create` is one daily publish (at most 5 agent-made schedules per account); `remove` only removes a schedule an agent created. |
 | `autopublish_run` | One-click Auto-Publish: script, voice, render and post in one job (kind `job`). Needs publish consent; one daily render and one daily publish. |
 
-More tools arrive in later slices. The Pipelines section shows where each fits.
+That is the whole catalogue. The Pipelines section shows where each tool fits, and the Prompts section has ready-made step lists for three common jobs.
 
 ## Waiting for jobs
 
@@ -218,6 +219,8 @@ Call `jobs_wait`:
 If the handle still says `queued` or `running`, call `jobs_wait` again with the same arguments. A render can take many minutes, so a long job needs several calls. That is normal.
 
 An unknown `kind` returns `BAD_KIND` and lists the valid ones.
+
+A client that prefers resources to polling can read the same handle, once and without waiting, from `biblefuel://jobs/{kind}/{id}` (see Resources).
 
 ## Getting media in
 
@@ -277,7 +280,7 @@ The public host sits behind a proxy that rejects bodies over 100 MB. For a large
 
 ## Pipelines
 
-Each pipeline is an ordered list of tools. A tool that is not in `tools/list` does not exist for your key, so do not call it. Call `whoami` and `capabilities` before any pipeline.
+Each pipeline is an ordered list of tools. A tool that is not in your `tools/list` is not available to your key (some are for super-admin keys only), so do not call it. Call `whoami` and `capabilities` before any pipeline.
 
 ### Media: import, transcribe, trim (available now)
 
@@ -290,7 +293,7 @@ Stuck or finished jobs: `jobs_list`, `jobs_get`, `jobs_retry`, then `jobs_wait`.
 
 ### Short video from a Bible verse (available now)
 
-1. `bible_lookup { mode: "verse", reference }` for the text, or `scripts_generate` for a whole script (hook, verse, reflection, call to action).
+1. `bible_lookup { mode: "verse", reference }` for the text, or `scripts_generate` for a whole script (hook, verse, reflection, call to action). With a voice track the video is as long as the voice (one verse is about 6 seconds); `durationSec` only sets the length of a video without one, so for a 15-second short speak more lines.
 2. `voice_synthesize { text }` speaks it. Keep the returned `path`. One daily `tts` call.
 3. `backgrounds_search { source, query }`, then `library_items { action: "download", source, sourceId }` for each clip you want. Keep each item's `id` (a library id). Or skip this and use `autoBackground: true` in the next step.
 4. `render_short { lines, backgrounds: [library ids], audioPath }`. `lines` are the captions in order (1 to 12). Several backgrounds play one after another; pictures from your media folder work too. `musicPath` takes a `ref` from `music_library`. Returns `{ kind: "job", id, autoPublish }`. One daily render, plus four daily `images` with `autoBackground` (it may AI-generate pictures), and one unit of the plan's `render` quota (`QUOTA_EXCEEDED` before any cap is spent when it is used up). Videos are capped at the server's maximum length (30 seconds by default).
@@ -308,8 +311,8 @@ If the user switched on auto-publish in Settings, a finished `render_short` is p
 
 ### Voice and audio (available now)
 
-1. `voice_list` shows the voices of one provider (`edge`, free, by default; `elevenlabs` on premium plans), which providers are configured on this server, the voice profiles, and the voices you cloned.
-2. `voice_synthesize { text, voiceId?, provider? }` speaks the text. `provider` is `auto` (default: ElevenLabs on premium, Edge-TTS otherwise, with fallback), `elevenlabs`, `edge`, `azure`, `chatterbox`, `fish` or `piper`. It returns `path` and `url`. Each call is one daily `tts` call and one unit of the plan's `tts` quota. ElevenLabs and Fish need a premium plan (`FEATURE_LOCKED` otherwise). Check `fallbackProvider` in the answer. `voiceId` is a voice name from `voice_list`, or a `cb:...` cloned voice with `provider: "chatterbox"` only; a file path is refused with `BAD_INPUT`.
+1. `voice_list { locale? }` shows the voices of one provider (`edge`, free, by default; `elevenlabs` on premium plans), which providers are configured on this server, the voice profiles, and the voices you cloned. Pass `locale` such as `en` or `en-GB`: the whole edge list is over 300 voices (about 100 KB), more than many clients show.
+2. `voice_synthesize { text, voiceId?, provider? }` speaks the text. `provider` is `auto` (default: ElevenLabs on premium with a fallback to Edge-TTS; on a free plan Edge-TTS alone, with no fallback, so when it fails force a provider `voice_list` shows as available, such as `azure`), `elevenlabs`, `edge`, `azure`, `chatterbox`, `fish` or `piper`. It returns `path` and `url`. Each call is one daily `tts` call and one unit of the plan's `tts` quota. ElevenLabs and Fish need a premium plan (`FEATURE_LOCKED` otherwise). Check `fallbackProvider` in the answer. `voiceId` is a voice name from `voice_list`, or a `cb:...` cloned voice with `provider: "chatterbox"` only; a file path is refused with `BAD_INPUT`.
 3. `audio_process { inputPath, preset? }` cleans the file into a new mp3 (`preset` `clean_voice` by default; `podcast`, `warm` and `raw` too, and each step can be overridden). `audio_advanced` merges clips (`merge`), builds one file from trimmed clips (`timeline`), lays them over a video (`timeline_preview`) or reads a length (`info`). Clips may be music references (`library:...` or `mylib:...`) from `music_library`.
 4. `transcribe` the result, then save the edited lines with `transcripts { action: "add", sourceFile, words, editedLines }`. `list` shows what you saved and `remove` deletes one.
 5. `voice_clone { name, samplePaths, consent, provider? }` makes a custom voice from recordings in your media folder (premium plans; one daily `tts` call). Set the three `consent` flags to true only after the account owner has said they have the right to use that voice. With `provider: "chatterbox"` the answer is a `voiceId` like `cb:...` to use with `voice_synthesize` and `provider: "chatterbox"`.
@@ -368,7 +371,7 @@ A song with its lyrics timed word by word to the singing, drawn as moving captio
 
 1. `lyric_project { action: "create", title, artist? }`.
 2. `lyric_set_song { id, path }`: an audio file, or a video whose sound is taken out, in your own media folder (`media_import_url` or `media_list`). At most 15 minutes. URLs and other paths are refused, and so are shared voice files and generated images (`BAD_INPUT`: the lyric video takes only your own uploads, imports and renders, see `media_list`). The same rule applies to the `lyric_background` path.
-3. `lyric_set_lyrics { id, sheet }`: one sung line per line, section headings such as `[CHORUS]` or `VERSE 1:` on their own lines.
+3. `lyric_set_lyrics { id, sheet }`: one sung line per line, section headings such as `[CHORUS]` or `VERSE 1:` on their own lines. Ask the user for the lyrics: `transcribe` rarely recovers sung words over music and spends a plan `render` quota.
 4. `lyric_align { id }`, then `jobs_wait { kind: "lyric_align", id }` until `done`. One timing run at a time per account.
 5. Optional: `lyric_project { action: "get", id }` to read the lines; `lyric_line_update { id, lineId, start?, effect? }` moves a line that is off (it is then kept by later timing runs) or changes how it is drawn.
 6. Optional: `lyric_background { id, path?, fit?, look?, branding? }`: a background picture or video in your media folder (without one, the song's cover picture or a dark colour is used), the caption look, and the logo, intro and end card switches.
@@ -467,6 +470,33 @@ Publishing posts to the user's own accounts, as them, so it needs **consent**: t
 
 The daily `publishes` cap is 3 per key by default.
 
+## Resources
+
+Besides tools, the server offers two resources (`resources/read`):
+
+| URI | What it holds |
+|---|---|
+| `biblefuel://guide` | This guide, as Markdown. Read it before the first call if your client gives the agent no instructions. |
+| `biblefuel://jobs/{kind}/{id}` | One job handle, as JSON (`application/json`). |
+
+The job resource is the handle `jobs_wait` returns, read once without waiting; for kind `job` it is exactly what `jobs_get` returns. `kind` and `id` are the ones on the handle the starting tool returned, for example `biblefuel://jobs/job/job_ab12cd` or `biblefuel://jobs/story/<project id>`. A `lyric_render` also needs the song: `biblefuel://jobs/lyric_render/<job id>?projectId=<song id>`.
+
+A read is free and charges no cap. It is not written to the activity log; the server logs one line per read (key, kind and outcome). It is checked like the tools: an unknown kind fails with `BAD_KIND`, a `lyric_render` without `projectId` with `BAD_INPUT`, and a job that is not yours reads exactly like one that does not exist (`HTTP_404`), except kind `captioned`, whose status route answers `HTTP_403` ("job belongs to another user") for someone else's job; `jobs_wait` gets the same answers. A refused read is an MCP (JSON-RPC) error, not a tool result. Its code is -32602 when the read is refused, and -32603 when the server failed (`INTERNAL`, or a 5xx answer from the app). The SDK puts its own prefix on the message, for example `MCP error -32602: BAD_KIND: Unknown job kind "nope". ...` (some clients show the prefix twice), so do not split the message: branch on `data.error`, and read `data.message`, `data.hint` and `data.status`. `resources/list` shows only the guide: the template does not list your jobs (use `jobs_list`, or a feature's project tool with `action: "list"`).
+
+## Prompts
+
+Three prompts (`prompts/get`) hand an agent a ready-made, ordered step list for a common job: the exact tools to call, what to pass from one step to the next (job handles go to `jobs_wait`), and where a cap or missing consent stops the run. Every key sees all three, and they use only tools every key has. Prompt arguments are strings.
+
+| Prompt | Arguments | Use it when |
+|---|---|---|
+| `make_short_from_verse` | `reference` (required, for example `John 3:16`), `voice` (a voice name from `voice_list`), `publish` (`"true"` or `"false"`, default false) | The user wants a short captioned video of one verse: `bible_lookup`, `voice_synthesize`, `render_short`, `jobs_wait`. With fewer than four daily `images` left it uses a saved or stock background (`library_items`, `backgrounds_search`) instead of `autoBackground`. With `publish` `"true"` it reads `social_status` before anything is spent: when the user's auto-publish is on for YouTube, the render posts itself and the prompt stops there (an upload as well would post the video twice); otherwise it adds `publish_youtube` and a second `jobs_wait` (with auto-publish on for other platforms only, that is two publishes). Publishing needs publish consent (`PUBLISH_NOT_ALLOWED` otherwise). One daily render, one `tts` and four `images`, plus one publish when publishing. |
+| `make_ambient_session` | `theme`, `hours` (more than 0, at most 10; default 2) | The user wants a long, music-first scripture video: `ambient_project`, `ambient_plan`, `music_library`, `ambient_update`, `ambient_step` (voice, then images), `ambient_render`. Each verse (one per fifteen minutes) costs one daily `tts` and one daily `images`, so a long session can need more than one day of caps; `whoami` must also show one render left. Never posts. |
+| `make_lyric_video` | `songPath` (required: a file in your media folder, or a public URL to import first) | The user has a song and its lyrics: `lyric_project`, `lyric_set_song`, `lyric_set_lyrics`, `lyric_align`, `lyric_render`. Two daily renders in all, plus one daily `imports` when `songPath` is a URL; `whoami` must show them before the first paid step. The agent asks the user for the lyrics and never invents them. Never posts. |
+
+A missing required argument, or a bad one (`hours` `"11"`, `publish` `"maybe"`), is refused with JSON-RPC code -32602. The prompts are a starting point: the Pipelines section has every option.
+
+Claude Code offers the prompts as slash commands (`/mcp__biblefuel__make_short_from_verse`) and splits the arguments on spaces, quotes or not. `make_short_from_verse` puts a reference split that way back together (`Romans 8:28` arriving as `Romans` and `8:28`), but a reference of three words or more (`1 John 4:8`) fills the `publish` argument and is refused. Ask in plain words instead, for example "make a short of 1 John 4:8". Codex has no prompts: ask in plain words, and the agent can follow the step list in this guide.
+
 ## Quotas and daily caps
 
 Two limits apply, and the lower one wins.
@@ -484,7 +514,7 @@ Two limits apply, and the lower one wins.
 | `publishes` | Publishing calls, a schedule created, and a render that the user's auto-publish will post | 3 |
 | `imports` | Files stored on the server from a URL: `media_import_url` and `library_items` `download` | 20 |
 
-A call that would cross a cap is refused before anything runs, so nothing is spent. When the app itself refuses a call that was charged (an HTTP 4xx answer, such as `QUOTA_EXCEEDED`, a bad input or an account that is not connected), the caps it spent are given back on the key and the account, except `imports`: an import attempt always counts. A server error (5xx) or a dropped connection keeps the charge, because the work may have started. A cap refusal's error is `MCP_CAP_REACHED` with `bucket`, `scope`, `used`, `limit` and `resetsAt` (an ISO time, the next midnight UTC). `scope` is `key` when this key's own cap is reached, and `user` when your account's shared cap is reached across all your agents. Stop, tell the user, and retry after `resetsAt`.
+A call that would cross a cap is refused before anything runs, so nothing is spent. When the app itself refuses a call that was charged (an HTTP 4xx answer, such as `QUOTA_EXCEEDED`, a bad input or an account that is not connected), the caps it spent are given back on the key and the account, except `imports`: an import attempt always counts. A server error (5xx) or a dropped connection keeps the charge, because the work may have started. A cap refusal's error is `MCP_CAP_REACHED` with `bucket`, `scope`, `used`, `limit`, `needed` (what the call asked for) and `resetsAt` (an ISO time, the next midnight UTC). A call can be refused with some of the cap left, when it needs more than that: `render_short` with `autoBackground` needs four `images`, so one left is not enough. `scope` is `key` when this key's own cap is reached, and `user` when your account's shared cap is reached across all your agents. Stop, tell the user, and retry after `resetsAt`.
 
 `whoami` returns `caps` (this key) and `accountCaps` (all your keys together), each with `used`, `limit` and `remaining` for each bucket. Read it before starting a long plan. The server operator sets the ceilings with `MCP_DAILY_RENDERS`, `MCP_DAILY_AI_VIDEO_USD`, `MCP_DAILY_IMAGES`, `MCP_DAILY_TTS`, `MCP_DAILY_PUBLISHES` and `MCP_DAILY_IMPORTS`. The key owner can set lower numbers for one key under **Daily limits** on **Settings, Connected agents**.
 
@@ -506,6 +536,7 @@ A call that would cross a cap is refused before anything runs, so nothing is spe
 | HTTP 401, `AGENT_KEY_REQUIRED` | The bearer is not an agent key, for example the app's own sign-in token (a JWT). `/api/mcp` takes agent keys only. | Create a key in **Settings**, **Connected agents** and send that. |
 | Tool error `AGENT_FORBIDDEN` (`status` 403) | A key reached a route that keys may never use (account, billing, admin). | Do that in the app yourself. |
 | Tool error with `status` 403 from the app | The user's plan or role does not allow it, for example a scene script on a non-admin account. | Use an account that has the right. The tool is normally not listed without it. |
+| The scene script tools (`scene_script_project` and the rest), `story_animate` or `visual_library` are missing, or one answers `FORBIDDEN` with `status` 403 | They are for super-admin keys only. Other keys do not see them in `tools/list` (calling one anyway answers `Tool ... not found`), and their routes answer 403. | Nothing to fix on your side: use the other pipelines. |
 | HTTP 403 on the connection itself, before any tool runs | The `Host` header is not on the allowed list. This is the usual symptom when you reach the server through a tunnel such as ngrok. | Add the tunnel host name to `MCP_ALLOWED_HOSTS` on the server (comma separated). |
 | HTTP 405 | A `GET` or `DELETE` to `/api/mcp`. | Use `POST`. |
 | HTTP 429, `RATE_LIMITED` | More than 120 requests a minute on one key. | Wait a minute. Use `jobs_wait` rather than polling in a loop. |
@@ -513,9 +544,12 @@ A call that would cross a cap is refused before anything runs, so nothing is spe
 | `MCP_CAP_REACHED` | A daily cap is used up: this key's (`scope` `key`) or your account's across all agents (`scope` `user`). | Read `bucket`, `scope` and `resetsAt`. Wait for the reset, or ask the owner to raise the server ceiling. |
 | `QUOTA_EXCEEDED` | The account's own plan quota is used up. | Wait for the daily reset or change plan in the app. |
 | `BAD_KIND` | `jobs_wait` got a `kind` it does not know. | Use the `kind` the starting tool returned. |
-| `PATH_OUTSIDE_MEDIA` | An audio or voice-clone tool was given a file that is not in your media folder, or a URL. | Use a path from `media_list` or `media_import_url`. |
+| `PATH_OUTSIDE_MEDIA` | A tool was given a file that is not in your media folder, or a URL. | Use a path from `media_list` or `media_import_url`. |
 | `FEATURE_LOCKED` (`status` 403) | The tool needs a premium plan, for example ElevenLabs or Fish voices, or `voice_clone`. | Use `provider: "edge"` or `auto`, or upgrade in the app. |
 | `INVALID_URL`, `INVALID_KIND`, `INVALID_FILENAME`, `URL_PRIVATE`, `URL_SCHEME`, `URL_REDIRECTS`, `URL_TOO_LARGE`, `URL_TIMEOUT`, `DOWNLOAD_FAILED`, `IMPORT_FAILED` | `media_import_url` could not fetch the file. | See the table under Getting media in. |
 | The tool call times out in the client | The client gave up before `jobs_wait` returned. | Lower `timeoutSec`, or raise the client timeout above 90 seconds (Hermes: `timeout: 120`). The job keeps running; call `jobs_wait` again. |
 | A job is `running` for a long time | Renders are slow and queue behind other work. | Keep calling `jobs_wait`. If `status` becomes `failed`, read `error`, then try `jobs_retry`. |
+| A job reads `failed` after a server deploy or restart | A deploy restarts the server and stops the work in progress. Story, ambient, moments, long-form, lyric and timeline handles then read `failed` with an error that says the server restarted or the render was interrupted. | Do what the error says: usually the feature's cancel tool, then the step or render again (`story_cancel` then `story_render`, `ambient_cancel` then `ambient_render`, or `moments_render`, `longform_narrate`, `lyric_render`, `timeline_render` again). Starting again costs again. Warn the user before a long render if a deploy is likely. |
+| A `job` handle stays `running` with `percent` not moving after a deploy | The queue marks a job a deploy stopped as `failed` only when the server starts and the job had been running for 45 minutes or more (`STALE_RUNNING_JOB_MINUTES`); a younger one keeps reading `running`. This is a known bug, issue #118. | Tell the user. `jobs_retry` refuses a running job, so start a new render instead (`render_short` again). |
+| Reading `biblefuel://jobs/...` fails with `BAD_KIND`, `BAD_INPUT`, `HTTP_404` or `HTTP_403` | An unknown kind, a `lyric_render` without `?projectId=`, or a job that is not yours or does not exist (a `captioned` job of another user answers `HTTP_403`). | Use the `kind`, `id` and `projectId` from the handle the starting tool returned. |
 | `INTERNAL` | The server hit an unexpected error. | Try once more, then tell the user. |

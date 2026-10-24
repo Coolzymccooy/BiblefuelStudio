@@ -10,6 +10,7 @@ const USERS = [
   { id: "u_admin", email: "admin@example.com", role: "user", emailVerified: true },
   { id: "u_other", email: "other@example.com", role: "user", emailVerified: true },
   { id: "u_multi", email: "multi@example.com", role: "user", emailVerified: true },
+  { id: "u_needs", email: "needs@example.com", role: "user", emailVerified: true },
 ];
 
 const testApp = await startTestApp({ users: USERS, superAdminEmail: "admin@example.com" });
@@ -45,6 +46,14 @@ const CATALOGUE = [
     description: "Pretends to render.",
     inputSchema: { text: z.string() },
     caps: { renders: 1 },
+    handler: echoHandler,
+  },
+  {
+    name: "render_twice_echo",
+    title: "Render twice echo",
+    description: "Pretends to start two renders.",
+    inputSchema: { text: z.string() },
+    caps: { renders: 2 },
     handler: echoHandler,
   },
   {
@@ -184,6 +193,30 @@ test("a capped tool refuses at the cap with MCP_CAP_REACHED", async () => {
   assert.match(second.structuredContent.resetsAt, /T00:00:00\.000Z$/);
   assert.equal(second.structuredContent.scope, "key");
   assert.equal(second.content[0].text, "MCP_CAP_REACHED: Daily renders cap reached for this agent (1 of 1).");
+});
+
+test("a call that needs more than is left says how many it needs", async () => {
+  const client = await connect(testApp.keyFor("u_needs", "Needs two"));
+  const refused = await client.callTool({ name: "render_twice_echo", arguments: { text: "two" } });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.structuredContent.error, "MCP_CAP_REACHED");
+  assert.equal(refused.structuredContent.used, 0);
+  assert.equal(refused.structuredContent.limit, 1);
+  assert.equal(refused.structuredContent.needed, 2);
+  assert.equal(
+    refused.content[0].text,
+    "MCP_CAP_REACHED: Daily renders cap: this call needs 2 but this agent has 1 left (0 of 1 used).",
+  );
+});
+
+test("initialize gives the agent short instructions: whoami first, the guide, bible_lookup", async () => {
+  const client = await connect(testApp.keyFor("u_needs", "Instructions"));
+  const instructions = client.getInstructions();
+  assert.equal(typeof instructions, "string");
+  assert.ok(instructions.length < 1500, `instructions stay short (${instructions.length} characters)`);
+  for (const word of ["whoami", "biblefuel://guide", "bible_lookup", "jobs_wait", "voice_list"]) {
+    assert.ok(instructions.includes(word), `instructions mention ${word}`);
+  }
 });
 
 test("a second key of the same user meets the account cap with scope user", async () => {
