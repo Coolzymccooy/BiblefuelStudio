@@ -8,6 +8,7 @@ import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { brandLogoFor, logoOverlay } from "../lib/branding.js";
 import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
+import { isRemoteUrl } from "../lib/downloadInput.js";
 
 const router = Router();
 
@@ -43,7 +44,9 @@ function resolveAssetPath(dataDir, pathOrId) {
   // why it is spelled mylib: rather than library:.
   const saved = resolveTenantTrack(dataDir, normalized);
   if (saved) return saved;
-  if (normalized.startsWith('http')) return normalized;
+  // Any URL form (`http:/host`, `tcp:` ...), not just "http...": all are
+  // localised or refused before ffmpeg sees them.
+  if (isRemoteUrl(normalized)) return normalized;
   if (fs.existsSync(normalized)) return normalized;
 
   const lib = readLibrary(dataDir);
@@ -63,7 +66,7 @@ function resolveAssetPath(dataDir, pathOrId) {
 
 function isLocalOrRemote(p) {
   if (!p) return false;
-  if (p.startsWith('http')) return true;
+  if (isRemoteUrl(p)) return true;
   return fs.existsSync(p);
 }
 

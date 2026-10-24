@@ -14,7 +14,7 @@ import path from 'path';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-remote-'));
 process.env.OUTPUT_DIR = dir;
-const { renderTimelineProof } = await import('./proofRenderer.js');
+const { renderTimelineProof, resolveTimelineAssetPath } = await import('./proofRenderer.js');
 
 const REMOTE_BROLL = 'https://cdn.example.com/rays.mp4';
 const REMOTE_ASSET = 'https://cdn.example.com/still.jpg';
@@ -93,6 +93,22 @@ describe('renderTimelineProof remote media', () => {
     assert.equal(result.ok, false);
     assert.ok(String(result.error).startsWith('URL_PRIVATE: '), result.error);
     assert.equal(ran, false);
+  });
+
+  test('http: without // and other schemes are localised or refused, never passed through', async () => {
+    let ran = false;
+    const runner = async () => { ran = true; return { ok: true, stderr: '' }; };
+    const slash = await renderTimelineProof(plan({ brollPath: 'http:/169.254.169.254/x.mp4' }), opts({ runner }));
+    assert.ok(String(slash.error).startsWith('URL_PRIVATE: '), slash.error);
+    const tcp = await renderTimelineProof(plan({ brollPath: 'tcp://127.0.0.1:6379' }), opts({ runner }));
+    assert.ok(String(tcp.error).startsWith('URL_SCHEME: '), tcp.error);
+    assert.equal(ran, false);
+  });
+
+  test('the path resolver never turns a non-http URL into a "local" path', () => {
+    for (const value of ['tcp://127.0.0.1:6379', 'gopher://x/y', 'concat:a|b']) {
+      assert.equal(resolveTimelineAssetPath(value, { serverRoot: dir, outputDir: dir }), null, value);
+    }
   });
 
   test('a plan with only local media is rendered without localising anything', async () => {

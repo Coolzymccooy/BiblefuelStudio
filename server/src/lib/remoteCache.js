@@ -24,6 +24,7 @@ import crypto from "crypto";
 import { OUTPUT_DIR } from "./paths.js";
 import { downloadPublicUrl, isUrlGuardError } from "./safeDownload.js";
 import { MAX_INPUT_MB } from "./backgroundLimits.js";
+import { isUrlLike } from "./inputUrl.js";
 
 const CACHE_DIR = path.join(OUTPUT_DIR, "cache", "remote-bg");
 // A 22s portrait Pexels clip is typically 10–50 MB. Anything smaller than
@@ -89,7 +90,7 @@ function downloadOptionsFrom(opts) {
 
 /**
  * Resolve a path to a local file. Local paths pass through unchanged.
- * HTTP(S) URLs are downloaded to the cache (or reused if already cached
+ * Any URL-like value (see inputUrl.js) is treated as remote: http(s) URLs are downloaded to the cache (or reused if already cached
  * AND large enough to be plausibly valid) and the local cache file path
  * is returned.
  *
@@ -110,7 +111,9 @@ function downloadOptionsFrom(opts) {
 export async function ensureLocalPath(pathOrUrl, opts = {}) {
   const value = String(pathOrUrl || "").trim();
   if (!value) return value;
-  if (!/^https?:\/\//i.test(value)) return value;
+  // Any scheme, not just "http://": ffmpeg also opens `http:/host`, `tcp:`...
+  // Non-http schemes are refused (URL_SCHEME) by downloadPublicUrl.
+  if (!isUrlLike(value)) return value;
 
   const minBytes = opts.minBytes ?? MIN_USABLE_BYTES;
   ensureCacheDir();

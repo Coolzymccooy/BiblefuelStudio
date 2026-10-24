@@ -18,6 +18,7 @@ const UUID = "4d3c2b1a-9e8f-4a7b-8c6d-5e4f3a2b1c0d";
 let dir;
 let outputDir;
 let generateVideoThumbnail;
+let isLocalOrRemote;
 
 before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "media-thumb-"));
@@ -25,7 +26,7 @@ before(async () => {
   fs.mkdirSync(outputDir);
   // paths.js reads OUTPUT_DIR when it is first imported.
   process.env.OUTPUT_DIR = outputDir;
-  ({ generateVideoThumbnail } = await import("./mediaThumb.js"));
+  ({ generateVideoThumbnail, isLocalOrRemote } = await import("./mediaThumb.js"));
 });
 after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
@@ -66,5 +67,25 @@ describe("generateVideoThumbnail", () => {
     const got = generateVideoThumbnail(clip, { outputBaseName: "thumb-slow", timeoutMs: 1 });
     assert.equal(got, "");
     assert.equal(fs.existsSync(path.join(outputDir, "thumb-slow.jpg")), false);
+  });
+});
+
+describe("isLocalOrRemote", () => {
+  test("every URL form counts as remote (so it is localised or refused), whatever its slashes", () => {
+    for (const value of ["https://x/a.mp4", "http:/127.0.0.1/a.mp4", "http:127.0.0.1/a", "tcp://127.0.0.1:1"]) {
+      assert.equal(isLocalOrRemote(value), true, value);
+    }
+  });
+
+  test("a missing local path is neither", () => {
+    assert.equal(isLocalOrRemote(path.join(dir, "missing.mp4")), false);
+  });
+});
+
+describe("generateVideoThumbnail with URL-like input", () => {
+  test("a URL in any form gets no thumbnail and no ffmpeg run", () => {
+    for (const value of ["http:/127.0.0.1:1/a.mp4", "tcp://127.0.0.1:1"]) {
+      assert.equal(generateVideoThumbnail(value, { outputBaseName: "thumb-url" }), "", value);
+    }
   });
 });

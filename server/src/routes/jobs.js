@@ -110,7 +110,7 @@ function clampDuration(value) {
 }
 
 function isFileTooLarge(p) {
-  if (!p || p.startsWith('http')) return false;
+  if (!p || isRemoteUrl(p)) return false;
   try {
     const stat = fs.statSync(p);
     return stat.size > MAX_INPUT_MB * 1024 * 1024;
@@ -367,7 +367,7 @@ export function resolveAssetPath(pathOrId, dataDir) {
   const saved = resolveTenantTrack(dataDir || currentDataDir(), normalized);
   if (saved) return saved;
   const direct = resolveOutputAlias(normalized);
-  if (String(direct).startsWith("http")) return direct;
+  if (isRemoteUrl(direct)) return direct;
   if (fs.existsSync(direct)) return direct;
 
   // Try to find in library
@@ -814,7 +814,7 @@ async function renderVideoCore(payload, jobId) {
   // Cache remote bg locally — see ensureLocalPath rationale (Pexels CDN
   // resets connections under `-stream_loop -1`, which the legacy single-bg
   // ffmpeg invocation also uses below).
-  if (/^https?:\/\//i.test(resolvedBackground)) {
+  if (isRemoteUrl(resolvedBackground)) {
     try {
       resolvedBackground = await ensureLocalPath(resolvedBackground);
     } catch (err) {
@@ -1090,7 +1090,7 @@ async function renderAdvancedVideo(payload, jobId) {
   // -stream_loop -1 where every wraparound re-fetches the file. Local copies
   // are bulletproof; subsequent renders re-use the cache for free.
   for (const s of resolvedScenes) {
-    if (/^https?:\/\//i.test(s.backgroundPath)) {
+    if (isRemoteUrl(s.backgroundPath)) {
       try {
         s.backgroundPath = await ensureLocalPath(s.backgroundPath);
       } catch (err) {

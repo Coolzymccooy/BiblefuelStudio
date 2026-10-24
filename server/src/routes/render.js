@@ -60,7 +60,7 @@ function tooManyCaptionWordsMessage(count, max, { studio = false } = {}) {
 }
 
 function isFileTooLarge(p) {
-  if (!p || p.startsWith('http')) return false;
+  if (!p || isRemoteUrl(p)) return false;
   try {
     const stat = fs.statSync(p);
     return stat.size > MAX_INPUT_MB * 1024 * 1024;
@@ -110,7 +110,7 @@ function resolveAssetPath(dataDir, pathOrId) {
   const saved = resolveTenantTrack(dataDir, normalized);
   if (saved) return saved;
   const direct = resolveOutputAlias(normalized);
-  if (String(direct).startsWith("http")) return direct;
+  if (isRemoteUrl(direct)) return direct;
   if (fs.existsSync(direct)) return direct;
 
   const lib = readLibrary(dataDir);

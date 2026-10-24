@@ -79,6 +79,15 @@ describe("ensureLocalPath", () => {
     assert.equal(cacheFiles().length, before);
   });
 
+  test("http: without // and other schemes are not mistaken for local paths", async () => {
+    await assert.rejects(ensureLocalPath(`http:/127.0.0.1:${port}/clip-slash.mp4`), (err) => err.code === "URL_PRIVATE");
+    await assert.rejects(ensureLocalPath(`http:127.0.0.1:${port}/clip-slash.mp4`), (err) => err.code === "URL_PRIVATE");
+    await assert.rejects(ensureLocalPath(`tcp://127.0.0.1:${port}`), (err) => err.code === "URL_SCHEME");
+    await assert.rejects(ensureLocalPath("gopher://x/y"), (err) => err.code === "URL_SCHEME");
+    assert.equal(hits.get("/clip-slash.mp4") || 0, 0);
+    assert.equal(await ensureLocalPath("D:/media/a.mp4"), "D:/media/a.mp4");
+  });
+
   test("a redirect to a private address is refused once, not retried", async () => {
     await assert.rejects(ensureLocalPath(url("/to-metadata"), reachable()), (err) => err.code === "URL_PRIVATE");
     assert.equal(hits.get("/to-metadata"), 1);

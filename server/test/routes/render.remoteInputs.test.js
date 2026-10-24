@@ -95,6 +95,25 @@ describe("POST /api/render/captioned-video remote inputs", () => {
     assert.equal(hits, 0);
   });
 
+  test("single-slash and no-slash http: forms are refused, not handed to ffmpeg", async (t) => {
+    const { app, audio, bg } = sandbox(t);
+    hits = 0;
+    const bgRes = await request(app).post("/api/render/captioned-video")
+      .send({ audioPath: audio, backgroundPath: `http:/127.0.0.1:${port}/bg.mp4`, words });
+    assertRefused(bgRes);
+    const audioRes = await request(app).post("/api/render/captioned-video")
+      .send({ audioPath: `http:127.0.0.1:${port}/a.mp3`, backgroundPath: bg, words });
+    assertRefused(audioRes);
+    assert.equal(hits, 0);
+  });
+
+  test("a non-http scheme is refused with URL_SCHEME", async (t) => {
+    const { app, audio } = sandbox(t);
+    const res = await request(app).post("/api/render/captioned-video")
+      .send({ audioPath: audio, backgroundPath: `tcp://127.0.0.1:${port}`, words });
+    assertRefused(res, "URL_SCHEME");
+  });
+
   test("an IPv6 loopback background is refused", async (t) => {
     const { app, audio } = sandbox(t);
     const res = await request(app).post("/api/render/captioned-video")
@@ -128,6 +147,18 @@ describe("POST /api/render/video and /waveform remote inputs", () => {
     const res = await request(app).post("/api/render/waveform")
       .send({ audioPath: loopback("/voice.mp3"), lines: ["Hello"] });
     assertRefused(res);
+    assert.equal(hits, 0);
+  });
+
+  test("/video and /waveform refuse a single-slash http: input and other schemes", async (t) => {
+    const { app, audio } = sandbox(t);
+    hits = 0;
+    const video = await request(app).post("/api/render/video")
+      .send({ backgroundPath: `http:/127.0.0.1:${port}/bg.mp4`, lines: ["Hello"] });
+    assertRefused(video);
+    const wave = await request(app).post("/api/render/waveform")
+      .send({ audioPath: audio, musicPath: `gopher://127.0.0.1:${port}/m`, lines: ["Hello"] });
+    assertRefused(wave, "URL_SCHEME");
     assert.equal(hits, 0);
   });
 

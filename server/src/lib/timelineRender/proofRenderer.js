@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'timers/promises';
 import { OUTPUT_DIR } from '../paths.js';
 import { localiseInput } from '../remoteInputs.js';
 import { urlGuardMessage } from '../safeDownload.js';
+import { isUrlLike } from '../inputUrl.js';
 import { get as getVoiceProvider } from '../voice/index.js';
 import {
   escapeDrawText, escapeFontPath, fontFileFor, resolveTypographyPreset,
@@ -70,6 +71,8 @@ export function resolveTimelineAssetPath(rawPath, opts = {}) {
   const value = String(rawPath).replace(/\\/g, '/');
 
   if (/^https?:\/\//i.test(value)) return value;
+  // Any other URL form (`tcp:`, `http:/host` ...) is not a file here.
+  if (isUrlLike(value)) return null;
 
   let resolved;
   if (value.startsWith('/outputs/')) {
@@ -603,7 +606,7 @@ export async function localiseRemoteMedia(plan, localise = localiseInput) {
     const clips = [];
     for (const clip of track.clips || []) {
       const media = clipMediaPath(clip, plan);
-      clips.push(/^https?:\/\//i.test(String(media || '')) ? { ...clip, path: await localise(media) } : clip);
+      clips.push(isUrlLike(media) ? { ...clip, path: await localise(media) } : clip);
     }
     tracks.push({ ...track, clips });
   }

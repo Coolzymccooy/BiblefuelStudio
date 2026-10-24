@@ -1,10 +1,14 @@
 import fs from "fs";
 import { downloadPublicUrl, isUrlGuardError } from "./safeDownload.js";
 import { MAX_INPUT_MB } from "./backgroundLimits.js";
+import { isUrlLike } from "./inputUrl.js";
 
-/** True for an http(s) URL (vs a local filesystem path). */
+/**
+ * True for a URL in ANY form ffmpeg would open as one (`http:/x`, `tcp:`, ...),
+ * false for a local filesystem path. See inputUrl.js.
+ */
 export function isRemoteUrl(p) {
-  return /^https?:\/\//i.test(String(p || ""));
+  return isUrlLike(p);
 }
 
 const DEFAULT_RETRIES = 2;

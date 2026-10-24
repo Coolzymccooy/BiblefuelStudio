@@ -53,6 +53,16 @@ describe("localiseInput", () => {
     assert.equal(hits, 0);
   });
 
+  test("non-http schemes are refused with URL_SCHEME; http: without // is vetted", async () => {
+    for (const bad of ["tcp://127.0.0.1:6379", "gopher://x/y", "file:///etc/passwd", "concat:a|b", "data:audio/mp3;base64,AA"]) {
+      await assert.rejects(localiseInput(bad), (err) => err.code === "URL_SCHEME", bad);
+    }
+    hits = 0;
+    await assert.rejects(localiseInput(`http:/127.0.0.1:${port}/a.mp3`), (err) => err.code === "URL_PRIVATE");
+    assert.equal(hits, 0);
+    assert.equal(await localiseInput("C:/media/a.mp3"), "C:/media/a.mp3");
+  });
+
   test("a short public audio file is localised (no 256 KB video floor)", async () => {
     const local = await localiseInput(`http://public.test:${port}/voice.mp3`, {
       lookup: async () => ({ address: "127.0.0.1", family: 4 }),

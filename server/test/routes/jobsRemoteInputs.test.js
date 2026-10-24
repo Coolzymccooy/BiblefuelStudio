@@ -77,6 +77,15 @@ describe("render_waveform job remote inputs", { skip }, () => {
     assert.equal(hits, 0);
   });
 
+  test("a single-slash http: audioPath fails the job without being requested", async () => {
+    hits = 0;
+    await assert.rejects(
+      _executeJobForTest({ id: "j-wave-slash", type: "render_waveform", payload: { audioPath: `http:/127.0.0.1:${port}/a.mp3`, lines: ["x"] } }),
+      refusedPrivate,
+    );
+    assert.equal(hits, 0);
+  });
+
   test("a metadata-address music track fails the job", async () => {
     await assert.rejects(
       _executeJobForTest({
@@ -102,6 +111,19 @@ describe("render_video remote inputs", { skip }, () => {
     hits = 0;
     await assert.rejects(
       _renderVideoCoreForTest({ backgroundPath: localBg, musicPath: loopback("/m.mp3"), lines: ["Peace"], durationSec: 1 }, "j-vid-music"),
+      refusedPrivate,
+    );
+    assert.equal(hits, 0);
+  });
+
+  test("a background in another scheme, or http: without //, never reaches ffmpeg", async () => {
+    await assert.rejects(
+      _renderVideoCoreForTest({ scenes: [{ backgroundPath: `tcp://127.0.0.1:${port}`, duration: 1 }], lines: ["Peace"], durationSec: 1 }, "j-vid-tcp"),
+      (err) => /URL_SCHEME/.test(String(err?.message)),
+    );
+    hits = 0;
+    await assert.rejects(
+      _renderVideoCoreForTest({ backgroundPath: `http:/127.0.0.1:${port}/bg.mp4`, lines: ["Peace"], durationSec: 1 }, "j-vid-slash"),
       refusedPrivate,
     );
     assert.equal(hits, 0);

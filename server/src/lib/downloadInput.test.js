@@ -26,6 +26,13 @@ describe("isRemoteUrl", () => {
     assert.equal(isRemoteUrl("/var/data/a.mp4"), false);
     assert.equal(isRemoteUrl(""), false);
   });
+
+  test("any scheme counts as remote, as ffmpeg sees it; drive paths do not", () => {
+    assert.equal(isRemoteUrl("http:/127.0.0.1/x"), true);
+    assert.equal(isRemoteUrl("http:127.0.0.1/x"), true);
+    assert.equal(isRemoteUrl("tcp://127.0.0.1:1"), true);
+    assert.equal(isRemoteUrl("D:/media/a.mp4"), false);
+  });
 });
 
 describe("downloadToFile", () => {

@@ -84,6 +84,33 @@ describe("audio-adv remote inputs", () => {
     assert.equal(hits, 0);
   });
 
+  test("/timeline refuses a single-slash http: URL that ffmpeg would still fetch", async (t) => {
+    const { app } = sandbox(t);
+    hits = 0;
+    const res = await request(app).post("/api/audio-adv/timeline")
+      .send({ clips: [{ path: `http:/127.0.0.1:${port}/latest/meta-data/` }] });
+    assertRefused(res);
+    assert.equal(hits, 0);
+  });
+
+  test("/timeline-preview refuses a no-slash http: background", async (t) => {
+    const { app, a } = sandbox(t);
+    hits = 0;
+    const res = await request(app).post("/api/audio-adv/timeline-preview")
+      .send({ backgroundPath: `http:127.0.0.1:${port}/latest/meta-data/`, clips: [{ path: a }] });
+    assertRefused(res);
+    assert.equal(hits, 0);
+  });
+
+  test("other schemes (tcp:, gopher:, concat:) are refused with URL_SCHEME", async (t) => {
+    const { app, a } = sandbox(t);
+    for (const bad of [`tcp://127.0.0.1:${port}`, `gopher://127.0.0.1:${port}/x`, `concat:${a}|${a}`]) {
+      const res = await request(app).post("/api/audio-adv/merge").send({ inputs: [a, bad] });
+      assert.equal(res.status, 400, bad);
+      assert.ok(String(res.body.error).startsWith("URL_SCHEME: "), `${bad}: ${res.body.error}`);
+    }
+  });
+
   test("/timeline-preview refuses a private clip", async (t) => {
     const { app, dir } = sandbox(t);
     const bg = path.join(dir, "bg.mp4");
