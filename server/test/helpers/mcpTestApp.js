@@ -57,6 +57,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { createVisualLibraryRouter } = await import("../../src/routes/visualLibrary.js");
   const { createSceneScriptRouter } = await import("../../src/routes/sceneScript.js");
   const { default: seriesRouter } = await import("../../src/routes/series.js");
+  const { default: longformRouter } = await import("../../src/routes/longform.js");
   const { requireSuperAdmin } = await import("../../src/middleware/requireSuperAdmin.js");
   const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
   const { createMcpRouter } = await import("../../src/mcp/transport.js");
@@ -94,6 +95,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/scene-script", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createSceneScriptRouter());
   // Like index.js: no router-level quota; generate spends one plan render per part.
   app.use("/api/series", requireAuth, withUserScope, requireVerifiedEmail, seriesRouter);
+  app.use("/api/longform", requireAuth, withUserScope, requireVerifiedEmail, longformRouter);
   // STUB: index.js's real /api/health shells out to ffmpeg; tools only need its shape.
   app.get("/api/health", (_req, res) => {
     res.json({
