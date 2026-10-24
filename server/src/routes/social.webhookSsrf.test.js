@@ -91,6 +91,27 @@ describe("POST /api/social/webhooks vets the URL on save", () => {
   });
 });
 
+describe("POST /api/social/config vets new webhook URLs too", () => {
+  test("a new private webhook URL is refused and nothing is saved", async () => {
+    const { a, dataDir } = app();
+    const res = await request(a).post("/api/social/config")
+      .send({ webhooks: [{ id: "wh9", name: "Make", url: "http://169.254.169.254/latest/meta-data/" }], schedules: [] });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /^URL_PRIVATE: /);
+    assert.deepEqual(readSocialStore(dataDir).webhooks || [], []);
+  });
+
+  test("an unchanged stored hook is not re-checked on Save all (delivery still is)", async () => {
+    const { a, dataDir } = app();
+    const url = `http://127.0.0.1:${port}/old-hook`;
+    writeSocialStore(dataDir, { webhooks: [{ id: "wh1", name: "Make", url, enabled: true }] });
+    const res = await request(a).post("/api/social/config")
+      .send({ webhooks: [{ id: "wh1", name: "Renamed", url, enabled: true }], schedules: [] });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(readSocialStore(dataDir).webhooks[0].name, "Renamed");
+  });
+});
+
 describe("webhook delivery re-vets the URL", () => {
   function storeHook(dataDir, url) {
     writeSocialStore(dataDir, { webhooks: [{ id: "wh1", name: "Make", url, enabled: true }] });

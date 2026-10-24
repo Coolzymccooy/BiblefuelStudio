@@ -1061,11 +1061,42 @@ router.get("/config", (req, res) => {
   });
 });
 
-router.post("/config", (req, res) => {
+/**
+ * Express 4 does not catch a rejected async handler: the request would hang.
+ * These two handlers became async only to vet webhook URLs, so keep the old
+ * behaviour of an unexpected throw answering 500.
+ */
+const answerErrors = (handler) => async (req, res) => {
+  try {
+    await handler(req, res);
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+};
+
+/**
+ * The refusal for the first webhook URL in `incoming` that is not already
+ * stored, or null. Unchanged stored hooks are not re-checked here, so one hook
+ * whose DNS changed cannot block Save all; delivery re-vets every hook anyway.
+ */
+async function newWebhookRefusal(incoming, stored) {
+  const known = new Set((stored || []).map((w) => String(w?.url || "").trim()));
+  for (const hook of incoming) {
+    const url = String(hook?.url || "").trim();
+    if (!url || known.has(url)) continue;
+    const refusal = await webhookUrlRefusal(url);
+    if (refusal) return refusal;
+  }
+  return null;
+}
+
+router.post("/config", answerErrors(async (req, res) => {
   const payload = req.body || {};
   const store = readSocialStore(req.ctx.dataDir);
   const buffer = payload.buffer || store.buffer || {};
   const webhooks = Array.isArray(payload.webhooks) ? payload.webhooks : store.webhooks || [];
+  const refusal = await newWebhookRefusal(webhooks, store.webhooks);
+  if (refusal) return res.status(400).json({ ok: false, error: refusal });
   // The page only ever saw has<Secret> flags, so a blank secret means "keep it".
   const direct = mergeDirectSecrets(payload.direct, store.direct);
   const schedules = Array.isArray(payload.schedules) ? payload.schedules : (store.schedules || []);
@@ -1101,7 +1132,7 @@ router.post("/config", (req, res) => {
   // ran". Matches the /schedules route, which already refreshes unconditionally.
   refreshScheduleTasks();
   res.json({ ok: true });
-});
+}));
 
 router.get("/schedules", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
@@ -1402,7 +1433,7 @@ router.get("/webhooks", (req, res) => {
   });
 });
 
-router.post("/webhooks", async (req, res) => {
+router.post("/webhooks", answerErrors(async (req, res) => {
   const name = String(req.body?.name || "").trim();
   const url = String(req.body?.url || "").trim();
   if (!name) return res.status(400).json({ ok: false, error: "name required" });
@@ -1425,7 +1456,7 @@ router.post("/webhooks", async (req, res) => {
 
   writeSocialStore(req.ctx.dataDir, { ...store, webhooks: existing });
   res.json({ ok: true, webhook: entry });
-});
+}));
 
 router.delete("/webhooks/:id", (req, res) => {
   const id = String(req.params.id || "").trim();
