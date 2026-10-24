@@ -17,6 +17,7 @@ import ambientRouter, {
   _setRenderStageImpl, _resetRenderStageImpl,
   _setQuotaImpl, _resetQuotaImpl,
   clearCancelled, isCancelled, markCancelled,
+  _setServerStartedAtForTests, _setHeartbeatMsForTests,
   _setLoudnessImpl, _resetLoudnessImpl, _setFfmpegSpawnImpl, _resetFfmpegSpawnImpl,
 } from "./ambient.js";
 import { EventEmitter } from "events";
@@ -146,6 +147,67 @@ describe("GET /api/ambient/:id", () => {
     writtenBeforeThisServer(idle, { status: "ready_to_render" });
     const old = await request(app).get(`/api/ambient/${idle.projectId}`);
     assert.equal(old.body.interrupted, undefined);
+  });
+
+  describe("across processes (another server still running the stage)", () => {
+    afterEach(() => { _setServerStartedAtForTests(null); _setHeartbeatMsForTests(null); });
+
+    /** Stored as another process last wrote it, `agoMs` ago, with its heartbeat then. */
+    function writtenAgo(project, fields, agoMs) {
+      const at = Date.now() - agoMs;
+      const file = path.join(dataDir, "ambient", `${project.projectId}.json`);
+      fs.writeFileSync(file, JSON.stringify({ ...project, ...fields, updatedAt: at, heartbeatAt: at }));
+    }
+
+    test("a recent heartbeat from another process is not flagged; a stale one is", async () => {
+      _setServerStartedAtForTests(Date.now() + 1000);
+      const live = await createSession();
+      writtenAgo(live, { status: "rendering" }, 30_000);
+      assert.equal((await request(app).get(`/api/ambient/${live.projectId}`)).body.interrupted, undefined);
+      const dead = await createSession();
+      writtenAgo(dead, { status: "rendering" }, 3 * 60_000);
+      assert.equal((await request(app).get(`/api/ambient/${dead.projectId}`)).body.interrupted, true);
+    });
+
+    test("a render job live in this process is never flagged", async () => {
+      _setServerStartedAtForTests(Date.now() + 1000);
+      const p = await createSession();
+      const job = createJob("u1", { durationSec: 60 });
+      writtenAgo(p, { status: "rendering", render: { jobId: job.jobId, status: "running", percent: 3, phase: "rendering" } }, 10 * 60_000);
+      assert.equal((await request(app).get(`/api/ambient/${p.projectId}`)).body.interrupted, undefined);
+    });
+
+    test("a stage running in this process is never flagged, and it writes a heartbeat as it goes", async () => {
+      _setHeartbeatMsForTests(15);
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      _setImageLibraryImpl({ find: async () => [], register: async () => ({ id: "lib1" }), mark: () => {} });
+      _setImageGenImpl(async ({ partNumber }) => { await gate; return { ok: true, path: `/img/${partNumber}.png` }; });
+      const p = await createSession();
+      await request(app).post(`/api/ambient/${p.projectId}/images`).send({});
+      const beating = await waitFor(p.projectId, (x) => Number(x.heartbeatAt) > 0, 2000);
+      assert.ok(Number(beating.heartbeatAt) > 0, "the images stage wrote a heartbeat");
+      _setServerStartedAtForTests(Date.now() + 1000);
+      writtenAgo(beating, {}, 10 * 60_000);
+      assert.equal((await request(app).get(`/api/ambient/${p.projectId}`)).body.interrupted, undefined);
+      release();
+      const done = await waitFor(p.projectId, (x) => x.status === AMBIENT_STATUS.READY_TO_RENDER);
+      assert.equal(done.status, AMBIENT_STATUS.READY_TO_RENDER);
+    });
+
+    test("voicing writes a heartbeat too", async () => {
+      _setHeartbeatMsForTests(15);
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      _setSynthImpl(async () => { await gate; return { ok: true, file: path.join(outputDir, "v.mp3") }; });
+      const p = await createSession();
+      await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 1 });
+      await request(app).post(`/api/ambient/${p.projectId}/voice`).send({});
+      const beating = await waitFor(p.projectId, (x) => Number(x.heartbeatAt) > 0, 2000);
+      assert.ok(Number(beating.heartbeatAt) > 0);
+      release();
+      await waitFor(p.projectId, (x) => x.status !== AMBIENT_STATUS.VOICING);
+    });
   });
 });
 
@@ -900,6 +962,29 @@ describe("POST /api/ambient/:id/render", () => {
     const res = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.ok(res.body.jobId);
+  });
+
+  test("a render, its bed assembly included, beats while it runs and is never read as interrupted", async () => {
+    _setHeartbeatMsForTests(15);
+    const p = await readySession();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    _setRenderStageImpl(async (ctx, id) => {
+      writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, id), status: AMBIENT_STATUS.ASSEMBLING });
+      await gate;
+    });
+    await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    const beating = await waitFor(p.projectId, (x) => Number(x.heartbeatAt) > 0, 2000);
+    assert.ok(Number(beating.heartbeatAt) > 0);
+    _setServerStartedAtForTests(Date.now() + 1000);
+    fs.writeFileSync(path.join(dataDir, "ambient", `${p.projectId}.json`), JSON.stringify({ ...beating, render: {}, updatedAt: 1, heartbeatAt: 1 }));
+    try {
+      assert.equal((await request(app).get(`/api/ambient/${p.projectId}`)).body.interrupted, undefined);
+    } finally {
+      release();
+      _setServerStartedAtForTests(null);
+      _setHeartbeatMsForTests(null);
+    }
   });
 
   test("a second render cannot start while one is assembling or encoding", async () => {

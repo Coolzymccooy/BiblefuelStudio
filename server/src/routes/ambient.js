@@ -15,7 +15,7 @@ import { libraryImageView, resolveMovementImage } from "../lib/ambient/movementI
 import {
   AMBIENT_STATUS, voicingStage, imagesStage, renderStage,
   markCancelled, clearCancelled, writeWithMovements, unclearedTracks, resolveTrackFile, currentImageLib,
-  outDirFor,
+  outDirFor, isStageRunning, asRunningStage,
 } from "../lib/ambient/stages.js";
 import {
   createJob, persistJob, markError, cancelJob as cancelRenderJob, getJob as getRenderJob,
@@ -28,7 +28,7 @@ import { runExclusive } from "../lib/heavyJobGate.js";
 // live, so a seam set through this module still reaches the stage that runs.
 export {
   AMBIENT_STATUS, unclearedTracks, voicingStage, imagesStage, assembleBed, renderStage,
-  markCancelled, isCancelled, clearCancelled,
+  markCancelled, isCancelled, clearCancelled, _setHeartbeatMsForTests,
   _setLookupImpl, _resetLookupImpl, _setSynthImpl, _resetSynthImpl,
   _setProbeImpl, _resetProbeImpl, _setImageGenImpl, _resetImageGenImpl,
   _setImageLibraryImpl, _resetImageLibraryImpl,
@@ -133,13 +133,27 @@ router.get("/", (req, res) => {
  * before this moment belongs to a process that is gone: a deploy or restart
  * killed the stage, and nothing will ever move it on.
  */
-const SERVER_STARTED_AT = Date.now();
+let serverStartedAt = Date.now();
+export function _setServerStartedAtForTests(ms) { serverStartedAt = Number(ms) > 0 ? Number(ms) : Date.now(); }
+
 const BUSY_STATUSES = new Set([
   AMBIENT_STATUS.VOICING, AMBIENT_STATUS.GENERATING_IMAGES, AMBIENT_STATUS.ASSEMBLING, AMBIENT_STATUS.RENDERING,
 ]);
+// Four missed heartbeats (stages beat every 30 s): long enough that a busy
+// box, or another process still finishing during a deploy, is not flagged.
+const STALE_AFTER_MS = 2 * 60_000;
+
+function renderJobLive(project) {
+  const job = project.render?.jobId ? getRenderJob(project.render.jobId) : null;
+  return Boolean(job && (job.status === "queued" || job.status === "running"));
+}
 
 function interruptedByRestart(project) {
-  return BUSY_STATUSES.has(project.status) && Number(project.updatedAt) < SERVER_STARTED_AT;
+  if (!BUSY_STATUSES.has(project.status)) return false;
+  if (isStageRunning(project.projectId) || renderJobLive(project)) return false;
+  const updatedAt = Number(project.updatedAt) || 0;
+  const lastSign = Math.max(updatedAt, Number(project.heartbeatAt) || 0);
+  return Date.now() - lastSign > STALE_AFTER_MS && updatedAt < serverStartedAt;
 }
 
 // GET /:id — the full project, with live render progress folded in, and
@@ -559,7 +573,8 @@ router.post("/:id/render", notAlreadyRendering, (req, res) => {
 
     const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
     const stage = _renderStageFn || renderStage;
-    runExclusive(() => stage(ctx, id, job.jobId, { encoder }), {
+    // Listed as running (with a heartbeat) while it waits for the heavy job gate too.
+    asRunningStage(ctx, id, () => runExclusive(() => stage(ctx, id, job.jobId, { encoder }), {
       onQueued: () => {
         const live = readProject(ctx.dataDir, id);
         if (live) writeProject(ctx.dataDir, {
@@ -568,7 +583,7 @@ router.post("/:id/render", notAlreadyRendering, (req, res) => {
           render: { jobId: job.jobId, outputPath: null, status: "running", percent: 0, phase: "waiting for another job to finish" },
         });
       },
-    }).catch((err) => {
+    })).catch((err) => {
       // A rejected fire-and-forget is an UNHANDLED rejection; under Node's
       // default policy that kills the server. Record it on the project.
       const message = String(err?.message || err || "render failed");

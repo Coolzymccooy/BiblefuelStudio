@@ -204,6 +204,54 @@ export function _setLoudnessImpl(impl) { _measureLoudness = impl; }
 export function _resetLoudnessImpl() { _measureLoudness = measureLoudness; }
 
 
+// --- running stages and their heartbeat -------------------------------------
+//
+// A stage killed by a deploy leaves its project marked busy forever. GET /:id
+// tells that apart from a stage still running (here, or in another process
+// during a deploy's overlap) by these: the in-process set, and a heartbeatAt
+// every stage writes while it runs, bed assembly and the wait for the heavy
+// job gate included.
+
+const HEARTBEAT_MS = 30_000;
+let _heartbeatMs = HEARTBEAT_MS;
+export function _setHeartbeatMsForTests(ms) { _heartbeatMs = Number(ms) > 0 ? Number(ms) : HEARTBEAT_MS; }
+
+const BEATING_STATUSES = new Set([
+  AMBIENT_STATUS.VOICING, AMBIENT_STATUS.GENERATING_IMAGES, AMBIENT_STATUS.ASSEMBLING, AMBIENT_STATUS.RENDERING,
+]);
+const running = new Map();
+
+/** Is a stage for this session running in this process? */
+export function isStageRunning(projectId) { return (running.get(String(projectId)) || 0) > 0; }
+
+/**
+ * One heartbeat: stamp heartbeatAt onto the project as stored now. Read and
+ * write are synchronous, so no stage write can land between them; a stage
+ * that later writes its own older copy only drops the stamp until the next
+ * beat. A deleted or no-longer-busy session is left alone.
+ */
+function beat(dataDir, projectId) {
+  try {
+    const live = readProject(dataDir, projectId);
+    if (live && BEATING_STATUSES.has(live.status)) writeProject(dataDir, { ...live, heartbeatAt: Date.now() });
+  } catch { /* a missed beat is only a later one */ }
+}
+
+/** Run `work` as a stage of this session: listed as running, with a heartbeat, until it settles. */
+export async function asRunningStage(ctx, projectId, work) {
+  const id = String(projectId);
+  running.set(id, (running.get(id) || 0) + 1);
+  const timer = setInterval(() => beat(ctx.dataDir, id), _heartbeatMs);
+  timer.unref?.();
+  try {
+    return await work();
+  } finally {
+    clearInterval(timer);
+    const left = (running.get(id) || 1) - 1;
+    if (left > 0) running.set(id, left); else running.delete(id);
+  }
+}
+
 /** The image library as currently wired (real, or a test's stand-in). */
 export function currentImageLib() { return _imageLib; }
 // ---------------------------------------------------------------- stages
@@ -212,7 +260,11 @@ export function currentImageLib() { return _imageLib; }
  * Look up and speak every pending drop, writing after each so the UI can show
  * progress. One failed reference marks that drop and the rest continue.
  */
-export async function voicingStage(ctx, projectId) {
+export function voicingStage(ctx, projectId) {
+  return asRunningStage(ctx, projectId, () => runVoicing(ctx, projectId));
+}
+
+async function runVoicing(ctx, projectId) {
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
   writeProject(ctx.dataDir, { ...project, status: AMBIENT_STATUS.VOICING, error: null });
@@ -237,7 +289,11 @@ export async function voicingStage(ctx, projectId) {
  * image quota, and the daily free cap is low enough that it matters on a
  * session with eight movements.
  */
-export async function imagesStage(ctx, projectId, { force = false, onlyId = null } = {}) {
+export function imagesStage(ctx, projectId, options = {}) {
+  return asRunningStage(ctx, projectId, () => runImages(ctx, projectId, options));
+}
+
+async function runImages(ctx, projectId, { force = false, onlyId = null } = {}) {
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
 
