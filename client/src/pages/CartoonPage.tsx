@@ -2,13 +2,18 @@
  * A cartoon (admin-only talking cartoon film, up to 40 s) as a row of steps:
  * Script, Cast, Style, Shots, Film, Finish. A step opens once the ones before
  * it are satisfied (see `reachableSteps`), and a saved cartoon opens at the
- * furthest step it has reached.
+ * furthest step it has reached. Moving to another step scrolls to its top.
+ * A saved cartoon can be deleted at the foot of the page, as in Human mode;
+ * its clips stay in the visual library.
  */
-import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Trash2 } from 'lucide-react';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
+import { Button } from '../components/ui/Button';
 import { useAuth } from '../hooks/useAuth';
+import { cartoonApi } from '../lib/cartoonApi';
+import { toastError } from '../lib/errors';
 import type { CartoonMonth, CartoonProject } from '../lib/cartoonTypes';
 import { CARTOON_STEPS, furthestStep, reachableSteps, type CartoonStepId } from '../components/cartoon/steps';
 import { ScriptStep } from '../components/cartoon/ScriptStep';
@@ -87,6 +92,52 @@ function StepPanel({ step, project, month, seedance, onSaved, onScriptSaved, onG
   );
 }
 
+/** Delete the cartoon, after a confirm. Off while a step runs; the server's BUSY answer is shown if one starts meanwhile. */
+function DeleteCartoon({ project }: { project: CartoonProject }) {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const running = Object.values(project.running ?? {}).some(Boolean);
+  const remove = async () => {
+    if (!window.confirm('Delete this cartoon? Its clips stay in your visual library.')) return;
+    setBusy(true);
+    try {
+      await cartoonApi.remove(project.id);
+      navigate('/app/scene-script');
+    } catch (e) {
+      toastError(e);
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-3 border-t border-editor-line pt-5">
+      {running && <p id="cartoon-delete-why" className="text-help">Stop the running step before deleting this cartoon.</p>}
+      <Button
+        variant="danger"
+        onClick={() => { void remove(); }}
+        isLoading={busy}
+        disabled={busy || running}
+        aria-describedby={running ? 'cartoon-delete-why' : undefined}
+      >
+        <Trash2 size={16} aria-hidden="true" /> Delete cartoon
+      </Button>
+    </div>
+  );
+}
+
+/** Scroll a step's panel to its top when the step changes, never on the first show. */
+function useScrollToStep(active: CartoonStepId) {
+  const panel = useRef<HTMLDivElement>(null);
+  const shown = useRef<CartoonStepId | null>(null);
+  useEffect(() => {
+    if (shown.current !== null && shown.current !== active) {
+      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+      panel.current?.scrollIntoView?.({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+    }
+    shown.current = active;
+  }, [active]);
+  return panel;
+}
+
 interface ShellProps {
   project: CartoonProject | null;
   month?: CartoonMonth | null;
@@ -108,6 +159,7 @@ function Shell({ project, month = null, seedance = true, onSaved }: ShellProps) 
   };
   // Next is only offered once the next step's condition holds, so the target is open by then.
   const go = (step: CartoonStepId) => setChosen(step);
+  const panel = useScrollToStep(active);
   return (
     <div className="space-y-6">
       <div>
@@ -122,7 +174,10 @@ function Shell({ project, month = null, seedance = true, onSaved }: ShellProps) 
         />
       </div>
       <StepNav open={open} active={active} onSelect={setChosen} />
-      <StepPanel step={active} project={project} month={month} seedance={seedance} onSaved={saved} onScriptSaved={scriptSaved} onGo={go} />
+      <div ref={panel} className="scroll-mt-4">
+        <StepPanel step={active} project={project} month={month} seedance={seedance} onSaved={saved} onScriptSaved={scriptSaved} onGo={go} />
+      </div>
+      {project && <DeleteCartoon project={project} />}
     </div>
   );
 }

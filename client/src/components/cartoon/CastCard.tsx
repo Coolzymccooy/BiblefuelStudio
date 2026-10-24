@@ -19,7 +19,11 @@ import { Button } from '../ui/Button';
 import { Field } from '../ui/Field';
 import { Input } from '../ui/Input';
 import { Textarea } from '../ui/Textarea';
-import { portraitReady } from './cast';
+import { drawnInOldStyle, portraitReady } from './cast';
+
+/** Longest look and voice the server keeps (MAX_LOOK_CHARS and MAX_VOICE_CHARS in edits.js). */
+const MAX_LOOK_CHARS = 600;
+const MAX_VOICE_CHARS = 200;
 
 interface Props {
   project: CartoonProject;
@@ -52,10 +56,11 @@ function Portrait({ name, member }: { name: string; member: CartoonCastEntry }) 
   );
 }
 
-function Status({ member }: { member: CartoonCastEntry }) {
-  if (portraitReady(member)) {
+function Status({ member, style }: { member: CartoonCastEntry; style: string }) {
+  if (portraitReady(member, style)) {
     return <span className="inline-flex items-center gap-1 text-xs font-medium text-bf-success"><Check size={14} aria-hidden="true" /> Approved</span>;
   }
+  if (member.portrait?.status === 'done' && drawnInOldStyle(member, style)) return <span className="text-xs text-bf-warn">Old style</span>;
   if (member.portrait?.status === 'done') return <span className="text-xs text-bf-sub">Waiting for approval</span>;
   return null;
 }
@@ -72,6 +77,9 @@ export function CastCard({ project, name, member, index, onSaved }: Props) {
   useEffect(() => { setVoice(member.voice); }, [member.voice]);
 
   const pictures = project.running.pictures;
+  const style = project.meta.style;
+  const ready = portraitReady(member, style);
+  const oldStyle = member.portrait?.status === 'done' && drawnInOldStyle(member, style);
   const making = member.portrait?.status === 'making';
   const hasPicture = Boolean(member.portrait?.url);
   const noLook = look.trim() === '';
@@ -126,7 +134,7 @@ export function CastCard({ project, name, member, index, onSaved }: Props) {
       <div className="min-w-0 flex-1 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h3 id={ids.heading} className="truncate text-base font-semibold text-bf-cream">{name}</h3>
-          <Status member={member} />
+          <Status member={member} style={style} />
         </div>
         <Field label="Look" htmlFor={ids.look}>
           <Textarea
@@ -134,6 +142,7 @@ export function CastCard({ project, name, member, index, onSaved }: Props) {
             aria-label={`${name}'s look`}
             rows={3}
             value={look}
+            maxLength={MAX_LOOK_CHARS}
             readOnly={pictures}
             placeholder="Age, build, hair, clothes, colours. Repeated in every shot."
             onChange={(e) => setLook(e.target.value)}
@@ -146,6 +155,7 @@ export function CastCard({ project, name, member, index, onSaved }: Props) {
             id={ids.voice}
             aria-label={`${name}'s voice`}
             value={voice}
+            maxLength={MAX_VOICE_CHARS}
             readOnly={pictures}
             placeholder="For example: deep, slow, kind"
             onChange={(e) => setVoice(e.target.value)}
@@ -156,9 +166,10 @@ export function CastCard({ project, name, member, index, onSaved }: Props) {
         {member.portrait?.status === 'error' && member.portrait.error && (
           <p role="alert" className="text-sm text-bf-danger">{member.portrait.error}</p>
         )}
-        {member.styleMismatch && portraitReady(member) && (
+        {member.styleMismatch && ready && (
           <p className="text-sm text-bf-warn">Drawn in another style. Make it again to match this film.</p>
         )}
+        {oldStyle && <p className="text-sm text-bf-warn">Drawn in the old style. Make it again in the new style.</p>}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="secondary"
@@ -172,12 +183,12 @@ export function CastCard({ project, name, member, index, onSaved }: Props) {
             {hasPicture ? <RefreshCw size={14} aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}
             {hasPicture ? 'Make again' : 'Make portrait'}
           </Button>
-          {member.portrait?.status === 'done' && !member.approved && (
+          {member.portrait?.status === 'done' && !member.approved && !oldStyle && (
             <Button className="!px-3 !py-1.5 text-sm" aria-label={`Approve ${name}`} isLoading={busy === 'approve'} disabled={busy !== null} onClick={approve}>
               <Check size={14} aria-hidden="true" /> Approve
             </Button>
           )}
-          {portraitReady(member) && (onShelf
+          {ready && (onShelf
             ? <span className="inline-flex items-center gap-1 text-xs text-bf-sub"><Check size={14} aria-hidden="true" /> On your shelf</span>
             : (
               <Button variant="ghost" className="!px-3 !py-1.5 text-sm" aria-label={`Save ${name} to shelf`} isLoading={busy === 'shelve'} disabled={busy !== null} onClick={shelve}>

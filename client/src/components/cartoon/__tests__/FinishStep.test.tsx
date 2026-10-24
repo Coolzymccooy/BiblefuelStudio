@@ -95,6 +95,19 @@ describe('FinishStep', () => {
     await waitFor(() => expect(cartoonApi.update).toHaveBeenCalledWith('c1', { endCard: { text: 'Share it with a friend' } }));
   });
 
+  it('Render waits for an end-card save still in flight', async () => {
+    let finish: (p: CartoonProject) => void = () => {};
+    vi.mocked(cartoonApi.update).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(<Harness initial={project()} />);
+    const endCard = screen.getByRole('textbox', { name: 'End card text' });
+    fireEvent.change(endCard, { target: { value: 'Share it with a friend' } });
+    fireEvent.blur(endCard);
+    const renderButton = screen.getByRole('button', { name: 'Render the film' });
+    await waitFor(() => expect(renderButton).toBeDisabled());
+    finish(project({ endCard: { text: 'Share it with a friend' } }));
+    await waitFor(() => expect(renderButton).toBeEnabled());
+  });
+
   it('rendering shows progress and can be stopped', async () => {
     vi.mocked(cartoonApi.cancelRender).mockResolvedValue({ stopping: true });
     render(<Harness initial={project({ running: { pictures: false, film: false, render: true }, render: { status: 'rendering', progress: 42 } })} />);

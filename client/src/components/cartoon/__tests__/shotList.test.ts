@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { asOrdered, canChain, referencedCast, shotPriceUsd } from '../shotList';
-import { listNames, waitingCast } from '../cast';
+import { drawnInOldStyle, listNames, waitingCast } from '../cast';
 import type { CartoonCastEntry, CartoonProject, CartoonShot } from '../../../lib/cartoonTypes';
 
 const member = (name: string, approved = true, url: string | null = `/p/${name}.png`): CartoonCastEntry => ({
@@ -76,6 +76,14 @@ describe('waitingCast', () => {
       shots: [shot({ speaker: 'Eli', line: 'Hi' })],
     });
     expect(waitingCast(p)).toEqual(['Pip', 'Naomi']);
+  });
+  it('counts a portrait drawn in an older style as not ready', () => {
+    const eli = { ...member('Eli', true), portrait: { status: 'done', url: '/p/Eli.png', error: null, style: 'clay' } };
+    const p = project({ cast: { Eli: eli, Pip: member('Pip', true) } as never, shots: [shot({ speaker: 'Eli', line: 'Hi' })] });
+    expect(waitingCast(p)).toEqual(['Eli']);
+    expect(drawnInOldStyle(eli as never, 'family3d')).toBe(true);
+    expect(drawnInOldStyle(eli as never, 'clay')).toBe(false);
+    expect(drawnInOldStyle(member('Pip', true) as never, 'family3d')).toBe(false);
   });
   it('reads names as a sentence', () => {
     expect(listNames(['Eli'])).toBe('Eli');

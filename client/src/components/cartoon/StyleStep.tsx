@@ -1,9 +1,10 @@
 /**
  * Step 3 of a cartoon: one art style for the whole film. The style's text
- * opens every portrait and clip prompt. Changing it once portraits exist keeps
- * the pictures but un-approves them all (they were drawn in the old style),
- * so the admin is asked first; the journey then falls back to Cast until each
- * portrait is approved again.
+ * opens every portrait and clip prompt. Each portrait records the style it was
+ * drawn in, so changing the style once portraits exist means making each one
+ * again (the server refuses to approve an old-style portrait). The admin is
+ * asked first; the journey then falls back to Cast until each portrait is
+ * made again and approved.
  */
 import { useEffect, useState } from 'react';
 import { ArrowRight, Check } from 'lucide-react';
@@ -12,7 +13,7 @@ import type { CartoonProject, CartoonStyle } from '../../lib/cartoonTypes';
 import { toastError } from '../../lib/errors';
 import { Button } from '../ui/Button';
 
-export const STYLE_CHANGE_WARNING = 'Changing the style keeps the portraits but asks you to approve them again, since they were drawn in the old style.';
+export const STYLE_CHANGE_WARNING = 'Changing the style means making each portrait again in the new style.';
 
 /** One line on how each style looks (spec 7.4). The server owns the ids and labels. */
 const STYLE_LINES: Record<string, string> = {

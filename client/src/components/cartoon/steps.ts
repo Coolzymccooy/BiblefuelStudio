@@ -5,6 +5,7 @@
  * already sends on the project view; it holds no state of its own.
  */
 import type { CartoonProject } from '../../lib/cartoonTypes';
+import { portraitReady } from './cast';
 
 export type CartoonStepId = 'script' | 'cast' | 'style' | 'shots' | 'film' | 'finish';
 
@@ -24,6 +25,11 @@ export const CARTOON_STEPS: readonly CartoonStepInfo[] = [
   { id: 'finish', label: 'Finish', summary: 'Captions, music and the end card, then the finished film.' },
 ];
 
+/** Whether a clip was ever ordered for any shot: then the lines are locked. Mirrors `isLocked` in server/src/lib/cartoon/edits.js. */
+export function isLocked(project: Pick<CartoonProject, 'shots'> | null): boolean {
+  return Boolean(project?.shots.some((s) => s.clip && (s.clip.taskId || s.clip.libraryId || s.clip.previous?.taskId)));
+}
+
 /** Where a saved cartoon lives in the app. */
 export const cartoonPath = (id: string) => `/app/scene-script/cartoon/${encodeURIComponent(id)}`;
 
@@ -36,7 +42,8 @@ function satisfied(p: StepFacts): Record<CartoonStepId, boolean> {
   return {
     script: true,
     cast: true,
-    style: cast.every((m) => m.approved && m.portrait?.status === 'done'),
+    // A portrait drawn in an older style is not ready, approved or not (server CAST_NOT_READY).
+    style: cast.every((m) => portraitReady(m, p.meta?.style)),
     shots: Boolean(p.meta?.style),
     film: p.shotListApproved === true,
     finish: shots.length > 0 && shots.every((s) => s.clip?.status === 'done'),

@@ -2,7 +2,8 @@
  * "Write it for me": BibleFuel drafts a script from a verse or a theme. The
  * draft only fills the editor; nothing is saved, and from then on the text is
  * the admin's own and is spoken exactly as they leave it. Drafting takes up to
- * a minute, so the panel says so rather than looking stuck.
+ * a minute, so the panel says so rather than looking stuck, and tells the
+ * Script step (`onWritingChange`) so the editor and Next wait for the draft.
  */
 import { useEffect, useState } from 'react';
 import { cartoonApi } from '../../lib/cartoonApi';
@@ -17,9 +18,11 @@ interface Props {
   /** The editor's text, so a draft never silently replaces the admin's work. */
   current: string;
   onDraft: (markdown: string) => void;
+  /** Told when a draft starts and ends being written. */
+  onWritingChange?: (writing: boolean) => void;
 }
 
-export function WriteForMe({ current, onDraft }: Props) {
+export function WriteForMe({ current, onDraft, onWritingChange }: Props) {
   const [verse, setVerse] = useState('');
   const [theme, setTheme] = useState('');
   const [cast, setCast] = useState('');
@@ -36,6 +39,7 @@ export function WriteForMe({ current, onDraft }: Props) {
   const write = async () => {
     if (current.trim() && !window.confirm('Replace the script in the editor with a new draft?')) return;
     setWriting(true);
+    onWritingChange?.(true);
     setError(null);
     try {
       const draft = await cartoonApi.write({ verse: verse.trim(), theme: theme.trim(), cast: cast.trim(), style });
@@ -44,6 +48,7 @@ export function WriteForMe({ current, onDraft }: Props) {
       setError(e instanceof Error ? e.message : 'Could not write the script.');
     } finally {
       setWriting(false);
+      onWritingChange?.(false);
     }
   };
 

@@ -139,6 +139,36 @@ describe('FilmStep', () => {
     await waitFor(() => expect(cartoonApi.film).toHaveBeenCalledWith('c1', { only: ['sh2'] }));
   });
 
+  it('a re-make that did not work says the earlier clip was kept, and why', () => {
+    const shots = [shot('sh1', 1, { clip: doneClip({ remakeError: 'BytePlus declined this shot. Change its note or action and try again.' }) }), ...baseShots.slice(1)];
+    render(<Harness initial={project({ shots })} />);
+    const notice = within(card(1)).getByRole('status');
+    expect(notice).toHaveTextContent("The re-make didn't work; kept the earlier clip.");
+    expect(notice).toHaveTextContent('BytePlus declined this shot. Change its note or action and try again.');
+    expect(within(card(1)).getByText('Done')).toBeInTheDocument();
+  });
+
+  it('Re-make is off, and says why, while its price is unknown', async () => {
+    vi.mocked(cartoonApi.estimate).mockRejectedValue(new Error('offline'));
+    const shots = baseShots.map((s) => ({ ...s, clip: doneClip() }));
+    render(<Harness initial={project({ shots, estimate: estimate({ clips: 0, seconds: 0, usd: 0, shotIds: [] }) })} />);
+    const remake = within(card(1)).getByRole('button', { name: 'Re-make shot 1' });
+    expect(remake).toBeDisabled();
+    expect(within(card(1)).getByText("The price of a re-make can't be worked out yet.")).toBeInTheDocument();
+    fireEvent.click(remake);
+    expect(cartoonApi.film).not.toHaveBeenCalled();
+  });
+
+  it('a paid clip that can be fetched again is offered at no charge', async () => {
+    vi.mocked(cartoonApi.film).mockResolvedValue(project({ running: { pictures: false, film: true, render: false } }));
+    const paid = { status: 'error' as const, error: 'The clip was made and paid for but could not be downloaded.', taskId: 't1', chargedTaskId: 't1', startedAt: Date.now() };
+    const shots = [shot('sh1', 1, { clip: paid }), shot('sh2', 2, { clip: doneClip() }), shot('sh3', 3, { clip: doneClip() })];
+    render(<Harness initial={project({ shots, estimate: estimate({ clips: 0, refetch: 1, seconds: 0, usd: 0, shotIds: ['sh1'] }) })} />);
+    expect(screen.getByText('1 paid clip to fetch again · no charge')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry 1 shot, no charge' }));
+    await waitFor(() => expect(cartoonApi.film).toHaveBeenCalledWith('c1', { only: ['sh1'] }));
+  });
+
   it('a waiting clip names the shot it waits for', () => {
     const shots = [
       shot('sh1', 1, { clip: { status: 'error', error: 'Something went wrong making this clip. Try again.' } }),

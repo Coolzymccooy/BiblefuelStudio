@@ -103,6 +103,30 @@ describe('ShotListStep', () => {
     expect(onNext).toHaveBeenCalled();
   });
 
+  it('Approve shot list waits for a note that is still saving', async () => {
+    let finish: (p: CartoonProject) => void = () => {};
+    vi.mocked(cartoonApi.update).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    vi.mocked(cartoonApi.approveShots).mockResolvedValue(project({ shotListApproved: true }));
+    render(<Harness initial={project()} />);
+    const note = within(row(1)).getByRole('textbox', { name: 'Director\'s note for shot 1' });
+    fireEvent.change(note, { target: { value: 'close-up' } });
+    fireEvent.blur(note);
+    const approve = screen.getByRole('button', { name: 'Approve shot list' });
+    await waitFor(() => expect(approve).toBeDisabled());
+    expect(screen.getByText('Saving your change…')).toBeInTheDocument();
+    finish(project({ shots: [{ ...shots[0], note: 'close-up' }, shots[1]] }));
+    await waitFor(() => expect(approve).toBeEnabled());
+    fireEvent.click(approve);
+    await waitFor(() => expect(cartoonApi.approveShots).toHaveBeenCalledWith('c1'));
+  });
+
+  it('a film over 40 s says so clearly next to the total', () => {
+    const over = { storySec: 37, filmSec: 42.5, ok: false, overBySec: 2.5, trimScene: { id: 'a', place: 'Hillside' }, tooLong: [], tooMany: false };
+    render(<Harness initial={project({ check: over })} />);
+    expect(screen.getByText('42.5 s of 40')).toBeInTheDocument();
+    expect(screen.getByText('2.5 s over the 40 s limit. Trim the scene "Hillside" on the Script step.')).toBeInTheDocument();
+  });
+
   it('a cast not ready names who is still waiting', async () => {
     const onGoCast = vi.fn();
     vi.mocked(cartoonApi.approveShots).mockRejectedValue(

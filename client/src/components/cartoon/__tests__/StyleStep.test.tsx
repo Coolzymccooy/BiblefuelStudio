@@ -53,7 +53,7 @@ describe('StyleStep', () => {
   it('warns before changing the style once portraits exist, and keeps it when declined', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<StyleStep project={project(true)} onSaved={() => {}} onNext={() => {}} />);
-    expect(STYLE_CHANGE_WARNING).toBe('Changing the style keeps the portraits but asks you to approve them again, since they were drawn in the old style.');
+    expect(STYLE_CHANGE_WARNING).toBe('Changing the style means making each portrait again in the new style.');
     fireEvent.click(await screen.findByRole('radio', { name: /Storybook/ }));
     expect(confirm).toHaveBeenCalledWith(STYLE_CHANGE_WARNING);
     expect(cartoonApi.update).not.toHaveBeenCalled();

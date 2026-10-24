@@ -13,6 +13,8 @@ export interface CartoonPortrait {
   /** Public URL of the picture; null before the first successful make. */
   url: string | null;
   error: string | null;
+  /** The style id it was drawn in; missing on portraits made before styles were recorded (counts as the current style). */
+  style?: string | null;
 }
 
 export interface CartoonCastEntry {
@@ -34,6 +36,7 @@ export type CartoonClipStatus = 'queued' | 'generating' | 'done' | 'error' | 're
 /** A finished or in-flight clip of an earlier order, kept so a re-make can be undone. */
 export interface CartoonClipPrevious {
   status: CartoonClipStatus;
+  taskId?: string | null;
   libraryId?: string;
   url?: string;
   posterUrl?: string | null;
@@ -70,6 +73,18 @@ export interface CartoonClip {
   /** Started from a last frame that has since been re-made. */
   stale?: boolean;
   previous?: CartoonClipPrevious | null;
+  /** The BytePlus task this clip came from, or is being made by. */
+  taskId?: string | null;
+  /** The task whose cost has been counted for this shot. */
+  chargedTaskId?: string | null;
+  /** When the task was ordered (ms since epoch). */
+  startedAt?: number;
+  /** False once waiting again on a paid task ended in a definite failure: the next order is a new one. */
+  refetchable?: boolean;
+  /** Why a re-make made nothing; the clip shown is the earlier one, kept. */
+  remakeError?: string | null;
+  /** A paid re-make that could not be downloaded, which ordering the shot again fetches at no cost. */
+  remake?: Pick<CartoonClip, 'taskId' | 'chargedTaskId' | 'startedAt' | 'seconds' | 'prompt' | 'references'> | null;
 }
 
 export type CartoonFirstFrame = 'fresh' | 'chain';
@@ -105,7 +120,10 @@ export interface CartoonCheck {
 
 /** What ordering would cost: clips still to make, portraits still to draw, and the spend so far. */
 export interface CartoonEstimate {
+  /** Clips to order and pay for. */
   clips: number;
+  /** Clips already paid for that ordering only fetches again, at no cost. */
+  refetch?: number;
   seconds: number;
   usd: number;
   images: number;
@@ -142,7 +160,8 @@ export interface CartoonProject {
   };
   source: {
     markdown: string;
-    ignored: { lineNo: number; text: string; reason: string }[];
+    /** Lines the parser could not place, with their own text (server parse.js). */
+    ignored: { lineNo: number; text: string }[];
     warnings: string[];
     parsedAt?: string;
   };

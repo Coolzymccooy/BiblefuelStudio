@@ -21,6 +21,8 @@ interface Props {
   index: number;
   disabled: boolean;
   onSaved: (project: CartoonProject) => void;
+  /** Told when a save of this row starts and ends, so approval can wait for it. */
+  onSavingChange?: (shotId: string, saving: boolean) => void;
 }
 
 const FIRST_FRAMES: { id: CartoonFirstFrame; label: string }[] = [
@@ -50,7 +52,7 @@ function References({ project, names }: { project: CartoonProject; names: string
   );
 }
 
-export function ShotRow({ project, shot, index, disabled, onSaved }: Props) {
+export function ShotRow({ project, shot, index, disabled, onSaved, onSavingChange }: Props) {
   const [note, setNote] = useState(shot.note);
   const [saving, setSaving] = useState(false);
   useEffect(() => { setNote(shot.note); }, [shot.note]);
@@ -65,12 +67,14 @@ export function ShotRow({ project, shot, index, disabled, onSaved }: Props) {
 
   const patch = async (edit: { note?: string; firstFrame?: CartoonFirstFrame }) => {
     setSaving(true);
+    onSavingChange?.(shot.id, true);
     try {
       onSaved(await cartoonApi.update(project.id, { shots: [{ id: shot.id, ...edit }] }));
     } catch (e) {
       toastError(e);
     } finally {
       setSaving(false);
+      onSavingChange?.(shot.id, false);
     }
   };
 

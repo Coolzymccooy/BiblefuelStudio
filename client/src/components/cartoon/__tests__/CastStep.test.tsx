@@ -119,6 +119,21 @@ describe('CastStep', () => {
     expect(await screen.findByText('Drawing the portrait…')).toBeInTheDocument();
   });
 
+  it('a portrait drawn in the old style hides Approve and says to make it again', () => {
+    const old = { ...done('Eli'), style: 'clay' };
+    render(<Harness initial={project({ Eli: member('Eli', { portrait: old }), Pip: member('Pip', { portrait: done('Pip'), approved: true }) })} />);
+    expect(screen.queryByRole('button', { name: 'Approve Eli' })).not.toBeInTheDocument();
+    expect(screen.getByText('Drawn in the old style. Make it again in the new style.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: "Make Eli's portrait again" })).toBeEnabled();
+    expect(next()).toBeDisabled();
+  });
+
+  it('look and voice stop at the lengths the server keeps', () => {
+    render(<Harness initial={project({ Eli: member('Eli') })} />);
+    expect(screen.getByRole('textbox', { name: "Eli's look" })).toHaveAttribute('maxLength', '600');
+    expect(screen.getByRole('textbox', { name: "Eli's voice" })).toHaveAttribute('maxLength', '200');
+  });
+
   it('a portrait that failed shows its error on the card', () => {
     render(<Harness initial={project({ Eli: member('Eli', { portrait: { status: 'error', url: null, error: 'The picture could not be made. Try again.' } }) })} />);
     expect(screen.getByText('The picture could not be made. Try again.')).toBeInTheDocument();

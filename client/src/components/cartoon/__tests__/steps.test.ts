@@ -41,6 +41,14 @@ describe('reachableSteps', () => {
     expect(reachableSteps(project({ shotListApproved: true, shots: [shot('done')] }))).toEqual(['script', 'cast']);
   });
 
+  it('a portrait approved in an older style is not ready: Style and Shots stay closed', () => {
+    const old = { ...member(true), portrait: { status: 'done', url: '/p.png', error: null, style: 'clay' } };
+    const unrecorded = member(true);
+    expect(reachableSteps(project({ cast: { Eli: old, Pip: member(true) }, shotListApproved: true }))).toEqual(['script', 'cast']);
+    // A portrait with no recorded style counts as drawn in the current one.
+    expect(reachableSteps(project({ cast: { Eli: unrecorded, Pip: member(true) } }))).toContain('shots');
+  });
+
   it('opens a project at its furthest reachable step', () => {
     expect(furthestStep(null)).toBe('script');
     expect(furthestStep(project())).toBe('cast');

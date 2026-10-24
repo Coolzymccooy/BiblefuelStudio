@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { CartoonClip, CartoonShot } from '../../../lib/cartoonTypes';
-import { clipStatusLabel, monthLeftUsd, postCaption, posterOptions, priceOfShots, rateUsdPerSec, retryShotIds } from '../film';
+import { clipStatusLabel, fetchesAgain, monthLeftUsd, postCaption, posterOptions, priceOfShots, rateUsdPerSec, retryShotIds } from '../film';
 
 const shot = (id: string, clip: CartoonClip | null, seconds = 4): CartoonShot => ({
   id, sceneId: 'a', speaker: 'Eli', line: 'Hi', action: null, note: '', seconds, firstFrame: 'chain', clip,
@@ -25,6 +25,21 @@ describe('film rules', () => {
     const rate = rateUsdPerSec({ seconds: 10, usd: 1 });
     expect(priceOfShots([shot('a', null, 4), shot('b', null, 6)], rate)).toBeCloseTo(1);
     expect(priceOfShots([shot('a', null)], null)).toBeNull();
+  });
+
+  it('prices a paid clip that can still be fetched at $0, like the server', () => {
+    const now = Date.now();
+    const paid: CartoonClip = { status: 'error', taskId: 't1', chargedTaskId: 't1', startedAt: now - 1000 };
+    const rate = rateUsdPerSec({ seconds: 10, usd: 1 });
+    expect(fetchesAgain(shot('a', paid), now)).toBe(true);
+    expect(priceOfShots([shot('a', paid), shot('b', null, 6)], rate)).toBeCloseTo(0.6);
+    expect(priceOfShots([shot('a', paid)], null)).toBe(0);
+    expect(fetchesAgain(shot('a', { ...paid, refetchable: false }), now)).toBe(false);
+    expect(fetchesAgain(shot('a', { ...paid, startedAt: now - 24 * 3600 * 1000 }), now)).toBe(false);
+    expect(fetchesAgain(shot('a', { ...paid, chargedTaskId: 'other' }), now)).toBe(false);
+    const done: CartoonClip = { status: 'done', remake: { taskId: 't2', chargedTaskId: 't2', startedAt: now } };
+    // A done shot whose paid re-make could not be downloaded.
+    expect(fetchesAgain(shot('a', done), now)).toBe(true);
   });
 
   it('counts reservations against what is left this month, never below zero', () => {

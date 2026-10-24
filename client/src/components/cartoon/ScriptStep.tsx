@@ -2,11 +2,17 @@
  * Step 1 of a cartoon: the script. Three ways in on one screen: paste into the
  * editor, have BibleFuel write a draft, or start from an example. The editor's
  * text is never reformatted; the meter under it reads the script as the server
- * will save it, and Next stays off until the film fits 40 seconds.
+ * will save it, and Next stays off until the film fits 40 seconds. While a
+ * draft is being written the editor and Next are off, so typed text is never
+ * replaced and Next never saves the old text.
+ *
+ * Once a clip has been ordered the lines are locked (the same rule as the
+ * server's `isLocked`). "Start over" then makes a new cartoon from this
+ * script; this one and its paid clips stay.
  */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Lock } from 'lucide-react';
+import { ArrowRight, Lock, RotateCcw } from 'lucide-react';
 import { cartoonApi } from '../../lib/cartoonApi';
 import type { CartoonExample, CartoonProject } from '../../lib/cartoonTypes';
 import { toastError } from '../../lib/errors';
@@ -16,7 +22,7 @@ import { Textarea } from '../ui/Textarea';
 import { ExampleShelf } from './ExampleShelf';
 import { LengthMeter, readyToSave, useLengthCheck } from './LengthMeter';
 import { WriteForMe } from './WriteForMe';
-import { cartoonPath } from './steps';
+import { cartoonPath, isLocked } from './steps';
 
 interface Props {
   /** The saved cartoon, or null for a new one. */
@@ -36,9 +42,10 @@ export function ScriptStep({ project = null, onSaved }: Props) {
   const [examples, setExamples] = useState<CartoonExample[] | null>(null);
   const [placeholder, setPlaceholder] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [writing, setWriting] = useState(false);
   const length = useLengthCheck(markdown);
   // Once a clip is ordered the server refuses script edits, so say so up front.
-  const locked = Boolean(project?.shots.some((s) => s.clip));
+  const locked = isLocked(project);
 
   useEffect(() => {
     cartoonApi.examples()
@@ -74,6 +81,18 @@ export function ScriptStep({ project = null, onSaved }: Props) {
     }
   };
 
+  const startOver = async () => {
+    if (!project) return;
+    setBusy('start-over');
+    try {
+      const created = await cartoonApi.create({ markdown: project.source.markdown });
+      navigate(cartoonPath(created.id));
+    } catch (e) {
+      toastError(e);
+      setBusy(null);
+    }
+  };
+
   const canNext = locked ? true : readyToSave(length);
 
   return (
@@ -87,26 +106,35 @@ export function ScriptStep({ project = null, onSaved }: Props) {
               onChange={(e) => setMarkdown(e.target.value)}
               placeholder={placeholder}
               spellCheck={false}
-              readOnly={locked}
+              readOnly={locked || writing}
+              aria-busy={writing || undefined}
               rows={18}
               className="font-mono text-sm"
             />
           </Field>
           {locked ? (
-            <p className="flex items-start gap-2 text-help">
-              <Lock size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
-              The lines are locked because clips have been ordered. They are spoken exactly as saved.
-            </p>
+            <div className="space-y-3">
+              <p className="flex items-start gap-2 text-help">
+                <Lock size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+                The lines are locked because clips have been ordered. They are spoken exactly as saved.
+              </p>
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-editor-line bg-bf-card px-3 py-2">
+                <Button variant="secondary" onClick={startOver} isLoading={busy === 'start-over'} disabled={busy !== null} aria-describedby="cartoon-start-over-note">
+                  <RotateCcw size={16} aria-hidden="true" /> Start over
+                </Button>
+                <p id="cartoon-start-over-note" className="text-help">Starts a new cartoon from this script. Clips you paid for stay in your library.</p>
+              </div>
+            </div>
           ) : (
             <LengthMeter state={length} />
           )}
           <div className="flex justify-end">
-            <Button onClick={next} isLoading={busy === 'next'} disabled={!canNext || busy !== null}>
+            <Button onClick={next} isLoading={busy === 'next'} disabled={!canNext || busy !== null || writing}>
               Next <ArrowRight size={16} aria-hidden="true" />
             </Button>
           </div>
         </div>
-        {!locked && <WriteForMe current={markdown} onDraft={setMarkdown} />}
+        {!locked && <WriteForMe current={markdown} onDraft={setMarkdown} onWritingChange={setWriting} />}
       </div>
       {!project && (
         <ExampleShelf examples={examples} busyId={busy} disabled={busy !== null} onUse={(exampleId) => { void startFromExample(exampleId); }} />

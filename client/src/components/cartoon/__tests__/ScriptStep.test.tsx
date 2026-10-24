@@ -107,6 +107,31 @@ describe('ScriptStep', () => {
     expect(cartoonApi.write).toHaveBeenCalledWith({ verse: 'Ruth 1:16', theme: '', cast: '', style: 'family3d' });
   });
 
+  it('while Write it for me runs, the editor and Next are off', async () => {
+    let finish: (v: { markdown: string; verseText: string }) => void = () => {};
+    vi.mocked(cartoonApi.write).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    vi.mocked(cartoonApi.parse).mockResolvedValue({ preview: preview as never, check: { storySec: 4, filmSec: 9.5, ok: true, overBySec: 0, trimScene: null, tooLong: [], tooMany: false }, fits: true, estimate });
+    renderStep();
+    fireEvent.change(editor(), { target: { value: SAMPLE } });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^next/i })).toBeEnabled(), { timeout: 2000 });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.change(screen.getByLabelText('Verse'), { target: { value: 'Ruth 1:16' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Write the draft' }));
+    await waitFor(() => expect(editor()).toHaveAttribute('readonly'));
+    expect(screen.getByRole('button', { name: /^next/i })).toBeDisabled();
+    finish({ markdown: '# Ruth', verseText: '' });
+    await waitFor(() => expect(editor()).not.toHaveAttribute('readonly'));
+    expect(editor().value).toBe('# Ruth');
+  });
+
+  it('an ignored line shows its own text', async () => {
+    const withIgnored = { ...preview, source: { ignored: [{ lineNo: 7, text: 'Narrator speaks softly here' }], warnings: [] } };
+    vi.mocked(cartoonApi.parse).mockResolvedValue({ preview: withIgnored as never, check: { storySec: 4, filmSec: 9.5, ok: true, overBySec: 0, trimScene: null, tooLong: [], tooMany: false }, fits: true, estimate });
+    renderStep();
+    fireEvent.change(editor(), { target: { value: SAMPLE } });
+    expect(await screen.findByText('Line 7 not used: "Narrator speaks softly here"', undefined, { timeout: 2000 })).toBeInTheDocument();
+  });
+
   it('an example creates a project and navigates to it', async () => {
     vi.mocked(cartoonApi.create).mockResolvedValue({ id: 'c42' } as never);
     renderStep();
@@ -115,5 +140,52 @@ describe('ScriptStep', () => {
     fireEvent.click(buttons[1]);
     expect(await screen.findByText('Opened cartoon c42')).toBeInTheDocument();
     expect(cartoonApi.create).toHaveBeenCalledWith({ exampleId: 'david' });
+  });
+});
+
+describe('ScriptStep on a saved cartoon', () => {
+  const saved = (clip: Record<string, unknown> | null) => ({
+    id: 'c7',
+    source: { markdown: SAMPLE, ignored: [], warnings: [] },
+    shots: [{ ...preview.shots[0], clip }],
+  }) as never;
+
+  function renderSaved(project: never) {
+    return render(
+      <MemoryRouter initialEntries={['/app/scene-script/cartoon/c7']}>
+        <Routes>
+          <Route path="/app/scene-script/cartoon/c7" element={<ScriptStep project={project} />} />
+          <Route path="/app/scene-script/cartoon/:id" element={<Opened />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(cartoonApi.examples).mockResolvedValue({ examples, placeholder: SAMPLE });
+    vi.mocked(cartoonApi.styles).mockResolvedValue({ styles: [], defaultStyle: 'family3d' });
+    vi.mocked(cartoonApi.parse).mockResolvedValue({ preview: preview as never, check: { storySec: 4, filmSec: 9.5, ok: true, overBySec: 0, trimScene: null, tooLong: [], tooMany: false }, fits: true, estimate });
+  });
+
+  it('a locked script offers Start over, which makes a new cartoon from it', async () => {
+    vi.mocked(cartoonApi.create).mockResolvedValue({ id: 'c8' } as never);
+    renderSaved(saved({ status: 'done', taskId: 't1', libraryId: 'lib-1' }));
+    expect(editor()).toHaveAttribute('readonly');
+    expect(screen.getByText('Starts a new cartoon from this script. Clips you paid for stay in your library.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    expect(await screen.findByText('Opened cartoon c8')).toBeInTheDocument();
+    expect(cartoonApi.create).toHaveBeenCalledWith({ markdown: SAMPLE });
+  });
+
+  it('locks the lines exactly when the server does: not for an order refused before it was placed', () => {
+    renderSaved(saved({ status: 'error', taskId: null, error: 'Over the monthly cap.' }));
+    expect(editor()).not.toHaveAttribute('readonly');
+    expect(screen.queryByRole('button', { name: 'Start over' })).not.toBeInTheDocument();
+  });
+
+  it('locks the lines when only an earlier clip was ordered', () => {
+    renderSaved(saved({ status: 'error', taskId: null, previous: { status: 'done', taskId: 't0' } }));
+    expect(editor()).toHaveAttribute('readonly');
   });
 });

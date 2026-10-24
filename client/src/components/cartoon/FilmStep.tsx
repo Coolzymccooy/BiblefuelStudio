@@ -10,7 +10,8 @@
  * shots not yet ordered; Retry re-orders the failed and refused shots and the
  * ones waiting on them; Re-make orders one finished shot again at its price
  * (the earlier clip stays in the library). Prices come from the server's
- * estimate, never from a rate kept in the client.
+ * estimate, never from a rate kept in the client; a paid clip that is only
+ * fetched again costs nothing and says so.
  */
 import { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowRight, Square } from 'lucide-react';
@@ -20,7 +21,7 @@ import type { CartoonErrorPayload, CartoonEstimate, CartoonMonth, CartoonProject
 import { Button } from '../ui/Button';
 import { money } from '../sceneScript/format';
 import { FilmShotCard } from './FilmShotCard';
-import { isDone, isInFlight, monthLeftUsd, priceOfShots, rateUsdPerSec, retryShotIds, secs } from './film';
+import { isDone, isInFlight, monthLeftUsd, priceOfShots, priceWords, rateUsdPerSec, retryShotIds, secs } from './film';
 
 interface Props {
   project: CartoonProject;
@@ -60,8 +61,11 @@ function usePricing(project: CartoonProject) {
 }
 
 function EstimateLine({ estimate, left }: { estimate: CartoonEstimate; left: number | null }) {
-  const parts = [plural(estimate.clips, 'clip'), `${secs(estimate.seconds)} s`, `about ${money(estimate.usd)}`];
-  if (left !== null) parts.push(`${money(left)} left this month`);
+  const refetch = estimate.refetch ?? 0;
+  const parts = estimate.clips > 0 ? [plural(estimate.clips, 'clip'), `${secs(estimate.seconds)} s`, `about ${money(estimate.usd)}`] : [];
+  if (refetch > 0) parts.push(`${plural(refetch, 'paid clip')} to fetch again`);
+  if (estimate.clips > 0 && left !== null) parts.push(`${money(left)} left this month`);
+  if (estimate.clips === 0) parts.push('no charge');
   return <p className="text-sm font-medium tabular-nums text-bf-cream">{parts.join(' · ')}</p>;
 }
 
@@ -137,10 +141,10 @@ export function FilmStep({ project, month, seedance, onSaved, onNext }: Props) {
           onClick={() => order(retryIds)}
           isLoading={busy === 'order'}
           disabled={locked}
-          aria-label={`Retry ${plural(retryIds.length, 'shot')}${retryUsd !== null ? `, about ${money(retryUsd)}` : ''}`}
+          aria-label={`Retry ${plural(retryIds.length, 'shot')}${retryUsd !== null ? `, ${priceWords(retryUsd)}` : ''}`}
         >
           Retry {plural(retryIds.length, 'shot')}
-          {retryUsd !== null && <span className="tabular-nums">about {money(retryUsd)}</span>}
+          {retryUsd !== null && <span className="tabular-nums">{priceWords(retryUsd)}</span>}
         </Button>
       );
     }
@@ -155,7 +159,9 @@ export function FilmStep({ project, month, seedance, onSaved, onNext }: Props) {
       <div className="space-y-3 rounded-card border border-editor-line bg-bf-card px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-1">
-            {estimate.clips > 0 ? <EstimateLine estimate={estimate} left={left} /> : <p className="text-sm font-medium text-bf-cream">Every shot has a clip.</p>}
+            {estimate.clips > 0 || (estimate.refetch ?? 0) > 0
+              ? <EstimateLine estimate={estimate} left={left} />
+              : <p className="text-sm font-medium text-bf-cream">Every shot has a clip.</p>}
             <p className="text-help tabular-nums">
               {doneCount} of {plural(shots.length, 'shot')} done{estimate.spentUsd > 0 ? ` · this cartoon so far ${money(estimate.spentUsd)}` : ''}
             </p>

@@ -1,8 +1,9 @@
 /**
  * Step 6 of a cartoon: finish and deliver. The captions switch, the music bed
  * (the same library list Human mode's MusicPanel uses, plus "No music") and
- * the end-card text are saved as they change. Render starts the film; the
- * server's NOT_READY blockers are listed, and its render warnings (a shot
+ * the end-card text are saved as they change, and Render waits for a save
+ * still in flight so the film never renders the old text. Render starts the
+ * film; the server's NOT_READY blockers are listed, and its render warnings (a shot
  * made from an out-of-date frame) are shown without stopping the render.
  * A finished film offers the video, a download, the post caption with Copy,
  * and YouTube publishing with the clips' poster frames as thumbnails.
@@ -73,10 +74,18 @@ function CaptionsSwitch({ checked, disabled, onChange }: { checked: boolean; dis
   );
 }
 
-function Settings({ project, disabled, onSaved }: { project: CartoonProject; disabled: boolean; onSaved: Props['onSaved'] }) {
+interface SettingsProps {
+  project: CartoonProject;
+  disabled: boolean;
+  onSaved: Props['onSaved'];
+  /** A save in flight; owned by the step so Render can wait for it. */
+  saving: boolean;
+  setSaving: (saving: boolean) => void;
+}
+
+function Settings({ project, disabled, onSaved, saving, setSaving }: SettingsProps) {
   const beds = useBeds();
   const [endCard, setEndCard] = useState(project.endCard.text);
-  const [saving, setSaving] = useState(false);
   useEffect(() => { setEndCard(project.endCard.text); }, [project.endCard.text]);
   const bed = project.music.bed ?? '';
   const off = disabled || saving;
@@ -196,6 +205,7 @@ function Result({ project }: { project: CartoonProject }) {
 export function FinishStep({ project, onSaved }: Props) {
   const [busy, setBusy] = useState<'render' | 'stop' | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
+  const [saving, setSaving] = useState(false);
   const { render, running, renderBlockers, renderWarnings } = project;
   const rendering = running.render || render.status === 'queued' || render.status === 'rendering';
   const progress = Math.max(0, Math.min(100, Math.round(render.progress ?? 0)));
@@ -226,7 +236,7 @@ export function FinishStep({ project, onSaved }: Props) {
 
   return (
     <div className="space-y-6">
-      <Settings project={project} disabled={rendering} onSaved={onSaved} />
+      <Settings project={project} disabled={rendering} onSaved={onSaved} saving={saving} setSaving={setSaving} />
       <div className="space-y-4 rounded-card border border-editor-line bg-bf-card p-4">
         {renderWarnings.length > 0 && (
           <ul className="space-y-1">
@@ -257,7 +267,7 @@ export function FinishStep({ project, onSaved }: Props) {
               variant={render.status === 'done' ? 'secondary' : 'primary'}
               onClick={start}
               isLoading={busy === 'render'}
-              disabled={busy !== null || running.film || renderBlockers.length > 0}
+              disabled={busy !== null || saving || running.film || renderBlockers.length > 0}
             >
               <Clapperboard size={16} aria-hidden="true" /> {render.status === 'done' ? 'Render again' : 'Render the film'}
             </Button>

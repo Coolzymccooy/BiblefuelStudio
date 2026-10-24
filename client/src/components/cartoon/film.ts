@@ -9,10 +9,12 @@
  *    shots, then the shots waiting on them (spec section 7.6). Done shots are
  *    never in it; re-making one is its own priced button.
  *  - `rateUsdPerSec` reads the price per second off a server estimate, so
- *    no clip price constant lives in the client.
+ *    no clip price constant lives in the client. `priceOfShots` prices a
+ *    paid clip that is only fetched again at $0, as the server does.
  *  - `postCaption` is the post text: the title, the verse and its reference.
  */
 import type { CartoonClip, CartoonEstimate, CartoonMonth, CartoonProject, CartoonShot } from '../../lib/cartoonTypes';
+import { money } from '../sceneScript/format';
 
 /** States a clip settles in without a run going: the shot needs an order to move on. */
 const UNFINISHED = new Set(['error', 'refused', 'waiting']);
@@ -48,11 +50,40 @@ export function rateUsdPerSec(estimate: Pick<CartoonEstimate, 'seconds' | 'usd'>
   return estimate.usd / estimate.seconds;
 }
 
-/** What ordering these shots again would cost at `rate`, or null without a rate. */
-export function priceOfShots(shots: CartoonShot[], rate: number | null): number | null {
-  if (rate === null) return null;
-  return shots.reduce((sum, s) => sum + s.seconds * rate, 0);
+/** BytePlus keeps a finished clip for 24 h; the server fetches a paid clip again for 23 h (REFETCH_MS in shotStage.js). */
+const REFETCH_MS = 23 * 60 * 60 * 1000;
+
+type RefetchFields = Pick<CartoonClip, 'taskId' | 'chargedTaskId' | 'startedAt' | 'refetchable'>;
+
+function clipCanRefetch(clip: RefetchFields | null | undefined, now: number): boolean {
+  return Boolean(clip?.taskId) && clip?.chargedTaskId === clip?.taskId && clip?.refetchable !== false
+    && now - (Number(clip?.startedAt) || 0) < REFETCH_MS;
 }
+
+/**
+ * Whether ordering this shot only fetches a clip already paid for, at no cost.
+ * Mirrors `fetchesAgain` in server/src/lib/cartoon/model.js: a failed clip
+ * whose download failed, or a done shot's paid re-make that was not downloaded.
+ */
+export function fetchesAgain(shot: CartoonShot, now = Date.now()): boolean {
+  const clip = shot.clip;
+  if (clip?.status === 'done') return clipCanRefetch(clip.remake, now);
+  return clip?.status === 'error' && clipCanRefetch(clip, now);
+}
+
+/**
+ * What ordering these shots again would cost at `rate`: a paid clip fetched
+ * again is free. Null when something must be paid for and there is no rate.
+ */
+export function priceOfShots(shots: CartoonShot[], rate: number | null, now = Date.now()): number | null {
+  const paid = shots.filter((s) => !fetchesAgain(s, now));
+  if (!paid.length) return 0;
+  if (rate === null) return null;
+  return paid.reduce((sum, s) => sum + s.seconds * rate, 0);
+}
+
+/** A price in words: "no charge" for a free re-fetch, else "about $x". */
+export const priceWords = (usd: number) => (usd === 0 ? 'no charge' : `about ${money(usd)}`);
 
 /** What is left of the monthly AI video cap, counting open reservations. */
 export function monthLeftUsd(month: CartoonMonth | null | undefined): number | null {

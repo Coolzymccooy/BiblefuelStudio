@@ -102,7 +102,7 @@ function Problems({ result }: { result: ParseResult }) {
       {preview.source.ignored.length > 0 && (
         <ul className="space-y-1" aria-label="Lines not used">
           {preview.source.ignored.map((l) => (
-            <li key={l.lineNo} className="text-sm text-bf-warn tabular-nums">Line {l.lineNo} not used: {l.reason}</li>
+            <li key={l.lineNo} className="text-sm text-bf-warn tabular-nums">Line {l.lineNo} not used: "{quote(l.text)}"</li>
           ))}
         </ul>
       )}
