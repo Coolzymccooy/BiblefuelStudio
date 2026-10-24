@@ -668,6 +668,14 @@ export function patchScenePrompts(ctx, projectId, prompts) {
   return writeProject(ctx.dataDir, { ...fresh, scenes });
 }
 
+// POSTs on this router that start no work: stopping a pipeline or render, and
+// stopping AI motion orders. index.js passes this to the router's
+// quota("render") mount, so a user out of renders can still cancel.
+const CANCEL_PATH = /^\/[^/]+\/(?:animate\/)?cancel$/;
+export function isQuotaFreeStoryRequest(req) {
+  return req?.method === "POST" && CANCEL_PATH.test(String(req?.path || ""));
+}
+
 const router = Router();
 const VIDEO_EXT = new Set([".mp4", ".mov", ".webm", ".m4v"]);
 
