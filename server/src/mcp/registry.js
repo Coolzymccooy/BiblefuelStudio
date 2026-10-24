@@ -2,10 +2,11 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { charge } from "../lib/agentKeys/caps.js";
+import { chargeAll, refundAll } from "../lib/agentKeys/caps.js";
 import { logActivity } from "../lib/agentKeys/activity.js";
 import { ApiError } from "./api.js";
 import { fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "./toolResult.js";
+import { lacksPublishConsent } from "./autoPublish.js";
 
 export { PUBLISH_NOT_ALLOWED_MESSAGE };
 
@@ -15,13 +16,21 @@ export { PUBLISH_NOT_ALLOWED_MESSAGE };
  * daily caps, the handler itself (API errors become tool errors), then the
  * activity log and the [MCP] info line.
  *
- * A handler also gets `ctx.chargeCap(bucket, amount)`: it spends `amount` from one of the key's
- * daily cap buckets mid-handler (for tools whose cost depends on what they find) and returns
- * null on success, or the MCP_CAP_REACHED tool error to hand straight back.
+ * A handler also gets `ctx.chargeCap(bucket, amount)` or `ctx.chargeCap({ bucket: amount, ... })`: it spends
+ * from the key's (and its account's) daily cap buckets mid-handler (for tools whose cost depends on what they
+ * find) and returns null on success, or the MCP_CAP_REACHED tool error to hand straight back. Several buckets
+ * are charged atomically: when one is refused, none is spent. A def's declared `caps` are charged the same way.
  *
- * @typedef {{ user: object, agentKey: object | null, subjectId: string, isSuperAdmin: boolean,
+ * Refunds (R37): when the app answers a call with a 4xx (it refused, so no work started), everything the
+ * call charged is given back on the key and the account, except `imports` (R32: an attempt always counts).
+ * A 5xx or a network failure keeps the charge. A handler whose call turned out to cost nothing (a YouTube
+ * upload that joined one already running) calls `ctx.refundCap(...)`, which gives back at most what this
+ * call charged.
+ *
+ * @typedef {{ user: object, agentKey: object, subjectId: string, isSuperAdmin: boolean,
  *   baseUrl: string, publicBase: string, api: { call: Function },
- *   chargeCap?: (bucket: string, amount: number) => Promise<object | null> }} McpCtx
+ *   chargeCap?: (bucketOrAmounts: string | Record<string, number>, amount?: number) => Promise<object | null>,
+ *   refundCap?: (bucketOrAmounts: string | Record<string, number>, amount?: number) => Promise<void> }} McpCtx
  * @typedef {{ name: string, title: string, description: string, inputSchema: object,
  *   requires?: "super_admin", publish?: boolean,
  *   caps?: Record<string, number | ((input: object) => number)>,
@@ -81,43 +90,96 @@ function allowed(def, ctx) {
   return def.requires === "super_admin" && ctx.isSuperAdmin;
 }
 
-/** Spends `amount` from one cap bucket; returns null on success or the MCP_CAP_REACHED tool error. */
-async function chargeBucket(ctx, bucket, amount, charged) {
-  const outcome = await charge(ctx.subjectId, ctx.agentKey, bucket, amount);
+/**
+ * Spends every bucket in `amounts` at once (zero amounts skipped); returns null on success or the
+ * MCP_CAP_REACHED tool error. A refusal spends nothing.
+ */
+async function chargeBuckets(ctx, amounts, charged) {
+  const due = Object.entries(amounts).filter(([, amount]) => amount !== 0);
+  if (due.length === 0) return null;
+  const outcome = await chargeAll(ctx.subjectId, ctx.agentKey, Object.fromEntries(due));
   if (!outcome.ok) {
-    const { used, limit, resetsAt } = outcome;
-    return fail("MCP_CAP_REACHED", `Daily ${bucket} cap reached for this agent (${used} of ${limit}).`, {
+    const { bucket, scope, used, limit, resetsAt } = outcome;
+    const whose = scope === "user" ? "your account across all agents" : "this agent";
+    return fail("MCP_CAP_REACHED", `Daily ${bucket} cap reached for ${whose} (${used} of ${limit}).`, {
       bucket,
+      scope,
       used,
       limit,
       resetsAt,
     });
   }
-  charged[bucket] = (charged[bucket] || 0) + amount;
+  for (const [bucket, amount] of due) charged[bucket] = (charged[bucket] || 0) + amount;
   return null;
 }
 
-async function chargeCaps(def, ctx, input, charged) {
-  for (const [bucket, amountOrFn] of Object.entries(def.caps || {})) {
-    const amount = typeof amountOrFn === "function" ? amountOrFn(input) : amountOrFn;
-    if (amount === 0) continue;
-    const refused = await chargeBucket(ctx, bucket, amount, charged);
-    if (refused) return refused;
+function chargeCaps(def, ctx, input, charged) {
+  const amounts = Object.entries(def.caps || {}).map(([bucket, amountOrFn]) => [
+    bucket,
+    typeof amountOrFn === "function" ? amountOrFn(input) : amountOrFn,
+  ]);
+  return chargeBuckets(ctx, Object.fromEntries(amounts), charged);
+}
+
+const asAmounts = (bucketOrAmounts, amount) =>
+  (typeof bucketOrAmounts === "string" ? { [bucketOrAmounts]: amount ?? 1 } : bucketOrAmounts) || {};
+
+/** `ctx.chargeCap(bucket, amount)` or `ctx.chargeCap({ bucket: amount, ... })`. */
+function chargeCapFor(ctx, charged) {
+  return (bucketOrAmounts, amount) => chargeBuckets(ctx, asAmounts(bucketOrAmounts, amount), charged);
+}
+
+// R32: an import attempt always counts, so the imports bucket is never given back.
+const NEVER_REFUNDED = new Set(["imports"]);
+
+/**
+ * Gives back up to `amounts` of what this call has charged (never more, never imports), on the key
+ * and the account, and lowers `charged` to match.
+ */
+async function refundBuckets(ctx, amounts, charged) {
+  const due = Object.entries(amounts)
+    .filter(([bucket, amount]) => !NEVER_REFUNDED.has(bucket) && amount > 0 && charged[bucket] > 0)
+    .map(([bucket, amount]) => [bucket, Math.min(amount, charged[bucket])]);
+  if (due.length === 0) return;
+  await refundAll(ctx.subjectId, ctx.agentKey, Object.fromEntries(due));
+  for (const [bucket, amount] of due) {
+    const left = charged[bucket] - amount;
+    if (left > 0) charged[bucket] = left;
+    else delete charged[bucket];
   }
-  return null;
+}
+
+/** `ctx.refundCap(bucket, amount)` or `ctx.refundCap({ bucket: amount, ... })`: for a call that did no billable work. */
+function refundCapFor(ctx, charged) {
+  return (bucketOrAmounts, amount) => refundBuckets(ctx, asAmounts(bucketOrAmounts, amount), charged);
+}
+
+/** R37: the app refused the call (4xx), so nothing it charged was spent. A 5xx may have started work. */
+const isRefusal = (err) => err.status >= 400 && err.status < 500;
+
+/** Refunds everything this call charged; a failed refund is logged, never thrown over the tool's own error. */
+async function refundRefused(def, ctx, charged) {
+  try {
+    await refundBuckets(ctx, { ...charged }, charged);
+  } catch (err) {
+    console.warn(`[MCP] tool ${def.name} cap refund failed:`, err?.message || String(err));
+  }
 }
 
 async function runTool(def, ctx, input, charged) {
-  if (def.publish && ctx.agentKey && !ctx.agentKey.publishAllowed) {
+  if (def.publish && lacksPublishConsent(ctx)) {
     return fail("PUBLISH_NOT_ALLOWED", PUBLISH_NOT_ALLOWED_MESSAGE);
   }
   try {
     const refused = await chargeCaps(def, ctx, input, charged);
     if (refused) return refused;
-    const callCtx = { ...ctx, chargeCap: (bucket, amount) => chargeBucket(ctx, bucket, amount, charged) };
+    const callCtx = { ...ctx, chargeCap: chargeCapFor(ctx, charged), refundCap: refundCapFor(ctx, charged) };
     return await def.handler(callCtx, input);
   } catch (err) {
-    if (err instanceof ApiError) return fail(err.code, err.message, { hint: err.hint, status: err.status });
+    if (err instanceof ApiError) {
+      if (isRefusal(err)) await refundRefused(def, ctx, charged);
+      return fail(err.code, err.message, { hint: err.hint, status: err.status });
+    }
     console.warn(`[MCP] tool ${def.name} failed:`, err?.message || String(err));
     return fail("INTERNAL", "Something went wrong");
   }
@@ -131,7 +193,7 @@ function jobOf(result) {
 
 function record(def, ctx, input, result, ms, charged) {
   const isError = Boolean(result?.isError);
-  const keyLabel = (ctx.agentKey?.id || "jwt").slice(0, 8);
+  const keyLabel = String(ctx.agentKey?.id || "").slice(0, 8);
   console.info(`[MCP] key=${keyLabel} tool=${def.name} ms=${ms} ${isError ? "error" : "ok"}`);
   try {
     logActivity({

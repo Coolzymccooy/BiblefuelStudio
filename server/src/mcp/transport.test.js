@@ -8,6 +8,8 @@ process.env.MCP_DAILY_RENDERS = "1";
 const USERS = [
   { id: "u_user", email: "user@example.com", role: "user", emailVerified: true },
   { id: "u_admin", email: "admin@example.com", role: "user", emailVerified: true },
+  { id: "u_other", email: "other@example.com", role: "user", emailVerified: true },
+  { id: "u_multi", email: "multi@example.com", role: "user", emailVerified: true },
 ];
 
 const testApp = await startTestApp({ users: USERS, superAdminEmail: "admin@example.com" });
@@ -44,6 +46,21 @@ const CATALOGUE = [
     inputSchema: { text: z.string() },
     caps: { renders: 1 },
     handler: echoHandler,
+  },
+  {
+    name: "render_publish_echo",
+    title: "Render and publish echo",
+    description: "Pretends to render and publish.",
+    inputSchema: { text: z.string() },
+    caps: { renders: 1, publishes: 1 },
+    handler: echoHandler,
+  },
+  {
+    name: "charge_object_echo",
+    title: "Charge object echo",
+    description: "Charges a render and a publish from inside the handler.",
+    inputSchema: { text: z.string() },
+    handler: async (ctx, input) => (await ctx.chargeCap({ renders: 1, publishes: 1 })) || ok({ text: input.text }),
   },
   {
     name: "my_usage",
@@ -165,6 +182,24 @@ test("a capped tool refuses at the cap with MCP_CAP_REACHED", async () => {
   assert.equal(second.structuredContent.used, 1);
   assert.equal(second.structuredContent.limit, 1);
   assert.match(second.structuredContent.resetsAt, /T00:00:00\.000Z$/);
+  assert.equal(second.structuredContent.scope, "key");
+  assert.equal(second.content[0].text, "MCP_CAP_REACHED: Daily renders cap reached for this agent (1 of 1).");
+});
+
+test("a second key of the same user meets the account cap with scope user", async () => {
+  const first = await connect(testApp.keyFor("u_other", "Account cap one"));
+  const second = await connect(testApp.keyFor("u_other", "Account cap two"));
+  assert.notEqual((await first.callTool({ name: "render_echo", arguments: { text: "one" } })).isError, true);
+
+  const refused = await second.callTool({ name: "render_echo", arguments: { text: "two" } });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.structuredContent.error, "MCP_CAP_REACHED");
+  assert.equal(refused.structuredContent.scope, "user");
+  assert.equal(refused.structuredContent.bucket, "renders");
+  assert.equal(
+    refused.content[0].text,
+    "MCP_CAP_REACHED: Daily renders cap reached for your account across all agents (1 of 1).",
+  );
 });
 
 test("every call is logged", async () => {
@@ -187,8 +222,26 @@ test("every call is logged", async () => {
   assert.match(byTool.publish_echo.error, /^PUBLISH_NOT_ALLOWED/);
 });
 
+test("a valid app JWT is refused at the endpoint with AGENT_KEY_REQUIRED", async () => {
+  const res = await fetch(mcpUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: `Bearer ${testApp.jwtFor("u_user")}`,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  });
+  assert.equal(res.status, 401);
+  assert.deepEqual(await res.json(), {
+    ok: false,
+    error: "AGENT_KEY_REQUIRED",
+    message: "Connect with an agent key from Settings → Connected agents.",
+  });
+});
+
 test("a tool reaches the app through the loopback API", async () => {
-  const client = await connect(testApp.jwtFor("u_user"));
+  const client = await connect(testApp.keyFor("u_other", "Loopback"));
   const result = await client.callTool({ name: "my_usage", arguments: {} });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   assert.equal(result.structuredContent.plan, "free");
@@ -302,4 +355,65 @@ test("rate limit answers 429 after 120 requests in a minute", async () => {
   const limited = await fetch(mcpUrl, { method: "GET", headers });
   assert.equal(limited.status, 429);
   assert.deepEqual(await limited.json(), { ok: false, error: "RATE_LIMITED" });
+});
+
+const caps = await import("../lib/agentKeys/caps.js");
+
+/** A u_multi key whose own publishes cap is 0, so any publish charge is refused on that bucket. */
+function noPublishKey(name) {
+  const made = newKey("u_multi", name);
+  store.updateKey("u_multi", made.key.id, { caps: { publishes: 0 } });
+  return made;
+}
+
+for (const tool of ["render_publish_echo", "charge_object_echo"]) {
+  test(`${tool}: a refusal on the second bucket leaves the first bucket untouched`, async () => {
+    const { key, plain } = noPublishKey(`Atomic ${tool}`);
+    const client = await connect(plain);
+    const refused = await client.callTool({ name: tool, arguments: { text: "x" } });
+    assert.equal(refused.isError, true);
+    assert.equal(refused.structuredContent.error, "MCP_CAP_REACHED");
+    assert.equal(refused.structuredContent.bucket, "publishes");
+    assert.equal(refused.structuredContent.scope, "key");
+    assert.equal(caps.readKeyUsage(key.id).counts.renders, 0);
+    assert.equal(caps.readUserUsage("u_multi").counts.renders, 0);
+    store.revokeKey("u_multi", key.id);
+  });
+}
+
+test("a multi-bucket charge that fits spends every bucket and logs it", async () => {
+  const { key, plain } = newKey("u_multi", "Atomic ok");
+  const client = await connect(plain);
+  const result = await client.callTool({ name: "charge_object_echo", arguments: { text: "y" } });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.equal(caps.readKeyUsage(key.id).counts.renders, 1);
+  assert.equal(caps.readKeyUsage(key.id).counts.publishes, 1);
+  const [entry] = activity.readActivity({ keyId: key.id });
+  assert.deepEqual(entry.caps, { renders: 1, publishes: 1 });
+});
+
+test("publish consent is strict: a stored publishAllowed that is truthy but not true is refused", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { key, plain } = newKey("u_other", "truthy-consent");
+  const file = path.join(testApp.dataDir, "agent-keys.json");
+  const stored = JSON.parse(fs.readFileSync(file, "utf-8"));
+  const keys = stored.keys.map((k) => (k.id === key.id ? { ...k, publishAllowed: "yes" } : k));
+  fs.writeFileSync(file, JSON.stringify({ keys }, null, 2));
+  const client = await connect(plain);
+  const refused = await client.callTool({ name: "publish_echo", arguments: { text: "go" } });
+  assert.equal(refused.structuredContent.error, "PUBLISH_NOT_ALLOWED");
+  store.revokeKey("u_other", key.id);
+});
+
+// ---- public links come from PUBLIC_BASE_URL when it is set, not from the request's Host ----
+
+test("publicBaseFor prefers PUBLIC_BASE_URL (with the production media host) over the request Host", async () => {
+  const { publicBaseFor } = await import("./transport.js");
+  const req = (host, protocol = "http") => ({ hostname: host.split(":")[0], protocol, get: () => host });
+  assert.equal(publicBaseFor(req("evil.test"), { PUBLIC_BASE_URL: "https://biblefuel.tiwaton.co.uk/" }), "https://media.tiwaton.co.uk");
+  assert.equal(publicBaseFor(req("evil.test"), { PUBLIC_BASE_URL: "https://studio.example.test/" }), "https://studio.example.test");
+  assert.equal(publicBaseFor(req("127.0.0.1:5051"), { PUBLIC_BASE_URL: "not a url" }), "http://127.0.0.1:5051");
+  assert.equal(publicBaseFor(req("127.0.0.1:5051"), {}), "http://127.0.0.1:5051");
+  assert.equal(publicBaseFor(req("biblefuel.tiwaton.co.uk", "https"), {}), "https://media.tiwaton.co.uk");
 });

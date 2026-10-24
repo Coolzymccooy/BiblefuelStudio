@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../../lib/api';
+import { postableWebhooks } from '../../lib/postableWebhooks';
 import { toOutputUrl } from '../../lib/storage';
 import { RenderSharePanel, type PostDestination, type YoutubePrivacy } from '../render/RenderSharePanel';
 import { YoutubePublishPanel } from '../share/YoutubePublishPanel';
@@ -37,8 +38,10 @@ export function ShareKitPanel({ lines, latestRenderFile }: ShareKitPanelProps) {
     let cancelled = false;
     api.get('/api/social/config').then((res) => {
       if (cancelled || !res.ok || !res.data) return;
-      setWebhookOptions(res.data.webhooks || []);
-      setSelectedWebhook(res.data.webhooks?.[0]?.id || '');
+      // Enabled webhooks only: the server refuses a disabled or removed one (R40).
+      const postable = postableWebhooks(res.data.webhooks);
+      setWebhookOptions(postable);
+      setSelectedWebhook(postable[0]?.id || '');
       setBufferProfiles(res.data.buffer?.profileIds || []);
       setSelectedProfile(res.data.buffer?.profileIds?.[0] || '');
     }).catch(() => { /* config is optional */ });

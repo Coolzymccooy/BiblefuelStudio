@@ -11,7 +11,7 @@ import { execSync } from "child_process";
 import scriptsRouter from "./src/routes/scripts.js";
 import queueRouter from "./src/routes/queue.js";
 import ttsRouter from "./src/routes/tts.js";
-import renderRouter from "./src/routes/render.js";
+import renderRouter, { isQuotaFreeRenderRequest } from "./src/routes/render.js";
 import pexelsRouter from "./src/routes/pexels.js";
 import pixabayRouter from "./src/routes/pixabay.js";
 import gumroadRouter from "./src/routes/gumroad.js";
@@ -376,7 +376,7 @@ app.use("/api/scripts",   requireAuth, withUserScope, requireVerifiedEmail, quot
 app.use("/api/queue",     requireAuth, withUserScope,                                              queueRouter);
 app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quota("tts"),        ttsRouter);
 app.use("/api/abi",       abiRouter);
-app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     renderRouter);
+app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeRenderRequest }), renderRouter);
 app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     storyRouter);
 // Lyric video carries NO blanket quota (the page polls the project and the render job);
 // quota("render") is charged inside routes/lyricVideo.js on POST /:id/align and /:id/render only.

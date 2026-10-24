@@ -11,7 +11,7 @@ import { sameSecret } from "../secrets.js";
  * Layout: DATA_DIR/agent-keys.json  ->  { keys: KeyRecord[] }
  * Only a SHA-256 hash of each key is stored; the plain key is shown once at creation.
  *
- * @typedef {{ renders: number, aiVideoUsd: number, images: number, tts: number, publishes: number }} Caps
+ * @typedef {{ renders: number, aiVideoUsd: number, images: number, tts: number, publishes: number, imports: number }} Caps
  * @typedef {{
  *   id: string, hash: string, prefix: string, userId: string, name: string,
  *   createdAt: string, lastUsedAt: string | null, revokedAt: string | null,
@@ -25,7 +25,7 @@ const PREFIX_LENGTH = 12;
 const MAX_LIVE_KEYS = 10;
 const MAX_NAME_LENGTH = 60;
 const LAST_USED_THROTTLE_MS = 60_000;
-const CAP_FIELDS = ["renders", "aiVideoUsd", "images", "tts", "publishes"];
+const CAP_FIELDS = ["renders", "aiVideoUsd", "images", "tts", "publishes", "imports"];
 
 function keysFilePath() {
   return path.join(DATA_DIR, "agent-keys.json");

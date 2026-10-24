@@ -144,6 +144,10 @@ export function _setJobCtxForTest(ctx) { currentJobCtx = ctx; }
 export function _resetJobCtxForTest() { currentJobCtx = null; }
 // Test-only: run a render the way the worker does, without the queue.
 export function _executeJobForTest(job) { return executeJob(job); }
+// What the worker runs for a job; tests swap in a fake renderer to drive the completion path.
+let executeJobImpl = (job) => executeJob(job);
+/** Test seam: the worker runs `fn(job)` instead of the real renderer. Pass null to restore. */
+export function _setExecuteJobForTests(fn) { executeJobImpl = typeof fn === "function" ? fn : (job) => executeJob(job); }
 export function _renderVideoCoreForTest(payload, jobId) { return renderVideoCore(payload, jobId); }
 
 // Monotonic counter backing the script-type rotation. Persisted per-tenant so
@@ -1968,7 +1972,7 @@ async function workerTick() {
   safeUpdateJob(next.id, { status: "running", startedAt: new Date().toISOString(), progress: 0 });
   currentJobCtx = next.ctx || null;
   try {
-    const result = await executeJob(next);
+    const result = await executeJobImpl(next);
     volatileProgressByJob.set(next.id, 100);
     safeUpdateJob(next.id, { status: "done", progress: 100, finishedAt: new Date().toISOString(), result });
     if (next.type === "render_video" || next.type === "render_waveform") {
@@ -2033,6 +2037,9 @@ router.get("/:id", (req, res) => {
   res.json({ ok: true, job: withVolatileProgress(j) });
 });
 
+// Job types that render, so enqueue and retry each spend one unit of the plan's render quota.
+const RETRY_COUNTED_TYPES = new Set(["render_video", "render_waveform", "campaign_auto_post"]);
+
 router.post("/enqueue", (req, res) => {
   const type = String(req.body?.type || "").trim();
   const payload = req.body?.payload || {};
@@ -2052,6 +2059,13 @@ router.post("/enqueue", (req, res) => {
   } finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
 
+  // A queued render spends the plan's render quota exactly as a retry does
+  // (R34); without this, the queue was an unmetered way to render.
+  if (RETRY_COUNTED_TYPES.has(type)) {
+    const spent = consumeQuota(req.ctx, "render");
+    if (!spent.ok) return res.status(spent.status).json(spent.body);
+  }
+
   const id = `job_${uuid()}`;
   const job = {
     id, type, payload,
@@ -2061,7 +2075,11 @@ router.post("/enqueue", (req, res) => {
     // when no per-user webhook is configured).
     ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) },
     status: "queued",
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    // `{ "autoPublish": false }` next to type and payload keeps this render
+    // from posting through Postiz when it finishes (agents without publish
+    // consent), the same switch the retry route takes.
+    ...(req.body?.autoPublish === false ? { suppressAutoPublish: true } : {}),
   };
   store = loadJobs();
   store.jobs.push(job);
@@ -2083,8 +2101,6 @@ router.post("/enqueue", (req, res) => {
  * Ownership: only the job's owner (or super-admin) can retry. Anything
  * else returns 404 to avoid leaking job existence across tenants.
  */
-const RETRY_COUNTED_TYPES = new Set(["render_video", "render_waveform", "campaign_auto_post"]);
-
 router.post("/:id/retry", (req, res) => {
   store = loadJobs();
   const original = store.jobs.find((j) => j.id === req.params.id);

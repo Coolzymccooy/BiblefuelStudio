@@ -1,6 +1,6 @@
 import { ApiError } from "../api.js";
 import { ok, withoutOk } from "../toolResult.js";
-import { capsSummary } from "../../lib/agentKeys/caps.js";
+import { accountCapsSummary, capsSummary } from "../../lib/agentKeys/caps.js";
 
 /** Optional sections depend on server env: an API failure becomes null instead of failing the tool. */
 async function optionalSection(ctx, path) {
@@ -16,7 +16,7 @@ const whoami = {
   name: "whoami",
   title: "Who am I",
   description:
-    "Who you are acting as: the user, their plan, today's remaining quota and daily key caps, and this key's name and publish permission. Call it first.",
+    "Who you are acting as: the user, their plan, today's remaining quota, this key's daily caps (caps) and your account's daily caps shared by all your agents (accountCaps), and this key's name and publish permission. Call it first.",
   inputSchema: {},
   routes: ["/api/auth", "/api/billing"],
   async handler(ctx) {
@@ -35,6 +35,7 @@ const whoami = {
       plan: usage.plan,
       quota: usage.buckets,
       caps: capsSummary(ctx.subjectId, ctx.agentKey),
+      accountCaps: accountCapsSummary(ctx.agentKey?.userId ?? user.sub),
       key: ctx.agentKey
         ? { id: ctx.agentKey.id, name: ctx.agentKey.name, publishAllowed: Boolean(ctx.agentKey.publishAllowed) }
         : null,
