@@ -188,12 +188,12 @@ test("queryActivity returns the newest rows, counts over every match and the tot
     whoami: { calls: 1, errors: 0 },
     "key:created": { calls: 1, errors: 0 },
   });
-  // A key event carries no email: it is counted under the user id.
+  // byUser is keyed by user id: u_2's tool call and key event (which has no email) share one row.
   assert.deepEqual(result.counts.byUser, {
-    "one@example.com": { calls: 2, errors: 1 },
-    "two@example.com": { calls: 1, errors: 0 },
-    u_2: { calls: 1, errors: 0 },
+    u_1: { calls: 2, errors: 1 },
+    u_2: { calls: 2, errors: 0 },
   });
+  assert.deepEqual(result.counts.emails, { u_1: "one@example.com", u_2: "two@example.com" });
 
   const filtered = activity.queryActivity({ from: "2026-10-23", to: "2026-10-23", tool: "render", ok: false });
   assert.equal(filtered.total, 1);
@@ -216,4 +216,19 @@ test("activityCsv prefixes cells that a spreadsheet would run as a formula", () 
   // Ordinary values are untouched.
   const plain = activityCsv([{ ts: "2026-10-23T08:00:00.000Z", ...entry({ tool: "render", ms: 5 }) }]);
   assert.ok(plain.trim().split("\n")[1].startsWith("2026-10-23T08:00:00.000Z,k_1,Claude,u_1,one@example.com,render,true,,5"));
+});
+
+test("summariseActivity keys users by id and takes the email from any row that has one", () => {
+  const counts = activity.summariseActivity([
+    { userId: "u_7", email: null, tool: "key:created", ok: true },
+    { userId: "u_7", email: "seven@example.com", tool: "whoami", ok: false },
+    { userId: "u_8", email: null, tool: "key:revoked", ok: true },
+    { userId: null, email: null, tool: "whoami", ok: true },
+  ]);
+  assert.deepEqual(counts.byUser, {
+    u_7: { calls: 2, errors: 1 },
+    u_8: { calls: 1, errors: 0 },
+    unknown: { calls: 1, errors: 0 },
+  });
+  assert.deepEqual(counts.emails, { u_7: "seven@example.com", u_8: null });
 });

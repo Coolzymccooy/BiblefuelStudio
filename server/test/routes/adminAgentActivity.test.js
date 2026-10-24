@@ -78,9 +78,10 @@ test("defaults to the last 7 days, newest first, with counts and total", async (
     render_story: { calls: 2, errors: 1 },
   });
   assert.deepEqual(res.body.counts.byUser, {
-    "two@example.com": { calls: 1, errors: 0 },
-    "one@example.com": { calls: 2, errors: 1 },
+    u_2: { calls: 1, errors: 0 },
+    u_1: { calls: 2, errors: 1 },
   });
+  assert.deepEqual(res.body.counts.emails, { u_2: "two@example.com", u_1: "one@example.com" });
 });
 
 test("filters by date range, user, key, tool and outcome", async () => {
@@ -143,4 +144,20 @@ test("format=csv answers the filtered rows as a CSV with formula cells defused",
   assert.ok(lines[1].includes(",'@evil,"), lines[1]);
   assert.ok(lines[1].includes(",'=cmd,false,'-1+1,"), lines[1]);
   assert.ok(lines[2].includes(",render_story,false,"), lines[2]);
+});
+
+test("a user seen only in key events gets their email from the users store", async () => {
+  fs.writeFileSync(
+    path.join(dir, "users.json"),
+    JSON.stringify({ users: [{ id: "u_9", email: "nine@example.com", role: "user" }] }),
+  );
+  activity._setClock(() => new Date("2026-10-24T09:00:00.000Z"));
+  activity.logKeyEvent("u_9", "k_9", "created", { name: "Codex" });
+  activity.logKeyEvent("u_gone", "k_8", "revoked");
+  activity._setClock(() => new Date("2026-10-24T12:00:00.000Z"));
+  const res = await get();
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.counts.byUser, { u_9: { calls: 1, errors: 0 }, u_gone: { calls: 1, errors: 0 } });
+  assert.deepEqual(res.body.counts.emails, { u_9: "nine@example.com", u_gone: null });
+  fs.rmSync(path.join(dir, "users.json"), { force: true });
 });

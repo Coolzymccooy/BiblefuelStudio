@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getUsersStore } from "../auth.js";
 import { activityCsv, activityToday, queryActivity } from "../lib/agentKeys/activity.js";
 
 /**
@@ -74,6 +75,25 @@ function readFilters(query) {
   };
 }
 
+/**
+ * Fills `counts.emails` for users whose rows carry no email (key events never do)
+ * from users.json, read once and only when needed. A failed read leaves them null.
+ */
+function withStoredEmails(counts) {
+  const missing = Object.keys(counts.emails).filter((id) => !counts.emails[id]);
+  if (missing.length === 0) return counts;
+  let users;
+  try {
+    users = getUsersStore()?.users;
+  } catch (err) {
+    console.warn("[ADMIN] agent activity: users store unreadable:", err?.message || String(err));
+    return counts;
+  }
+  const byId = new Map((Array.isArray(users) ? users : []).map((u) => [u?.id, u?.email]));
+  const found = missing.map((id) => [id, byId.get(id) || null]);
+  return { ...counts, emails: { ...counts.emails, ...Object.fromEntries(found) } };
+}
+
 router.get("/", (req, res) => {
   let filters;
   try {
@@ -89,7 +109,7 @@ router.get("/", (req, res) => {
       res.setHeader("Content-Disposition", 'attachment; filename="agent-activity-all.csv"');
       return res.send(activityCsv(all));
     }
-    return res.json({ ok: true, rows, counts, total });
+    return res.json({ ok: true, rows, counts: withStoredEmails(counts), total });
   } catch (err) {
     console.error("[ADMIN] agent activity failed:", err?.message || String(err));
     return res.status(500).json({ ok: false, error: "ACTIVITY_FAILED" });

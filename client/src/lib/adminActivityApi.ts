@@ -31,7 +31,8 @@ export interface CallCount {
 
 export interface AdminActivity {
   rows: ActivityEntry[];
-  counts: { byTool: Record<string, CallCount>; byUser: Record<string, CallCount> };
+  /** byUser is keyed by user id; emails maps those ids to an email (null when none is known). */
+  counts: { byTool: Record<string, CallCount>; byUser: Record<string, CallCount>; emails: Record<string, string | null> };
   total: number;
 }
 
@@ -67,7 +68,7 @@ export async function fetchAdminActivity(filters: AdminActivityFilters): Promise
   const { rows, counts, total } = res.data;
   return {
     rows: Array.isArray(rows) ? rows : [],
-    counts: { byTool: counts?.byTool || {}, byUser: counts?.byUser || {} },
+    counts: { byTool: counts?.byTool || {}, byUser: counts?.byUser || {}, emails: counts?.emails || {} },
     total: typeof total === 'number' ? total : 0,
   };
 }

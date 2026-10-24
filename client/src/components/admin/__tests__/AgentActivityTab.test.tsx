@@ -35,7 +35,8 @@ const BODY = {
   ],
   counts: {
     byTool: { render_story: { calls: 12, errors: 3 }, whoami: { calls: 5, errors: 0 } },
-    byUser: { 'one@example.com': { calls: 12, errors: 3 }, 'two@example.com': { calls: 5, errors: 0 } },
+    byUser: { u_1: { calls: 12, errors: 3 }, u_2: { calls: 5, errors: 0 } },
+    emails: { u_1: 'one@example.com', u_2: 'two@example.com' },
   },
   total: 17,
 };
@@ -83,6 +84,27 @@ describe('AgentActivityTab', () => {
     expect(within(userRow).getByText('5')).toBeTruthy();
 
     expect(screen.getByText('Showing the newest 2 of 17 calls')).toBeTruthy();
+  });
+
+  it('labels each user row by email: from the counts, else the known accounts, else the id', async () => {
+    getSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        ...BODY,
+        counts: {
+          ...BODY.counts,
+          byUser: { u_1: { calls: 9, errors: 1 }, u_2: { calls: 4, errors: 0 }, u_3: { calls: 2, errors: 0 } },
+          emails: { u_1: 'one@example.com', u_2: null, u_3: null },
+        },
+      },
+    });
+    render(<AgentActivityTab users={USERS} reloadToken={0} />);
+    const byUser = await screen.findByRole('table', { name: 'Calls per user' });
+    expect(within(within(byUser).getByText('one@example.com').closest('tr')!).getByText('9')).toBeTruthy();
+    expect(within(within(byUser).getByText('two@example.com').closest('tr')!).getByText('4')).toBeTruthy();
+    expect(within(within(byUser).getByText('u_3').closest('tr')!).getByText('2')).toBeTruthy();
+    expect(within(byUser).queryByText('u_1')).toBeNull();
   });
 
   it('applies the outcome, user and tool filters', async () => {

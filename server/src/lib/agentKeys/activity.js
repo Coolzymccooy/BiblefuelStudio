@@ -147,15 +147,30 @@ function tally(counts, name, entry) {
   return { ...counts, [name]: { calls: prev.calls + 1, errors: prev.errors + (entry.ok ? 0 : 1) } };
 }
 
-/** Calls and errors per tool and per user (email, or the user id when an entry has none). */
+const UNKNOWN_USER = "unknown";
+
+/** userId -> email, from the first row of each user that carries one (null when none does). */
+function emailsOf(entries) {
+  return entries.reduce((emails, e) => {
+    if (!e.userId) return emails;
+    if (emails[e.userId]) return emails;
+    return { ...emails, [e.userId]: e.email || null };
+  }, {});
+}
+
+/**
+ * Calls and errors per tool and per user id (key events carry no email, so the
+ * id keeps one user's tool calls and key events in one row), plus `emails`: userId -> email or null.
+ */
 export function summariseActivity(entries) {
-  return entries.reduce(
+  const counts = entries.reduce(
     (acc, e) => ({
       byTool: tally(acc.byTool, e.tool, e),
-      byUser: tally(acc.byUser, e.email || e.userId || "unknown", e),
+      byUser: tally(acc.byUser, e.userId || UNKNOWN_USER, e),
     }),
     { byTool: {}, byUser: {} },
   );
+  return { ...counts, emails: emailsOf(entries) };
 }
 
 /**

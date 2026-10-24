@@ -102,7 +102,7 @@ export function AgentActivityTab({ users, reloadToken }: AgentActivityTabProps) 
       <p className="text-help mt-2">Days are UTC. At most 31 days at a time.</p>
 
       <div className="mt-6">
-        <ActivityBody data={data} loading={loading} error={error} onRetry={() => void load(applied)} />
+        <ActivityBody data={data} users={users} loading={loading} error={error} onRetry={() => void load(applied)} />
       </div>
     </Card>
   );
@@ -172,12 +172,19 @@ function mergeUsers(users: readonly { id: string; email: string }[], rows: reado
 
 interface ActivityBodyProps {
   data: AdminActivity | null;
+  users: readonly { id: string; email: string }[];
   loading: boolean;
   error: string | null;
   onRetry: () => void;
 }
 
-function ActivityBody({ data, loading, error, onRetry }: ActivityBodyProps) {
+/** A user row's label: the email the log knows, else the known account's, else the id. */
+function userLabeller(emails: Record<string, string | null>, users: readonly { id: string; email: string }[]) {
+  const known = new Map(users.map((u) => [u.id, u.email]));
+  return (id: string) => emails[id] || known.get(id) || id;
+}
+
+function ActivityBody({ data, users, loading, error, onRetry }: ActivityBodyProps) {
   if (error && !loading) {
     return (
       <div role="alert" className="space-y-2">
@@ -205,7 +212,12 @@ function ActivityBody({ data, loading, error, onRetry }: ActivityBodyProps) {
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <CountTable caption="Calls per tool" nameHeader="Tool" counts={data.counts.byTool} mono />
-        <CountTable caption="Calls per user" nameHeader="User" counts={data.counts.byUser} />
+        <CountTable
+          caption="Calls per user"
+          nameHeader="User"
+          counts={data.counts.byUser}
+          label={userLabeller(data.counts.emails, users)}
+        />
       </div>
       <RowsTable rows={data.rows} total={data.total} />
     </div>
@@ -215,8 +227,17 @@ function ActivityBody({ data, loading, error, onRetry }: ActivityBodyProps) {
 const TH = 'py-2 px-2 text-left text-xs font-medium text-content-secondary';
 const TD = 'py-2 px-2 align-top';
 
-function CountTable({ caption, nameHeader, counts, mono = false }: { caption: string; nameHeader: string; counts: Record<string, CallCount>; mono?: boolean }) {
-  const entries = Object.entries(counts).sort((a, b) => b[1].calls - a[1].calls || a[0].localeCompare(b[0]));
+interface CountTableProps {
+  caption: string;
+  nameHeader: string;
+  counts: Record<string, CallCount>;
+  /** What to show for a row's key (the key itself when absent). */
+  label?: (name: string) => string;
+  mono?: boolean;
+}
+
+function CountTable({ caption, nameHeader, counts, label = (name) => name, mono = false }: CountTableProps) {
+  const entries = Object.entries(counts).sort((a, b) => b[1].calls - a[1].calls || label(a[0]).localeCompare(label(b[0])));
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm" aria-label={caption}>
@@ -231,7 +252,7 @@ function CountTable({ caption, nameHeader, counts, mono = false }: { caption: st
         <tbody>
           {entries.map(([name, count]) => (
             <tr key={name} className="border-b border-editor-line last:border-b-0">
-              <td className={`${TD} break-all text-bf-cream ${mono ? 'font-mono text-xs' : ''}`}>{name}</td>
+              <td className={`${TD} break-all text-bf-cream ${mono ? 'font-mono text-xs' : ''}`}>{label(name)}</td>
               <td className={`${TD} text-right tabular-nums text-bf-cream`}>{count.calls}</td>
               <td className={`${TD} text-right tabular-nums ${count.errors > 0 ? 'text-bf-danger' : 'text-content-secondary'}`}>{count.errors}</td>
             </tr>
