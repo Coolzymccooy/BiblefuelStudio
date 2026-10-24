@@ -2,14 +2,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Admins can make a talking Bible cartoon (at most 40 s), with characters speaking their lines on screen. They pick Cartoon in Scene script, then take the script (pasted, written by BibleFuel, or from an example) through cast, style, storyboard and film to a finished video.
+**Goal:** Admins can make a talking Bible cartoon (at most 40 s), with characters speaking their lines on screen. They pick Cartoon in Scene script, then take the script (pasted, written by BibleFuel, or from an example) through cast, style, shot list and film to a finished video.
 
 **Architecture:**
 - **Separate engine, shared building blocks.** Cartoon mode is its own server module (`server/src/lib/cartoon/`), with its own store (`DATA_DIR/cartoons/`) and router (`/api/cartoon`). Human mode's line/voice/timeline model does not fit dialogue clips, so the two stay apart.
 - **What it reuses:** the project-store code (made generic), the Seedance provider (new options), the spend ledger, the visual library, music beds, the Remotion bundle and asset server, the loudness finish, and the YouTube publish panel.
 - **Client:** a new Cartoon journey under the Scene script page.
 
-**Tech Stack:** Node 24 ESM + Express 4, `node:test`; React 18 + TypeScript + Vite, Vitest; Remotion 4; ffmpeg; BytePlus Seedance 2.0 Mini; Gemini 2.5 Flash Image; OpenAI gpt-4o-transcribe.
+**Tech Stack:** Node 24 ESM + Express 4, `node:test`; React 18 + TypeScript + Vite, Vitest; Remotion 4; ffmpeg; BytePlus Seedance 2.0 Mini; the existing image chain (`generateBibleImage`); OpenAI gpt-4o-transcribe.
 
 **Spec:** `docs/superpowers/specs/2026-10-24-cartoon-mode-design.md`. Read it first; this plan argues from it. Section numbers below (§) refer to it.
 
@@ -34,7 +34,20 @@
 
 ## C0 results (fill in before Task 4; the prompt template depends on them)
 
-> Recorded from `scratchpad/c0` on 2026-10-24: voice consistency across 4 chained shots; whether `reference_image` is accepted; whether a fixed `seed` is accepted; whether two speakers work in one shot; whether Seedance adds music; the measured speaking rate. Task 4's template and Task 7's options follow these.
+Measured 2026-10-24, total spend $2.51 (Mini, 720p, 9:16, `generate_audio: true`):
+
+- **The lines are spoken word for word.** gpt-4o-transcribe heard all five single-speaker lines exactly.
+- **The voice holds across 4 chained shots.** The median pitch stayed at 348–400 Hz, the same young girl's voice, and the face was identical in every shot.
+- **Chained shots barely move the camera.** A film made only of chained shots looks static, so new angles matter.
+- **`seed` is accepted** (the task echoes it back).
+- **`reference_image` is accepted and holds the face in a new place.** With one character picture as the reference and a text prompt for a new scene (a market in daylight), the face, braids, headscarf and dress all matched.
+- **Without a reference, the look drifts:** a text-only two-shot gave her a hood instead of a headscarf.
+- **Two speakers in one shot fail:** only the first line was spoken clearly. This confirms one speaker per shot.
+- **No music is added** when the prompt asks for none. Silences between phrases stay silent, so the library bed is on by default.
+- **The speaking rate is about 2.3–3.5 words a second**, with Seedance filling the clip with pauses. 2.5 words a second plus a 1 s breath is safe.
+- **The local keys can't make pictures:** the local Gemini key has no image quota, and the local Cloudflare token is refused.
+
+**Ruling (C0):** fresh shots (the first shot of a scene, or any shot the admin sets to "New angle") send the approved portraits of the characters in that scene as `reference_image`, with no first frame. Chained shots use the previous clip's last frame as before. Storyboard stills are dropped from C1. Seedance would not start from them, so approving a still would promise a composition the clip does not keep. The Storyboard step becomes a **Shot list** step: every shot's line, director's note, length, New angle / Continue toggle and cost, approved in one tap. Portraits come from the normal image chain (`generateBibleImage` with `rawPrompt`), which needs no reference support. Each project gets a fixed random `seed`, sent with every clip. Why: references held faces better than any still could, and it removes the Gemini billing dependency. If wrong: storyboard stills come back in C2 as a preview only.
 
 ## Review Focus
 
@@ -116,7 +129,7 @@ The format is §7.2. The rules:
   - `shotSeconds(text: string) -> number`;
   - `planShots(parsed) -> Shot[]`;
   - `checkFilm(shots, scenes) -> { storySec, filmSec, ok, overBySec, trimScene: {id, place}|null, tooLong: {shotId, words}[], tooMany: boolean }`.
-- `Shot` is `{ id: "sh1".., sceneId, speaker: string|null, line: string|null, action: string|null, note: string, seconds: number, firstFrame: "board"|"chain" }`.
+- `Shot` is `{ id: "sh1".., sceneId, speaker: string|null, line: string|null, action: string|null, note: string, seconds: number, firstFrame: "fresh"|"chain" }`.
 - Produces from `model.js`:
   - `cartoonFromScript(markdown) -> { project fields, check, warnings }`, which builds the stored shape below;
   - `CAST_DEFAULTS`;
@@ -127,7 +140,7 @@ Planning rules (§7.6):
 - An action joins the previous shot in the same scene (appended to `action`).
 - An action that opens a scene becomes its own silent shot of `SILENT_SHOT_SEC`.
 - `seconds = clamp(ceil(words / 2.5 + 1), 4, 12)`. A line whose unclamped value is over 12 goes in `tooLong`.
-- `firstFrame` is `"board"` for the first shot of each scene and `"chain"` otherwise.
+- `firstFrame` is `"fresh"` for the first shot of each scene and `"chain"` otherwise.
 - `trimScene` is the scene with the most seconds when `filmSec > 40`.
 
 The stored project:
@@ -136,8 +149,8 @@ The stored project:
 { mode: "cartoon", meta: { title, verse: { reference, text: "" }, aspect: "portrait", style },
   source: { markdown, ignored, warnings, parsedAt },
   cast: { [name]: { name, look, voice, portrait: null, approved: false, shelfId: null } },
-  scenes: [{ id, place, note }], shots: [Shot & { board: null, clip: null }],
-  storyboardApproved: false, music: { bed: null }, captions: { enabled: true },
+  scenes: [{ id, place, note }], shots: [Shot & { clip: null }],
+  shotListApproved: false, seed: <random int 1..2147483647>, music: { bed: null }, captions: { enabled: true },
   endCard: { text: "" }, spentUsd: 0, render: { status: "idle" } }
 ```
 
@@ -147,25 +160,24 @@ The stored project:
   - `"shotSeconds: 10 words -> 5, 1 word -> 4, 30 words -> 12 and flagged tooLong"`.
   - `"a 36 s story is over 40 s with cards and names the longest scene"`: `filmSec === 41.5`, `ok === false`, `trimScene.id === "s2"`.
   - `"9 lines is tooMany"`.
-  - `"first shot of each scene starts from its board, the rest chain"`.
+  - `"first shot of each scene is fresh, the rest chain"`.
   - `"cartoonFromScript fills cast for an unknown speaker with an empty look"`.
   - `"estimateFilm counts only shots without a done clip, and the images"`: the cost for 3 shots of 5 s equals `usdForTokens` over `estimateTokens` per shot.
 - [ ] **Step 2:** Run it. Expect FAIL.
-- [ ] **Step 3:** Implement `plan.js` and `model.js`. Style defaults to `"family3d"` when `Style:` is missing or unknown; Task 4's `styleId` maps label text to an id.
+- [ ] **Step 3:** Implement `plan.js` and `model.js`. Also create `server/src/lib/cartoon/styles.js` here (ruling: moved from Task 4): `STYLES`, `styleId`, `DEFAULT_STYLE` exactly as Task 4's Interfaces list them. Style defaults to `"family3d"` when `Style:` is missing or unknown. The model sets `music.bed` from `suggestBed` (`sceneScript/music.js`) for the mood "gentle warm hopeful".
 - [ ] **Step 4:** Run it. Expect PASS.
 - [ ] **Step 5:** Commit: `feat: cartoon shot planner and 40 s rule`.
 
 ### Task 4: Styles and prompt builders
 
 **Files:**
-- Create: `server/src/lib/cartoon/styles.js`, `server/src/lib/cartoon/prompts.js`
+- Create: `server/src/lib/cartoon/prompts.js` (styles.js already exists from Task 3)
 - Test: `server/src/lib/cartoon/prompts.test.js`
 
 **Interfaces:**
-- Produces from `styles.js`: `STYLES = { family3d: {id, label: "3D family film", prompt}, storybook: {…, label: "Storybook"}, clay: {…, label: "Claymation"} }`, `styleId(text) -> id`, `DEFAULT_STYLE = "family3d"`.
+- Consumes `styles.js` (created in Task 3): `STYLES = { family3d: {id, label: "3D family film", prompt}, storybook: {…, label: "Storybook"}, clay: {…, label: "Claymation"} }`, `styleId(text) -> id`, `DEFAULT_STYLE = "family3d"`.
 - Produces from `prompts.js`:
   - `portraitPrompt(character, styleId) -> string`;
-  - `boardPrompt(project, shot) -> string`;
   - `clipPrompt(project, shot) -> string`.
 
 The style prompts:
@@ -190,7 +202,7 @@ The clip prompt follows the C0 template:
   - `"every prompt carries the style, no background music and the no-text line"`.
   - `"no prompt, style label or example ever contains Pixar"`: build every prompt for every example (Task 5) and every style; assert `!/pixar/i.test(...)`. Mark it `todo` until Task 5 exists, then enable it in Task 5.
 - [ ] **Step 2:** Run it. Expect FAIL.
-- [ ] **Step 3:** Implement `styles.js` and `prompts.js`.
+- [ ] **Step 3:** Implement `prompts.js`. A fresh shot's prompt also names each referenced character ("Miriam is the girl in reference picture 1").
 - [ ] **Step 4:** Run it. Expect PASS.
 - [ ] **Step 5:** Commit: `feat: cartoon styles and prompts`.
 
@@ -258,7 +270,7 @@ Behaviour:
 **Interfaces:**
 - Produces: `submitSeedanceTask` gains `generateAudio = false`, `allowTextFallback = true`, `referenceImagePaths = []` and `seed = null`.
   - Each new option is sent only when used.
-  - Adding `referenceImagePaths` and `seed` depends on the C0 results: when C0 shows BytePlus refuses either one, leave that option out and record why in a comment.
+  - C0 confirmed BytePlus accepts both. Each reference becomes `{ type: "image_url", image_url: { url: <data URL> }, role: "reference_image" }` after the text item, using the same file checks as `firstFrameItem` (supported extension, ≤ 10 MB); at most 4 references. `seed` is sent as an integer when not null.
   - With `allowTextFallback: false`, a person refusal returns `{ ok: false, code: "PERSON_REFUSED", error: "BytePlus thinks this picture shows a real person. Make a new picture for this shot." }`.
 - Every existing caller is unchanged (the defaults keep today's body).
 
@@ -266,38 +278,34 @@ Behaviour:
   - `"generateAudio sends generate_audio true"`.
   - `"allowTextFallback false returns PERSON_REFUSED and posts once"`.
   - `"default body is unchanged"`: `generate_audio: false`, and no `seed` key.
-  - Plus one test for each C0-approved option.
+  - `"reference pictures go as reference_image items after the text, and seed is sent"`.
+  - `"a reference picture refused as a real person returns PERSON_REFUSED when the fallback is off"`.
 - [ ] **Step 2:** Run `node --test src/lib/videoGen/providers/seedance.test.js`. Expect FAIL on the new cases.
 - [ ] **Step 3:** Implement it.
 - [ ] **Step 4:** Run it. Expect PASS.
 - [ ] **Step 5:** Commit: `feat: seedance audio, no-fallback and reference options`.
 
-### Task 8: Character pictures (portraits and storyboard stills)
+### Task 8: Character portraits
 
 **Files:**
-- Modify: `server/src/lib/imageGen/providers/imagen.js`
 - Create: `server/src/lib/cartoon/images.js`
-- Test: `server/src/lib/imageGen/providers/imagen.test.js` (add cases), `server/src/lib/cartoon/images.test.js`
+- Test: `server/src/lib/cartoon/images.test.js`
 
 **Interfaces:**
-- Produces from `imagen.js`: `generateImageWithRefs({ prompt, refs: string[] /* image file paths, ≤ 3 */, aspect, signal }) -> Promise<{ ok: true, b64, mimeType } | { ok: false, error, status }>`. It is Gemini only: refs become `inlineData` parts after the text part, and the model is `IMAGEN_MODEL` if it starts with `gemini-`, else `gemini-2.5-flash-image`.
-- Produces from `cartoon/images.js`:
-  - `makePortrait(ctx, project, name, deps?) -> Promise<project>`;
-  - `makeBoard(ctx, project, shotId, deps?) -> Promise<project>`.
-  - Both write PNGs under `projectOutputDir(ctx.outputDir, id)/pictures/` and set `{ file, url, status: "done"|"error", matched: boolean, error }`.
-  - A board uses the approved portraits of the cast in the shot's scene as refs.
-  - Fallback: when `generateImageWithRefs` fails with 429, 403 or not-configured, call `generateBibleImage({ rawPrompt, aspect })` without refs and set `matched: false` (the UI then shows "Not matched to your cast: Gemini image billing is off").
-  - `deps = { withRefs, plain }` for tests.
+- Consumes: `generateBibleImage({ rawPrompt, aspect: "portrait", seriesId, partNumber })` (`imageGen/index.js`); `portraitPrompt` (Task 4); the cartoon store.
+- Produces: `makePortrait(ctx, project, name, deps?) -> Promise<project>`. It writes the picture to `projectOutputDir(ctx.outputDir, id)/pictures/<slug(name)>-<n>.png` (a new file each time, so the browser never shows a cached old one) and sets `cast[name].portrait = { file, url, status: "done"|"error", error }` and `approved: false`.
+  - A character with an empty look returns `status: "error", error: "Describe <name>'s look first."` with no image call.
+  - `deps = { image }` for tests.
+  - `IMAGE_USD = 0.04` is counted in the estimate (Task 3) but not in the AI video ledger, the same as other image features.
 
 - [ ] **Step 1: Write the failing tests:**
-  - `"sends refs as inlineData after the prompt"` (stub fetch).
-  - `"a portrait is saved and marked matched"`.
-  - `"a board falls back to a plain picture and says it is not matched"`.
-  - `"a board uses only approved portraits of characters in its scene"`.
+  - `"a portrait is saved under pictures/ with a fresh name and is not yet approved"`.
+  - `"an empty look is refused without calling the image chain"`.
+  - `"a failed picture records the error and keeps the old portrait file"`.
 - [ ] **Step 2:** Run it. Expect FAIL.
-- [ ] **Step 3:** Implement it.
+- [ ] **Step 3:** Implement it. Copy the chain's result file into `pictures/` (`generateBibleImage` writes under its own series folder).
 - [ ] **Step 4:** Run it. Expect PASS.
-- [ ] **Step 5:** Commit: `feat: cartoon portraits and storyboard stills`.
+- [ ] **Step 5:** Commit: `feat: cartoon character portraits`.
 
 ### Task 9: Speech check and speech windows
 
@@ -346,15 +354,15 @@ Behaviour:
   - `lastFrameOf(deps, clipFile, out) -> Promise<string|null>`.
 
 Behaviour, on top of `shotStage.js`'s reserve → submit → save taskId → wait → charge once → download → library pattern:
-- **Order of work.** Shots with `firstFrame: "board"` start at once (concurrency 4). A `"chain"` shot waits until the shot before it is `done`, then takes that clip's last frame (`ffmpeg -sseof -0.1 … -frames:v 1`) as its first frame. If the shot before fails, the waiting shot gets `status: "waiting"`, `error: "Waiting for shot N"`, and is not ordered.
-- **Submit options:** `generateAudio: true`, `allowTextFallback: false`, and the C0-approved reference/seed options. A board shot's first frame is `shot.board.file`.
+- **Order of work.** Shots with `firstFrame: "fresh"` start at once (concurrency 4). A `"chain"` shot waits until the shot before it is `done`, then takes that clip's last frame (`ffmpeg -sseof -0.1 … -frames:v 1`) as its first frame. If the shot before fails, the waiting shot gets `status: "waiting"`, `error: "Waiting for shot N"`, and is not ordered.
+- **Submit options:** `generateAudio: true`, `allowTextFallback: false`, `seed: project.seed`. A fresh shot sends `referenceImagePaths`: the approved portrait files of the speaker first, then the other cast named in the shot's scene (at most 3), and no first frame. A chained shot sends only `firstFramePath`.
 - **After download:** run `speechWindows`, then (for a line shot) `transcribeClip` and `speechScore`. Store `clip.speech = { heard, score, ok: score >= 0.8 }` and `clip.windows`. A transcription failure stores `speech: { ok: null, error }`, never blocks, and never re-orders.
-- **Refusals:** `PERSON_REFUSED` marks the clip `status: "refused"` and releases the reservation.
+- **Refusals:** `PERSON_REFUSED` (or any refusal of a reference picture) marks the clip `status: "refused"` and releases the reservation.
 - **Re-make:** re-ordering a done shot sets `clip.previous`. If the next shot is `"chain"` and done, it is set to `stale: true` (cleared when that shot is re-made).
 - **Library:** `addClip` with `source: { kind: "cartoon", projectId, shotId }`, `lead:` the speaker's look, and `tags: [title, speaker]`.
 
 - [ ] **Step 1: Write the failing tests** (stub `deps` for submit/wait/download/ffmpeg/probe/transcribe/windows; temp dirs):
-  - `"orders board shots at once and a chained shot after its parent, from the parent's last frame"`: assert the submit order and that the chained submit's `firstFramePath` ends with `-last.png`.
+  - `"orders fresh shots at once with portrait references, and a chained shot after its parent from the parent's last frame"`: assert the submit order and that the chained submit's `firstFramePath` ends with `-last.png`.
   - `"sends generate_audio and never falls back to text"`.
   - `"a refused picture marks the shot refused and charges nothing"`.
   - `"a failed parent leaves its chained child waiting and unordered"`.
@@ -415,10 +423,9 @@ Behaviour, on top of `shotStage.js`'s reserve → submit → save taskId → wai
 | `POST /:id/portraits {only?: names[]}` | Makes the missing or named portraits, in the background. |
 | `POST /:id/cast/:name/approve` | Approves a portrait. |
 | `GET /shelf`, `POST /:id/cast/:name/shelve`, `POST /:id/cast/from-shelf {characterId, asName?}`, `DELETE /shelf/:characterId` | The character shelf. |
-| `POST /:id/storyboard {only?}` | 409 `CAST_NOT_READY` until every speaking character is approved. |
-| `POST /:id/storyboard/approve` | Approves the storyboard. |
+| `POST /:id/shots/approve` | Approves the shot list. 409 `CAST_NOT_READY` until every character named in the script has an approved portrait. |
 | `POST /:id/film/estimate {only?}` | `{ estimate, month }` |
-| `POST /:id/film {only?, confirmOverBenchmark?}` | Checks in order: 503 `NOT_CONFIGURED`, 409 `STORYBOARD_NOT_APPROVED`, 409 `RENDERING`, 409 `RUNNING`, 409 `BUDGET` (the estimate for every shot without a done clip passed to `wouldExceedCap`), then 409 `OVER_BENCHMARK`. |
+| `POST /:id/film {only?, confirmOverBenchmark?}` | Checks in order: 503 `NOT_CONFIGURED`, 409 `SHOTS_NOT_APPROVED`, 409 `RENDERING`, 409 `RUNNING`, 409 `BUDGET` (the estimate for every shot without a done clip passed to `wouldExceedCap`), then 409 `OVER_BENCHMARK`. |
 | `POST /:id/film/cancel` | Stops the film run. |
 | `POST /:id/render`, `POST /:id/render/cancel` | Task 13 |
 
@@ -429,7 +436,7 @@ Behaviour, on top of `shotStage.js`'s reserve → submit → save taskId → wai
   - `"editing the script is locked once a clip was ordered"`.
   - `"a film order that would pass the monthly cap orders nothing"`.
   - `"over the benchmark needs confirmation"`.
-  - `"storyboard waits for every speaking character to be approved"`.
+  - `"the shot list waits for every character to be approved"`.
   - `"a second film order while one runs is 409 RUNNING"`.
   - `"a changed look clears the portrait approval"`.
 - [ ] **Step 2:** Run it. Expect FAIL.
@@ -489,7 +496,7 @@ CartoonRenderData = { fps: 30, width: 1080, height: 1920, total,
 
 **Interfaces:**
 - Produces: `CartoonProject`, `CartoonShot`, `CartoonCastEntry`, `CartoonCheck`, `CartoonEstimate`, `CartoonExample`, `CartoonStyle` and `ShelfCharacter`, mirroring Tasks 3, 11 and 12.
-- Produces: `cartoonApi` with `styles, examples, list, parse, create, write, get, update, remove, portraits, approvePortrait, shelf, shelve, fromShelf, removeFromShelf, storyboard, approveStoryboard, estimate, film, cancelFilm, render, cancelRender`.
+- Produces: `cartoonApi` with `styles, examples, list, parse, create, write, get, update, remove, portraits, approvePortrait, shelf, shelve, fromShelf, removeFromShelf, approveShots, estimate, film, cancelFilm, render, cancelRender`.
 - It is built like `sceneScriptApi.ts`: `failure()` turns errors into `ApiError` with the server's code and sentence.
 
 - [ ] **Step 1: Write the failing tests:**
@@ -503,7 +510,7 @@ CartoonRenderData = { fps: 30, width: 1080, height: 1920, total,
 **Files:**
 - Modify: `client/src/pages/SceneScriptPage.tsx`, `client/src/App.tsx` (routes `scene-script/cartoon/new` and `scene-script/cartoon/:id` to a lazy `CartoonPage`)
 - Create:
-  - `client/src/pages/CartoonPage.tsx`: the step shell. Steps are Script, Cast, Style, Storyboard, Film, Finish; a step is reachable once the ones before it are satisfied. It uses a `useCartoonProject(id)` hook that polls every 3 s while `running` has anything true, like `useSceneScriptProject`.
+  - `client/src/pages/CartoonPage.tsx`: the step shell. Steps are Script, Cast, Style, Shots, Film, Finish; a step is reachable once the ones before it are satisfied. It uses a `useCartoonProject(id)` hook that polls every 3 s while `running` has anything true, like `useSceneScriptProject`.
   - `client/src/components/cartoon/ModeChoice.tsx`
   - `client/src/components/cartoon/ScriptStep.tsx`
   - `client/src/components/cartoon/LengthMeter.tsx`
@@ -530,24 +537,23 @@ The behaviour (§7.1–7.2):
 - [ ] **Step 2–4:** Run with `npx vitest run src/components/cartoon` and expect FAIL, implement it, then run again and expect PASS.
 - [ ] **Step 5:** Commit: `feat: cartoon mode choice and script step`.
 
-### Task 16: Cast, Style and Storyboard steps
+### Task 16: Cast, Style and Shots steps
 
 **Files:**
-- Create: `client/src/components/cartoon/CastStep.tsx`, `StyleStep.tsx`, `StoryboardStep.tsx`
-- Test: `client/src/components/cartoon/__tests__/CastStep.test.tsx`, `StoryboardStep.test.tsx`
+- Create: `client/src/components/cartoon/CastStep.tsx`, `StyleStep.tsx`, `ShotListStep.tsx`
+- Test: `client/src/components/cartoon/__tests__/CastStep.test.tsx`, `ShotListStep.test.tsx`
 
 The behaviour (§7.3–7.5):
-- **Cast:** one card per character with look and voice fields (saved on blur), a portrait with "Make portrait" / "Make again" / "Approve", a "Not matched to your cast" note when `matched === false`, "Save to shelf", and an "Add from shelf" picker. Next needs every speaking character approved.
+- **Cast:** one card per character with look and voice fields (saved on blur), a portrait with "Make portrait" / "Make again" / "Approve", "Save to shelf", and an "Add from shelf" picker. Next needs every character approved. A note explains that the approved portrait is what keeps the face the same in every shot.
 - **Style:** three choices with a one-line description. Changing style after portraits exist warns that portraits will be remade.
-- **Storyboard:** a filmstrip, one still per shot, with the line under it, the director's note (editable) and a first-frame toggle ("Continue from last shot" / "Start from this picture"). It has "Make again" per frame and "Approve storyboard". It shows the total picture cost.
+- **Shots:** a list, one row per shot, showing who speaks, the line, the length in seconds, the director's note (editable), a New angle / Continue from last shot toggle, and the shot's price. Rows show the character portraits a New angle shot will use. It has the film total (seconds of 40, about $N) and "Approve shot list".
 
 - [ ] **Step 1: Write the failing tests:**
   - `"Next waits until every speaking character is approved"`.
-  - `"a fallback portrait says it is not matched"`.
-  - `"approving the storyboard calls approveStoryboard"`.
+  - `"approving the shot list calls approveShots"`.
   - `"the first-frame toggle patches the shot"`.
 - [ ] **Step 2–4:** Run it and expect FAIL, implement it, then run it and expect PASS.
-- [ ] **Step 5:** Commit: `feat: cartoon cast, style and storyboard steps`.
+- [ ] **Step 5:** Commit: `feat: cartoon cast, style and shot list steps`.
 
 ### Task 17: Film and Finish steps
 
@@ -565,7 +571,7 @@ The behaviour (§7.6–7.7):
   - a music bed picker (the existing library bed list used by `MusicPanel`), a captions switch and an end-card text field;
   - "Render", with progress;
   - the video, a Download link, and the post caption (title, verse reference and text) with Copy;
-  - `YoutubePublishPanel` with `videoUrl={render.url}`, `initial={{ title, description: caption, thumbnailTitle: false }}` and `thumbnailOptions` from the storyboard stills.
+  - `YoutubePublishPanel` with `videoUrl={render.url}`, `initial={{ title, description: caption, thumbnailTitle: false }}` and `thumbnailOptions` from the clips' poster frames.
 
 - [ ] **Step 1: Write the failing tests:**
   - `"over the benchmark asks again naming the amount"`.
@@ -583,7 +589,7 @@ The behaviour (§7.6–7.7):
 - [ ] **Step 1:** Write `"an example becomes a rendered cartoon with stubbed providers"`:
   - create from `lost-lamb`;
   - stub the portraits, approve them;
-  - stub the storyboard, approve it;
+  - approve the shot list;
   - run the film with stub clips (`ffmpeg -f lavfi` tone plus colour, 4–6 s);
   - render with a stub `render` that writes a file;
   - assert `render.status === "done"`, `spentUsd > 0`, one ledger settlement per shot, and every clip in the library with `source.kind === "cartoon"`.

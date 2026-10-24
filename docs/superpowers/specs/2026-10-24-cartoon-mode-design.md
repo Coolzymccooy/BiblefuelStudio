@@ -125,6 +125,9 @@ One art style per film, chosen once:
 The style text is added to every portrait, storyboard and clip prompt.
 
 ### 7.5 Storyboard
+
+> **Changed after C0 (2026-10-24), my call:** C1 ships a **Shot list** step in place of storyboard stills. Seedance's `reference_image` held the approved portrait's face in a brand-new scene, so fresh shots send the portraits as references. Seedance would not start from a still, so approving one would promise a composition the clip does not keep. Storyboard stills may return in C2 as a preview only. The text below is the original plan.
+
 One still per shot, made with Gemini 2.5 Flash Image using the approved portraits as references (about $0.04 each). They show as a filmstrip with each shot's line beneath. The admin approves the whole strip in one tap, or re-makes any frame. This is the cheap place to catch a wrong face or a bad composition before paying for video.
 
 Each shot has a **director's note** (close-up, wide, over-the-shoulder, slow push-in, and so on), taken from the script or chosen automatically, and editable.
