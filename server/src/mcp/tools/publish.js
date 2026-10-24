@@ -310,7 +310,7 @@ const schedules = {
     "The user's recurring posts. action list: each schedule's id, title, cron, timezone, destination and enabled (free, no consent needed). " +
     "action create: a new schedule that posts by itself on a cron time (five fields, at most once an hour, for example 0 9 * * * for 9:00 daily, in timezone, default UTC). " +
     "type replay posts the same video each time (needs caption and videoPath); type auto_generate makes and posts a fresh short each run (niche, tone, aspect, durationSec, voiceId, backgroundQuery, kineticCaptions). " +
-    "destination is webhook (webhookId), buffer (profileId) or youtube (privacyStatus). create needs the key's publish switch and costs one daily publish now; the runs themselves happen on the server later and are not charged to the key. Agents may create at most 5 schedules per account (SCHEDULE_LIMIT after that); the user sees and removes them in Settings. " +
+    "destination is webhook (webhookId), buffer (profileId) or youtube (privacyStatus). create needs the key's publish switch and costs one daily publish now; the runs themselves happen on the server later and are not charged to the key (each auto_generate run spends one unit of the user's plan render quota, and is skipped when none is left). Agents may create at most 5 schedules per account (SCHEDULE_LIMIT after that); the user sees and removes them in Settings. " +
     "action remove { id } deletes a schedule (needs the publish switch; free).",
   inputSchema: {
     action: z.enum(SCHEDULE_ACTIONS).describe("list, create or remove."),

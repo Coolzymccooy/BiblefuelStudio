@@ -7,7 +7,7 @@ import { v4 as uuid } from "uuid";
 import cron from "node-cron";
 import { google } from "googleapis";
 import crypto from "node:crypto";
-import { signOAuthState, verifyOAuthState } from "../auth.js";
+import { signOAuthState, verifyOAuthState, getUsersStore } from "../auth.js";
 import { refuseAgentCalls } from "../middleware/agentAuth.js";
 import { buildZernioPost } from "../lib/zernioPayload.js";
 // readTikTokOutcome replaced this branch's isTikTokCapacityError: the capacity
@@ -16,6 +16,7 @@ import { readTikTokOutcome } from "../lib/zernioStatus.js";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { publicDirectConfig, mergeDirectSecrets } from "../lib/social/directSecrets.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
+import { spendScheduleRender } from "../lib/social/scheduleQuota.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
 import { uploadToYoutube, setYoutubeThumbnail, listYoutubePlaylists } from "../lib/social/youtubeUpload.js";
 import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
@@ -664,14 +665,23 @@ function scheduleSignature(s) {
   });
 }
 
+const ownerEmail = (userId) => (getUsersStore().users || []).find((u) => u.id === userId)?.email || "";
+
 export async function runScheduledPost(schedule, ctx, deps = {}) {
   const enqueue = deps.enqueueCampaignAutoPost
     || (await import("./jobs.js")).enqueueCampaignAutoPost;
   const dispatch = deps.dispatchPost || dispatchPost;
+  const spendRender = deps.spendRender || ((owner) => spendScheduleRender(owner, ownerEmail));
   try {
     if (!schedule?.enabled) return;
 
     if (String(schedule.type || "replay") === "auto_generate") {
+      // R38: a fresh video spends the owner's plan render quota; out of quota, this run is skipped.
+      const refused = spendRender(ctx);
+      if (refused) {
+        console.warn(`[SOCIAL][CRON] Schedule ${schedule.id} skipped: the owner's daily render quota is used up (${refused.used} of ${refused.limit}, owner=${ctx?.userId ?? "root"})`);
+        return;
+      }
       const job = await enqueue({
         destination: schedule.destination || "webhook",
         webhookId: schedule.webhookId || undefined,
