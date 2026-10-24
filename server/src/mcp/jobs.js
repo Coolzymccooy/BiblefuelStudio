@@ -184,6 +184,83 @@ function fromStory(payload, ctx) {
   return state.animation ? { ...handle, animation: state.animation } : handle;
 }
 
+// ---- ambient -----------------------------------------------------------------
+
+const AMBIENT_ENCODING = new Set(["assembling", "rendering"]);
+const AMBIENT_RESTART_STEP = {
+  voicing: "its verses were being voiced. Call ambient_cancel, then ambient_step voice (verses already voiced are kept)",
+  generating_images: "its pictures were being made. Call ambient_cancel, then ambient_step images (pictures already made are kept)",
+  assembling: "it was rendering. Call ambient_cancel, then ambient_render to start the render again from the beginning",
+  rendering: "it was rendering. Call ambient_cancel, then ambient_render to start the render again from the beginning",
+};
+
+/** The share of pictures an images run has finished (made or failed), as a percent; null without movements. */
+function picturesPercent(movements) {
+  if (movements.length === 0) return null;
+  const settled = movements.filter((m) => m?.imageStatus === "done" || m?.imageStatus === "error").length;
+  return Math.round((settled / movements.length) * 100);
+}
+
+/** "2 of 3 verses could not be voiced: <first reason>", or null when nothing failed. */
+function failedShare(items, isFailed, noun, reasonOf) {
+  const failed = items.filter(isFailed);
+  if (failed.length === 0) return null;
+  return `${failed.length} of ${items.length} ${noun}: ${text(reasonOf(failed[0])) || "unknown error"}`;
+}
+
+/** A draft whose last step left verses unvoiced or pictures missing: the step failed, and says why. */
+function ambientDraftError(project, drops, movements) {
+  const voiced = project.words === "none" ? null
+    : failedShare(drops, (d) => d?.status === "error", "verses could not be voiced", (d) => d.error);
+  return voiced || failedShare(movements, (m) => m?.imageStatus === "error", "pictures could not be made", (m) => m.imageError);
+}
+
+/** The status, percent, phase and error an ambient handle shows. */
+function ambientState(payload, project) {
+  const status = String(project.status || "");
+  const render = project.render || {};
+  const movements = Array.isArray(project.movements) ? project.movements : [];
+  const drops = Array.isArray(project.drops) ? project.drops : [];
+  const encoding = AMBIENT_ENCODING.has(status);
+  const percent = encoding ? toPercent(render.percent) : status === "generating_images" ? picturesPercent(movements) : null;
+  const phase = encoding ? text(render.phase) || status : status || null;
+  if (payload?.interrupted && AMBIENT_RESTART_STEP[status]) {
+    return { rawStatus: "failed", percent, phase, error: `The server restarted while ${AMBIENT_RESTART_STEP[status]}.` };
+  }
+  if (status === "draft") {
+    const error = ambientDraftError(project, drops, movements);
+    return { rawStatus: error ? "failed" : "done", percent: null, phase, error };
+  }
+  if (status === "ready_to_render") return { rawStatus: "done", percent: null, phase, error: null };
+  if (status === "done") return { rawStatus: "done", percent, phase: null, error: null, file: render.outputPath };
+  return { rawStatus: status, percent, phase: status === "error" ? null : phase, error: project.error };
+}
+
+/** The ambient render writes <outputDir>/ambient/<projectId>/video.mp4, served at the same path under /outputs. */
+function ambientUrl(projectId, outputPath) {
+  const name = text(outputPath)?.split(/[\\/]/).pop();
+  const safeId = text(projectId);
+  return name && safeId ? `/outputs/ambient/${safeId}/${name}` : null;
+}
+
+function fromAmbient(payload, ctx) {
+  const project = payload?.project || {};
+  const state = ambientState(payload, project);
+  return toHandle(
+    {
+      kind: "ambient",
+      id: project.projectId,
+      rawStatus: state.rawStatus,
+      percent: state.percent,
+      phase: state.phase,
+      file: state.file ?? null,
+      url: state.file ? ambientUrl(project.projectId, state.file) : null,
+      error: state.error ?? null,
+    },
+    ctx,
+  );
+}
+
 function fromTimeline(payload, ctx) {
   const p = payload || {};
   return toHandle(
@@ -215,6 +292,7 @@ export const NORMALISERS = {
   job: { route: routeFor("/api/jobs/"), normalise: fromJobsRoute },
   captioned: { route: routeFor("/api/render/captioned-video-status/"), normalise: fromCaptioned },
   story: { route: routeFor("/api/story/"), normalise: fromStory },
+  ambient: { route: routeFor("/api/ambient/"), normalise: fromAmbient },
   timeline: { route: routeFor("/api/timeline/render/"), normalise: fromTimeline },
   instrumental: { route: routeFor("/api/music/instrumental/"), normalise: fromInstrumental },
   publish: { route: routeFor("/api/social/youtube/publish/"), normalise: fromPublish },

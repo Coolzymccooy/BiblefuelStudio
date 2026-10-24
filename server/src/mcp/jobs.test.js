@@ -284,6 +284,87 @@ test("publish: running, done with the YouTube url, and error", () => {
   assert.equal(failed.error, "quota exceeded");
 });
 
+// ---- ambient ----
+
+const amb = (fields = {}, extra = {}) => ({ ok: true, project: { projectId: "a1", status: "draft", error: null, drops: [], movements: [], render: { jobId: null, outputPath: null, status: "idle", percent: 0, phase: "" }, ...fields }, ...extra });
+const ambient = (payload) => NORMALISERS.ambient.normalise(payload, { outputUrl: toUrl });
+
+test("ambient: the status route is the project", () => {
+  assert.equal(NORMALISERS.ambient.route("a1"), "/api/ambient/a1");
+});
+
+test("ambient: voicing and images are running with the stage as phase; images report the share of pictures in", () => {
+  const voicing = ambient(amb({ status: "voicing" }));
+  assert.deepEqual(voicing, { kind: "ambient", id: "a1", status: "running", percent: null, phase: "voicing", output: null, error: null });
+  const movements = [{ imageStatus: "done" }, { imageStatus: "generating" }, { imageStatus: "generating" }, { imageStatus: "error" }];
+  const images = ambient(amb({ status: "generating_images", movements }));
+  assert.equal(images.status, "running");
+  assert.equal(images.phase, "generating_images");
+  assert.equal(images.percent, 50);
+});
+
+test("ambient: assembling and rendering read the render's percent and phase", () => {
+  const assembling = ambient(amb({ status: "assembling", render: { jobId: "j", status: "running", percent: 0, phase: "waiting for another job to finish" } }));
+  assert.deepEqual(assembling, { kind: "ambient", id: "a1", status: "running", percent: 0, phase: "waiting for another job to finish", output: null, error: null });
+  const rendering = ambient(amb({ status: "rendering", render: { jobId: "j", status: "running", percent: 37, phase: "rendering" } }));
+  assert.equal(rendering.status, "running");
+  assert.equal(rendering.percent, 37);
+  assert.equal(rendering.phase, "rendering");
+});
+
+test("ambient: ready_to_render and a quiet draft are done (the step is over) with no video", () => {
+  const ready = ambient(amb({ status: "ready_to_render", render: { outputPath: "/srv/u/outputs/ambient/a1/video.mp4", status: "done" } }));
+  assert.deepEqual(ready, { kind: "ambient", id: "a1", status: "done", percent: 100, phase: "ready_to_render", output: null, error: null });
+  const draft = ambient(amb({ status: "draft", drops: [{ status: "pending" }] }));
+  assert.equal(draft.status, "done");
+  assert.equal(draft.phase, "draft");
+  assert.equal(draft.output, null);
+});
+
+test("ambient: a draft left with unvoiced verses or missing pictures is failed, with the first reason", () => {
+  const drops = [{ status: "done" }, { status: "error", error: "no verse text returned for \"Psalm 151\"" }, { status: "error", error: "x" }];
+  const voice = ambient(amb({ status: "draft", drops }));
+  assert.equal(voice.status, "failed");
+  assert.equal(voice.phase, "draft");
+  assert.equal(voice.error, "2 of 3 verses could not be voiced: no verse text returned for \"Psalm 151\"");
+  const movements = [{ imageStatus: "done" }, { imageStatus: "error", imageError: "quota" }];
+  const images = ambient(amb({ status: "draft", movements }));
+  assert.equal(images.status, "failed");
+  assert.equal(images.error, "1 of 2 pictures could not be made: quota");
+});
+
+test("ambient: a music-only session ignores its stored verses", () => {
+  const handle = ambient(amb({ status: "draft", words: "none", drops: [{ status: "error", error: "x" }] }));
+  assert.equal(handle.status, "done");
+});
+
+test("ambient: done carries the video under the session's own folder", () => {
+  const handle = ambient(amb({ status: "done", render: { jobId: "j", outputPath: "/srv/u/outputs/ambient/a1/video.mp4", status: "done", percent: 100, phase: "" } }));
+  assert.equal(handle.status, "done");
+  assert.equal(handle.percent, 100);
+  assert.deepEqual(handle.output, { url: `${BASE}/outputs/ambient/a1/video.mp4`, path: "/srv/u/outputs/ambient/a1/video.mp4" });
+});
+
+test("ambient: a cancel reads cancelled and an error reads failed", () => {
+  assert.equal(ambient(amb({ status: "error", error: "Cancelled." })).status, "cancelled");
+  const failed = ambient(amb({ status: "error", error: "ffmpeg exited 1: boom" }));
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.error, "ffmpeg exited 1: boom");
+});
+
+test("ambient: work a server restart stopped reads failed, with how to start it again", () => {
+  const handle = ambient(amb({ status: "rendering", render: { jobId: "j", status: "running", percent: 42, phase: "rendering" } }, { interrupted: true }));
+  assert.equal(handle.status, "failed");
+  assert.equal(handle.phase, "rendering");
+  assert.equal(handle.percent, 42);
+  assert.match(handle.error, /server restarted/);
+  assert.match(handle.error, /ambient_cancel/);
+  assert.match(handle.error, /ambient_render/);
+  const images = ambient(amb({ status: "generating_images", movements: [{ imageStatus: "generating" }] }, { interrupted: true }));
+  assert.equal(images.status, "failed");
+  assert.match(images.error, /ambient_step/);
+});
+
 test("normalisers do not mutate the payload", () => {
   const payload = Object.freeze({ ok: true, job: Object.freeze({ id: "job_1", status: "done", result: Object.freeze({ outFile: "a.mp4" }) }) });
   assert.doesNotThrow(() => NORMALISERS.job.normalise(payload, { outputUrl: toUrl }));
