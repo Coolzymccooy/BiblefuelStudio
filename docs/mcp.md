@@ -112,6 +112,17 @@ Every call passes the same checks, in this order:
 | `jobs_get` | `{ id }`. One queued job as a job handle. |
 | `jobs_retry` | `{ id }`. Re-queue a finished or failed job. Returns a new job. Counts as one render. |
 | `jobs_wait` | `{ kind, id, projectId?, timeoutSec? }`. Wait for any background job. See the next section. |
+| `scripts_generate` | Short Bible video scripts (hook, verse, reflection, call to action, hashtags). Every field optional. Counts against the plan's `scripts` quota. |
+| `bible_lookup` | `{ mode: "verse" or "parse" or "translations", reference?, translation? }`. Verse text, reference parsing, or the translation list. Free. |
+| `voice_list` | `{ provider? }`. Voices of one provider (`edge` by default, or `elevenlabs`), every provider's status, the voice profiles and your cloned voices. |
+| `voice_synthesize` | `{ text, voiceId?, provider? }`. Text to speech. Returns `path` and `url`. One daily `tts` call. |
+| `voice_clone` | `{ name, samplePaths, consent, provider? }`. Clone a voice from files in your media. Premium plans. One daily `tts` call. |
+| `transcripts` | `{ action: "list" or "add" or "remove", ... }`. Your saved, edited transcripts. |
+| `audio_process` | `{ inputPath, preset?, ... }`. Clean up an audio file into a new mp3: trim, loudness, noise, EQ, compressor. |
+| `audio_advanced` | `{ action: "merge" or "timeline" or "timeline_preview" or "info", ... }`. Join and arrange clips, preview them over a video, read a length. |
+| `music_library` | `{ source? }`. Bundled tracks and your own, each with `id`, `ref`, `durationSec` and licence. |
+| `music_remove_vocals` | `{ id, quality? }`. Start vocal removal on a track. Returns a job handle of kind `instrumental`. Takes minutes. One daily render. |
+| `music_instrumental_decide` | `{ jobId, decision: "keep" or "discard" }`. Settle a finished (or cancel a running) vocal removal. |
 
 More tools arrive in later slices. The Pipelines section shows where each fits.
 
@@ -222,13 +233,22 @@ Stuck or finished jobs: `jobs_list`, `jobs_get`, `jobs_retry`, then `jobs_wait`.
 
 `bible_lookup` or `scripts_generate`, then `voice_synthesize`, then `backgrounds_search`, then `render_short`, then `jobs_wait`, then `publish_youtube` (needs publish consent).
 
-### Scripts (coming)
+### Scripts and Bible (available now)
 
-`scripts_generate`, `bible_lookup`.
+1. `bible_lookup` with `mode: "translations"` if you need a translation id, then `mode: "verse"` for the text of a reference, or `mode: "parse"` to check one.
+2. `scripts_generate` for ready-made scripts. Leave out any field to get the default (10 scripts of about 20 seconds, theme `peace`). Each script has `hook`, `verse`, `reference`, `reflection`, `cta` and `hashtags`.
 
-### Voice (coming)
+`scripts_generate` counts against the plan's daily `scripts` quota and has no agent cap. `bible_lookup` is free. Next, speak a script with `voice_synthesize`.
 
-`voice_list`, `voice_synthesize`, `voice_clone`, `audio_process`, `audio_advanced`, `transcripts`.
+### Voice and audio (available now)
+
+1. `voice_list` shows the voices of one provider (`edge`, free, by default; `elevenlabs` on premium plans), which providers are configured on this server, the voice profiles, and the voices you cloned.
+2. `voice_synthesize { text, voiceId?, provider? }` speaks the text. `provider` is `auto` (default: ElevenLabs on premium, Edge-TTS otherwise, with fallback), `elevenlabs`, `edge`, `azure`, `chatterbox`, `fish` or `piper`. It returns `path` and `url`. Each call is one daily `tts` call and one unit of the plan's `tts` quota. ElevenLabs and Fish need a premium plan (`FEATURE_LOCKED` otherwise). Check `fallbackProvider` in the answer.
+3. `audio_process { inputPath, preset? }` cleans the file into a new mp3 (`preset` `clean_voice` by default; `podcast`, `warm` and `raw` too, and each step can be overridden). `audio_advanced` merges clips (`merge`), builds one file from trimmed clips (`timeline`), lays them over a video (`timeline_preview`) or reads a length (`info`). Clips may be music references (`library:...` or `mylib:...`) from `music_library`.
+4. `transcribe` the result, then save the edited lines with `transcripts { action: "add", sourceFile, words, editedLines }`. `list` shows what you saved and `remove` deletes one.
+5. `voice_clone { name, samplePaths, consent, provider? }` makes a custom voice from recordings in your media folder (premium plans; one daily `tts` call). Set the three `consent` flags to true only after the account owner has said they have the right to use that voice. With `provider: "chatterbox"` the answer is a `voiceId` like `cb:...` to use with `voice_synthesize` and `provider: "chatterbox"`.
+
+These tools read and write files in your media folder only. `audio_process`, `audio_advanced` and `voice_clone` refuse a path outside it with `PATH_OUTSIDE_MEDIA` and do not accept URLs: bring a file in with `media_import_url` first. The only exception is a voice file another `voice_synthesize` call just wrote. `audio_advanced` cannot draw a waveform image.
 
 ### Backgrounds and images (coming)
 
@@ -274,9 +294,12 @@ Stuck or finished jobs: `jobs_list`, `jobs_get`, `jobs_retry`, then `jobs_wait`.
 
 `queue_items` with `action` of `list`, `add`, `remove` or `clear`.
 
-### Music (coming)
+### Music (available now)
 
-`music_library`, `music_remove_vocals`, `jobs_wait` with `kind: "instrumental"`, `music_instrumental_decide`.
+1. `music_library` lists the tracks. Note a track's `id` (for vocal removal) and its `ref` (to use as a bed or clip).
+2. `music_remove_vocals { id }` starts vocal removal and returns `{ kind: "instrumental", id, status, where }`. It takes minutes, and `where` says whether this server or the operator's laptop does it. It is one daily render and one unit of the plan's `render` quota. If vocal removal is not set up you get a 409; `capabilities` shows `music.vocalRemoval`.
+3. `jobs_wait { kind: "instrumental", id }`, repeated until `status` is `done`. The instrumental is saved to your music library as soon as it is finished.
+4. `music_instrumental_decide { jobId, decision }`. `keep` returns the saved track; `discard` removes the track and its file (it also cancels a job that is still running).
 
 ### Branding (coming)
 
@@ -331,6 +354,8 @@ A call that would cross a cap is refused before anything runs, so nothing is spe
 | `MCP_CAP_REACHED` | A daily cap is used up: this key's (`scope` `key`) or your account's across all agents (`scope` `user`). | Read `bucket`, `scope` and `resetsAt`. Wait for the reset, or ask the owner to raise the server ceiling. |
 | `QUOTA_EXCEEDED` | The account's own plan quota is used up. | Wait for the daily reset or change plan in the app. |
 | `BAD_KIND` | `jobs_wait` got a `kind` it does not know. | Use the `kind` the starting tool returned. |
+| `PATH_OUTSIDE_MEDIA` | An audio or voice-clone tool was given a file that is not in your media folder, or a URL. | Use a path from `media_list` or `media_import_url`. |
+| `FEATURE_LOCKED` (`status` 403) | The tool needs a premium plan, for example ElevenLabs or Fish voices, or `voice_clone`. | Use `provider: "edge"` or `auto`, or upgrade in the app. |
 | `INVALID_URL`, `INVALID_KIND`, `INVALID_FILENAME`, `URL_PRIVATE`, `URL_SCHEME`, `URL_REDIRECTS`, `URL_TOO_LARGE`, `URL_TIMEOUT`, `DOWNLOAD_FAILED`, `IMPORT_FAILED` | `media_import_url` could not fetch the file. | See the table under Getting media in. |
 | The tool call times out in the client | The client gave up before `jobs_wait` returned. | Lower `timeoutSec`, or raise the client timeout above 90 seconds (Hermes: `timeout: 120`). The job keeps running; call `jobs_wait` again. |
 | A job is `running` for a long time | Renders are slow and queue behind other work. | Keep calling `jobs_wait`. If `status` becomes `failed`, read `error`, then try `jobs_retry`. |
