@@ -67,7 +67,7 @@ describe("cartoon render stage", () => {
   }
 
   /** The Lost Lamb with every shot filmed (or only the first `filmedCount`). */
-  function filmedCartoon({ filmedCount = Infinity, seconds } = {}) {
+  function filmedCartoon({ filmedCount = Infinity, seconds, speechTo = 1.8 } = {}) {
     const fields = cartoonFromScript(SCRIPT);
     const shots = fields.shots.map((s, i) => {
       const planned = seconds ?? s.seconds;
@@ -76,7 +76,7 @@ describe("cartoon render stage", () => {
       return {
         ...s,
         seconds: planned,
-        clip: { status: "done", libraryId: clip.id, url: clip.url, durationSec: planned, windows: [{ from: 0.4, to: 1.8 }], speech: null, stale: false },
+        clip: { status: "done", libraryId: clip.id, url: clip.url, durationSec: planned, windows: [{ from: 0.4, to: speechTo }], speech: null, stale: false },
       };
     });
     return createProject(ctx.dataDir, { ...fields, shots, endCard: { text: "He came for you." } });
@@ -104,7 +104,9 @@ describe("cartoon render stage", () => {
     const blockers = cartoonRenderBlockers(ctx, partial);
     assert.ok(blockers.some((b) => /2 shots have no clip yet/.test(b)), JSON.stringify(blockers));
 
-    const long = filmedCartoon({ seconds: 12 });
+    // Long clips with short speech are trimmed to fit; only speech that can't fit blocks.
+    assert.ok(!cartoonRenderBlockers(ctx, filmedCartoon({ seconds: 12 })).some((b) => /40 s/.test(b)));
+    const long = filmedCartoon({ seconds: 12, speechTo: 11.9 });
     const tooLong = cartoonRenderBlockers(ctx, long);
     assert.ok(tooLong.some((b) => /40 s/.test(b)), JSON.stringify(tooLong));
 

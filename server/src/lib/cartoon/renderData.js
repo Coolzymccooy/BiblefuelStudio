@@ -10,7 +10,9 @@ import { BED_BASE, BED_DUCK } from "./filmCurves.js";
  *
  * The film is the verse card, then each clip in order with its own sound,
  * then the end card. A clip plays to its measured length but never more than
- * half a second past its plan, so a long tail of silence is trimmed. Caption
+ * half a second past its plan, so a long tail of silence is trimmed, and
+ * never stops before its last word. A film that still runs over 40 s has its
+ * clip tails trimmed until it fits, again never into a word. Caption
  * words are always the script's own words, spread over the speech windows
  * that silence detection found in the clip (a transcript's word times are
  * not trusted on this audio). The music bed ducks under those same windows.
@@ -22,6 +24,8 @@ export const MAX_VERSE_CHARS = 200;
 export const BRAND = "BibleFuel Studio";
 
 const MIN_SPAN_SEC = 0.05;
+/** The shortest a clip is trimmed to when the film runs long: a silent shot still reads as a shot. */
+const MIN_TRIMMED_SEC = 1;
 const FALLBACK_LEAD_SEC = 0.15;
 const FALLBACK_TAIL_SEC = 0.25;
 
@@ -31,16 +35,63 @@ const norm = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[^a
 const weight = (w) => Math.max(1, norm(w).length);
 const wordsOf = (text) => String(text || "").split(/\s+/).filter(Boolean);
 
+/** Where the clip's last speech window ends, clip-relative seconds; 0 for a clip with no speech. */
+function lastSpeechEnd(shot) {
+  const raw = Array.isArray(shot?.clip?.windows) ? shot.clip.windows : [];
+  return raw.reduce((end, w) => (Number.isFinite(Number(w?.to)) ? Math.max(end, Number(w.to)) : end), 0);
+}
+
 /**
- * Seconds a shot's clip plays: its measured length, capped at its plan + 0.5 s,
- * on a whole frame. The plan is the length the clip was ordered at (kept on the
- * clip), so a later edit to the shot's seconds never cuts the clip mid-word.
+ * How many frames a shot's clip may play (spec sections 5 and 8.6). `max` is
+ * its measured length capped at its plan + 0.5 s, but never cut before its
+ * last speech window ends. `planned` and `speech` are the floors a tail is
+ * trimmed to when the film runs long: first never below its plan (or its last
+ * word), then never below its last word (a silent clip keeps a second). The
+ * plan is the length the clip was ordered at (kept on the clip), so a later
+ * edit to the shot's seconds never cuts the clip mid-word.
  */
-export function playedSec(shot) {
+export function clipFrames(shot) {
   const planned = Number(shot?.clip?.seconds) || Number(shot?.seconds) || 0;
-  const measured = Number(shot?.clip?.durationSec);
-  const sec = measured > 0 ? Math.min(measured, planned + CLIP_SLACK_SEC) : planned;
-  return toFrames(sec) / FPS;
+  const durationSec = Number(shot?.clip?.durationSec);
+  const measured = durationSec > 0 ? toFrames(durationSec) : toFrames(planned);
+  const speechEnd = Math.min(measured, Math.ceil(lastSpeechEnd(shot) * FPS - 1e-6));
+  const capped = Math.min(measured, toFrames(planned + CLIP_SLACK_SEC));
+  const max = Math.max(capped, speechEnd);
+  const speech = Math.min(max, Math.max(speechEnd, toFrames(MIN_TRIMMED_SEC)));
+  return { max, planned: Math.min(max, Math.max(speech, toFrames(planned))), speech };
+}
+
+/** Seconds a shot's clip plays when the film has room: see clipFrames. */
+export function playedSec(shot) {
+  return clipFrames(shot).max / FPS;
+}
+
+/** Take `excess` frames off `frames`, one at a time from the clip furthest above its floor. */
+function trimTails(frames, floors, excess) {
+  const out = [...frames];
+  let left = excess;
+  while (left > 0) {
+    let pick = -1;
+    out.forEach((f, i) => { if (f > floors[i] && (pick < 0 || f - floors[i] > out[pick] - floors[pick])) pick = i; });
+    if (pick < 0) break;
+    out[pick] -= 1;
+    left -= 1;
+  }
+  return out;
+}
+
+/**
+ * Frames each clip plays so the film fits 40 s whenever it can. Every clip
+ * plays its `max`; a film that then runs long has its clip tails trimmed,
+ * the longest overhang first, never before a clip's last word ends. It still
+ * runs long only when the speech itself can't fit.
+ */
+export function fitClipFrames(project) {
+  const bounds = (project.shots || []).map(clipFrames);
+  const room = toFrames(MAX_FILM_SEC) - toFrames(VERSE_CARD_SEC) - toFrames(END_CARD_SEC);
+  const over = (frames) => frames.reduce((a, f) => a + f, 0) - room;
+  const first = trimTails(bounds.map((b) => b.max), bounds.map((b) => b.planned), over(bounds.map((b) => b.max)));
+  return trimTails(first, bounds.map((b) => b.speech), over(first));
 }
 
 /**
@@ -49,9 +100,10 @@ export function playedSec(shot) {
  */
 export function filmTimeline(project) {
   const start = toFrames(VERSE_CARD_SEC);
+  const fitted = fitClipFrames(project);
   let at = start;
   const shots = (project.shots || []).map((s, i, all) => {
-    const len = toFrames(playedSec(s));
+    const len = fitted[i];
     const placed = {
       id: s.id, sceneId: s.sceneId, from: at / FPS, to: (at + len) / FPS, len: len / FPS,
       dissolve: i > 0 && s.sceneId !== all[i - 1].sceneId,

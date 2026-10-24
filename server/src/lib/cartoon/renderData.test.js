@@ -2,7 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { cartoonFromScript } from "./model.js";
 import {
-  buildCartoonRenderData, filmTimeline, duckWindows, verseText, playedSec, DUCK_PAD_SEC, MAX_VERSE_CHARS,
+  buildCartoonRenderData, filmTimeline, fitClipFrames, duckWindows, verseText, playedSec, DUCK_PAD_SEC, MAX_VERSE_CHARS,
 } from "./renderData.js";
 import { bedVolume, captionPages, duckAmount, BED_BASE, BED_DUCK, PAGE_MAX_WORDS } from "./filmCurves.js";
 import { VERSE_CARD_SEC, END_CARD_SEC, MAX_FILM_SEC } from "./plan.js";
@@ -185,12 +185,63 @@ describe("cartoon render data", () => {
     assert.ok(!/[;,:]…?$/.test(cutComma), cutComma);
   });
 
-  test("a film over 40 s does not fit", () => {
-    const p = filmed({ durations: [12, 12, 12, 12] });
+  test("a film whose speech alone runs over 40 s does not fit", () => {
+    const talking = [0, 1, 2, 3].map(() => [{ from: 0.2, to: 11.8 }]);
+    const p = filmed({ durations: [12, 12, 12, 12], windows: talking });
     const tight = { ...p, shots: p.shots.map((s) => ({ ...s, seconds: 12 })) };
     const tl = filmTimeline(tight);
     assert.equal(tl.fits, false);
     assert.ok(tl.total > MAX_FILM_SEC);
+  });
+
+  test("a clip whose speech runs past its plan + 0.5 s plays to the end of its last word", () => {
+    const shot = { seconds: 4, clip: { status: "done", seconds: 4, durationSec: 5.6, windows: [{ from: 0.3, to: 2 }, { from: 2.4, to: 4.91 }] } };
+    assert.ok(near(playedSec(shot), 148 / 30), String(playedSec(shot)));
+    const quiet = { seconds: 4, clip: { status: "done", seconds: 4, durationSec: 5.6, windows: [{ from: 0.3, to: 2 }] } };
+    assert.ok(near(playedSec(quiet), 4.5), "a silent tail is still cut at plan + 0.5 s");
+  });
+
+  /** Eight-ish seconds a shot, planned at 39.5 s with the cards; every clip came back long. */
+  function nearLimit() {
+    const p = filmed({
+      durations: [8.2, 8.2, 9.2, 9.2],
+      windows: [[{ from: 0.3, to: 6 }], [{ from: 0.4, to: 8.15 }], [], [{ from: 0.2, to: 9.1 }]],
+    });
+    return { ...p, shots: p.shots.map((s, i) => ({ ...s, seconds: [8, 8, 9, 9][i], clip: { ...s.clip, seconds: [8, 8, 9, 9][i] } })) };
+  }
+
+  test("a film planned to fit but long once measured is trimmed to 40 s, never into a word", () => {
+    const p = nearLimit();
+    const untrimmed = VERSE_CARD_SEC + END_CARD_SEC + p.shots.reduce((a, s) => a + playedSec(s), 0);
+    assert.ok(untrimmed > MAX_FILM_SEC, `the measured clips run ${untrimmed} s`);
+    const tl = filmTimeline(p);
+    assert.equal(tl.fits, true);
+    assert.ok(tl.total <= MAX_FILM_SEC);
+    tl.shots.forEach((placed, i) => {
+      const lastWord = Math.max(0, ...p.shots[i].clip.windows.map((w) => w.to));
+      assert.ok(placed.len >= lastWord, `${placed.id} keeps its last word (${placed.len} s ≥ ${lastWord} s)`);
+      assert.ok(placed.len >= p.shots[i].seconds, `${placed.id} keeps its planned length`);
+    });
+    // Longest overhang first: the clip furthest past its floor gives up the most.
+    assert.ok(tl.shots[1].len >= 8.15 && tl.shots[1].len <= 8.2 + 1e-9);
+    assert.ok(tl.shots[0].len < 8.2 && tl.shots[2].len < 9.2, "the long silent tails gave up frames");
+    const fitted = fitClipFrames(p);
+    assert.equal(fitted.reduce((a, f) => a + f, 0), 1200 - 75 - 90, "trimmed exactly to the limit");
+  });
+
+  test("when the plans themselves run long, tails are trimmed below the plan but never into a word", () => {
+    const p = filmed({ durations: [10, 10, 10, 10], windows: [[{ from: 0.2, to: 5 }], [{ from: 0.2, to: 6 }], [], [{ from: 0.2, to: 7 }]] });
+    const long = { ...p, shots: p.shots.map((s) => ({ ...s, seconds: 10, clip: { ...s.clip, seconds: 10 } })) };
+    const tl = filmTimeline(long);
+    assert.equal(tl.fits, true);
+    assert.ok(near(tl.total, MAX_FILM_SEC, 1e-9));
+    assert.ok(tl.shots[0].len >= 5 && tl.shots[1].len >= 6 && tl.shots[3].len >= 7);
+    assert.ok(tl.shots[2].len >= 1, "a silent shot keeps at least a second");
+    const data = buildCartoonRenderData(long, assets(long));
+    for (const caption of data.captions) {
+      const placed = data.shots.find((s) => s.id === caption.shotId);
+      assert.ok(caption.words.every((w) => w.end <= placed.to + 1e-6), "every caption word is inside its clip");
+    }
   });
 
   test("the end card falls back to the title when it has no text", () => {
