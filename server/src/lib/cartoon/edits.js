@@ -1,7 +1,7 @@
-import { cartoonFromScript } from "./model.js";
+import { cartoonFromScript, isReservedName } from "./model.js";
 import { parseCartoonScript } from "./parse.js";
 import { checkFilm, MAX_FILM_SEC, MAX_SHOTS } from "./plan.js";
-import { styleId } from "./styles.js";
+import { styleId, isStyleName } from "./styles.js";
 import { isBedRef } from "../sceneScript/music.js";
 
 /**
@@ -27,7 +27,6 @@ export const MAX_VOICE_CHARS = 200;
 export const MAX_NOTE_CHARS = 300;
 export const MAX_END_CARD_CHARS = 200;
 
-const UNPLAIN_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 const FIRST_FRAMES = new Set(["fresh", "chain"]);
 
 const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : undefined);
@@ -35,7 +34,7 @@ const isObject = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v)
 
 /** A cast name that is safe to use as an object key. */
 export function isPlainName(name) {
-  return typeof name === "string" && name !== "" && !UNPLAIN_NAMES.has(name);
+  return typeof name === "string" && name !== "" && !isReservedName(name);
 }
 
 /** A cast member by own property only, never through the prototype chain. */
@@ -102,8 +101,9 @@ function withNewLook(member, look) {
   return { ...rest, look, portrait: null, approved: false, shelfId: null };
 }
 
+/** A style that names no real style (by id, label or short name) changes nothing. */
 function applyStyle(project, style) {
-  if (typeof style !== "string") return project;
+  if (!isStyleName(style)) return project;
   const id = styleId(style);
   if (id === project.meta?.style) return project;
   const anyPortrait = Object.values(project.cast || {}).some((m) => m?.portrait);

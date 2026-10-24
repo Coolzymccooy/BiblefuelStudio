@@ -24,16 +24,43 @@ const MAX_SEED = 2147483647;
 const BED_MOOD = "gentle warm hopeful";
 const CLIP_RESOLUTION = "720p";
 
-/** Cast keyed by name: the Cast list first, then any speaker the list left out (with an empty look). */
-function buildCast(parsed) {
-  const cast = {};
-  for (const member of parsed.cast) cast[member.name] = { ...CAST_DEFAULTS, ...member };
+/** Names that would reach Object.prototype as object keys; never used as a character name. */
+export const RESERVED_NAMES = Object.freeze(["__proto__", "constructor", "prototype"]);
+export const isReservedName = (name) => RESERVED_NAMES.includes(name);
+const reservedWarning = (name) => `"${name}" can't be used as a character name. Rename the character.`;
+
+/**
+ * Cast keyed by name: the Cast list first, then any speaker the list left out
+ * (with an empty look). Built in a Map and looked up by own key only, so a
+ * name such as "toString" is an ordinary character. A reserved name is left
+ * out of the cast with a warning (its lines stay in the shots, where the
+ * router refuses them).
+ */
+function buildCast(parsed, warnings) {
+  const cast = new Map();
+  // A name listed twice in Cast keeps its later entry; a speaker never replaces a listed member.
+  const add = (name, member, { replace = false } = {}) => {
+    if (cast.has(name) && !replace) return;
+    if (isReservedName(name)) {
+      const warning = reservedWarning(name);
+      if (!warnings.includes(warning)) warnings.push(warning);
+      return;
+    }
+    cast.set(name, member);
+  };
+  for (const member of parsed.cast) add(member.name, { ...CAST_DEFAULTS, ...member }, { replace: true });
   for (const scene of parsed.scenes) {
     for (const beat of scene.beats) {
-      if (beat.kind === "line" && !cast[beat.speaker]) cast[beat.speaker] = { ...CAST_DEFAULTS, name: beat.speaker };
+      if (beat.kind === "line") add(beat.speaker, { ...CAST_DEFAULTS, name: beat.speaker });
     }
   }
-  return cast;
+  // fromEntries defines own properties, so no name can set the prototype.
+  return Object.fromEntries(cast);
+}
+
+/** Speakers of the project's shots whose names can't be used: the film can't be made until they are renamed. */
+export function reservedSpeakers(project) {
+  return [...new Set((project?.shots || []).map((s) => s.speaker).filter(isReservedName))];
 }
 
 /** Parses a script and plans its shots; returns the stored project plus the length `check` and `warnings`. */
@@ -41,11 +68,13 @@ export function cartoonFromScript(markdown, { now = new Date() } = {}) {
   const parsed = parseCartoonScript(markdown);
   const shots = planShots(parsed);
   const scenes = parsed.scenes.map(({ id, place, note }) => ({ id, place, note }));
+  const warnings = [...parsed.warnings];
+  const cast = buildCast(parsed, warnings);
   return {
     mode: "cartoon",
     meta: { title: parsed.title, verse: { reference: parsed.verse, text: "" }, aspect: "portrait", style: styleId(parsed.style) },
-    source: { markdown: typeof markdown === "string" ? markdown : "", ignored: parsed.ignored, warnings: parsed.warnings, parsedAt: now.toISOString() },
-    cast: buildCast(parsed),
+    source: { markdown: typeof markdown === "string" ? markdown : "", ignored: parsed.ignored, warnings, parsedAt: now.toISOString() },
+    cast,
     scenes,
     shots: shots.map((shot) => ({ ...shot, clip: null })),
     shotListApproved: false,
@@ -56,7 +85,7 @@ export function cartoonFromScript(markdown, { now = new Date() } = {}) {
     spentUsd: 0,
     render: { status: "idle" },
     check: checkFilm(shots, scenes),
-    warnings: parsed.warnings,
+    warnings,
   };
 }
 

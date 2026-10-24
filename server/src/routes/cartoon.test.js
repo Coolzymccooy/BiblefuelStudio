@@ -11,6 +11,7 @@ import { createProject, readProject, updateProject } from "../lib/cartoon/store.
 import { cartoonFromScript, estimateFilm } from "../lib/cartoon/model.js";
 import { isFilming } from "../lib/cartoon/filmStage.js";
 import { EXAMPLES } from "../lib/cartoon/examples.js";
+import { ledgerSummary } from "../lib/videoGen/spend.js";
 
 const SCRIPT = `# The Lost Lamb
 Verse: Luke 15:4
@@ -112,6 +113,12 @@ describe("/api/cartoon", () => {
   });
 
   const create = (markdown = SCRIPT) => request(app).post("/api/cartoon").send({ markdown });
+
+  /** Set the monthly cap to what is already spent or reserved plus `extraUsd`. */
+  function capAbove(extraUsd) {
+    const month = ledgerSummary(path.join(root, "ledger"));
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = String(month.spentUsd + month.reservedUsd + extraUsd);
+  }
 
   async function makePortraits(id, only) {
     const r = await request(app).post(`/api/cartoon/${id}/portraits`).send(only ? { only } : {});
@@ -236,13 +243,79 @@ describe("/api/cartoon", () => {
     const whole = estimateFilm(project).usd;
     const one = estimateFilm(project, ["sh1"]).usd;
     // One shot fits under the cap, but the whole film does not: nothing is ordered.
-    process.env.VIDEO_GEN_MONTHLY_CAP_USD = String((one + whole) / 2);
+    capAbove((one + whole) / 2);
     const r = await request(app).post(`/api/cartoon/${id}/film`).send({ only: ["sh1"], confirmOverBenchmark: true });
     assert.equal(r.status, 409);
     assert.equal(r.body.code, "BUDGET");
     assert.match(r.body.error, /AI video spend/);
     assert.equal(isFilming(id), false);
     assert.ok(readProject(ctx().dataDir, id).shots.every((s) => s.clip === null));
+  });
+
+  test("a paid re-make of a done shot counts toward the cap", async () => {
+    const id = await readyCartoon();
+    const first = await request(app).post(`/api/cartoon/${id}/film`).send({ confirmOverBenchmark: true });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    await until(() => isFilming(id));
+    const project = readProject(ctx().dataDir, id);
+    assert.ok(project.shots.every((s) => s.clip?.status === "done"));
+    // Nothing is left unmade, so only the re-make itself can pass the cap.
+    capAbove(estimateFilm(project, ["sh1"]).usd / 2);
+    const r = await request(app).post(`/api/cartoon/${id}/film`).send({ only: ["sh1"], confirmOverBenchmark: true });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, "BUDGET");
+    assert.equal(isFilming(id), false);
+    assert.equal(readProject(ctx().dataDir, id).shots[0].clip.status, "done");
+  });
+
+  test("the film re-checks the cast even when the shot list says approved", async () => {
+    const id = (await create()).body.project.id;
+    updateProject(ctx().dataDir, id, (p) => ({ ...p, shotListApproved: true }));
+    const r = await request(app).post(`/api/cartoon/${id}/film`).send({ confirmOverBenchmark: true });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, "CAST_NOT_READY");
+    assert.deepEqual(r.body.waiting, ["Eli", "Pip"]);
+  });
+
+  test("a style that names no style changes nothing, and /write refuses it", async () => {
+    const id = await readyCartoon();
+    for (const style of ["constructor", "__proto__", "garbage"]) {
+      const r = await request(app).patch(`/api/cartoon/${id}`).send({ style });
+      assert.equal(r.status, 200, style);
+      assert.equal(r.body.project.meta.style, "family3d", style);
+      assert.ok(Object.values(r.body.project.cast).every((m) => m.approved === true), style);
+      assert.equal(r.body.project.shotListApproved, true, style);
+    }
+    const bad = await request(app).post("/api/cartoon/write").send({ theme: "kindness", style: "constructor" });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.code, "BAD_STYLE");
+  });
+
+  test("a speaker with a reserved name is refused, never dropped", async () => {
+    const r = await create(SCRIPT.replace('Pip: "I\'m stuck, Eli!"', 'constructor: "I\'m stuck, Eli!"'));
+    assert.equal(r.status, 400);
+    assert.equal(r.body.code, "BAD_NAME");
+    assert.match(r.body.error, /constructor/);
+  });
+
+  test("a script edit is refused when a run starts during the verse lookup", async () => {
+    const id = (await create()).body.project.id;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    lookupImpl = async (ref) => { await gate; return { ok: true, canonical: ref, verses: [{ text: VERSE }] }; };
+    const pending = request(app).patch(`/api/cartoon/${id}`).send({ markdown: SCRIPT.replace("Luke 15:4", "Luke 15:5") }).then((r) => r);
+    await new Promise((r) => setTimeout(r, 30));
+    let imageGate;
+    const imageHeld = new Promise((r) => { imageGate = r; });
+    imageImpl = async (args) => { await imageHeld; return defaultImage(args); };
+    assert.equal((await request(app).post(`/api/cartoon/${id}/portraits`).send({ only: ["Eli"] })).status, 200);
+    release();
+    const r = await pending;
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, "RUNNING");
+    assert.equal(readProject(ctx().dataDir, id).meta.verse.reference, "Luke 15:4");
+    imageGate();
+    await until(() => isMakingPortraits(id));
   });
 
   test("over the benchmark needs confirmation", async () => {

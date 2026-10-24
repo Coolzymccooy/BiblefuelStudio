@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cartoonFromScript, estimateFilm, CAST_DEFAULTS, IMAGE_USD } from "./model.js";
+import { cartoonFromScript, estimateFilm, reservedSpeakers, CAST_DEFAULTS, IMAGE_USD } from "./model.js";
 import { STYLES, DEFAULT_STYLE, styleId } from "./styles.js";
 import { estimateTokens, usdForTokens } from "../videoGen/spend.js";
 import { SEEDANCE_MODELS } from "../videoGen/providers/seedance.js";
@@ -110,4 +110,34 @@ test("styles: ids, labels and loose names map to an id", () => {
   assert.equal(styleId(null), "family3d");
   assert.equal(styleId(undefined), "family3d");
   for (const s of Object.values(STYLES)) assert.ok(!/pixar/i.test(`${s.label} ${s.prompt}`));
+});
+
+test("cast names that are Object.prototype keys never touch the prototype", () => {
+  const script = [
+    "# Odd Names",
+    "Cast:",
+    "- toString: a sly red fox. Voice: smooth.",
+    "- __proto__: a grey wolf. Voice: low.",
+    "Scene: A wood, wide",
+    "toString: \"Hello there.\"",
+    "valueOf: \"Who goes there?\"",
+    "constructor: \"I build things.\"",
+  ].join("\n");
+  const out = cartoonFromScript(script);
+  assert.equal(Object.getPrototypeOf(out.cast), Object.prototype);
+  assert.deepEqual(Object.keys(out.cast), ["toString", "valueOf"]);
+  assert.equal(out.cast.toString.look, "a sly red fox");
+  assert.equal(out.cast.valueOf.look, "");
+  assert.ok(!Object.hasOwn(out.cast, "__proto__"));
+  assert.ok(!Object.hasOwn(out.cast, "constructor"));
+  assert.ok(out.warnings.includes("\"__proto__\" can't be used as a character name. Rename the character."));
+  assert.ok(out.warnings.includes("\"constructor\" can't be used as a character name. Rename the character."));
+  assert.deepEqual(out.shots.map((s) => s.speaker), ["toString", "valueOf", "constructor"], "no line is dropped");
+  assert.deepEqual(reservedSpeakers(out), ["constructor"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(out.cast)), out.cast);
+});
+
+test("a name listed twice in Cast keeps its later entry", () => {
+  const out = cartoonFromScript("Cast:\n- Eli: first look.\n- Eli: second look.\nScene: Hill\nEli: \"Hi.\"");
+  assert.equal(out.cast.Eli.look, "second look");
 });

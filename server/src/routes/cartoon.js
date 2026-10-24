@@ -8,9 +8,9 @@ import { lookupVerses } from "../lib/bible/scriptureApi.js";
 import {
   createProject, readProject, updateProject, listProjects, deleteProject, isProjectId,
 } from "../lib/cartoon/store.js";
-import { estimateFilm } from "../lib/cartoon/model.js";
+import { estimateFilm, reservedSpeakers } from "../lib/cartoon/model.js";
 import { MAX_SCRIPT_CHARS } from "../lib/cartoon/parse.js";
-import { STYLES, DEFAULT_STYLE } from "../lib/cartoon/styles.js";
+import { STYLES, DEFAULT_STYLE, isStyleName } from "../lib/cartoon/styles.js";
 import { EXAMPLES, PLACEHOLDER } from "../lib/cartoon/examples.js";
 import { writeCartoonScript } from "../lib/cartoon/writer.js";
 import { makePortrait } from "../lib/cartoon/images.js";
@@ -136,6 +136,16 @@ const onlyOf = (body) => (Array.isArray(body?.only)
   ? body.only.filter((x) => typeof x === "string" && x.length <= 100).slice(0, MAX_ONLY)
   : undefined);
 
+/**
+ * What the cap check counts: every shot without a done clip, plus the done
+ * shots `only` names (paid re-makes). Each shot is counted once.
+ */
+function budgetUsd(project, only) {
+  const wanted = new Set(only || []);
+  const remakes = project.shots.filter((s) => wanted.has(s.id) && s.clip?.status === "done").map((s) => s.id);
+  return estimateFilm(project).usd + (remakes.length ? estimateFilm(project, remakes).usd : 0);
+}
+
 /** Mark the named portraits as being made, and un-approve the shot list: the cast is changing. */
 function markMaking(project, names) {
   const cast = { ...project.cast };
@@ -187,6 +197,8 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
   const filmableDraft = (res, md) => {
     const draft = scriptDraft(md);
     if (!draft.fresh.shots.length) { fail(res, 400, "NO_SHOTS", "The script has no lines to film yet. Add a Scene: and a spoken line."); return null; }
+    const reserved = reservedSpeakers(draft.fresh);
+    if (reserved.length) { fail(res, 400, "BAD_NAME", `"${reserved[0]}" can't be used as a character name. Rename the character.`); return null; }
     if (!fits(draft.fresh.check)) { fail(res, 400, "TOO_LONG_FILM", tooLongSentence(draft.fresh.check), { check: draft.fresh.check }); return null; }
     return draft;
   };
@@ -233,6 +245,7 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
   router.post("/write", handle(async (req, res) => {
     const body = req.body || {};
     const ask = { verse: str(body.verse, 80) ?? "", theme: str(body.theme, 400) ?? "", cast: str(body.cast, 1500) ?? "", style: str(body.style, 40) ?? "" };
+    if (ask.style !== "" && !isStyleName(ask.style)) return fail(res, 400, "BAD_STYLE", "Choose one of the cartoon styles.");
     let timer;
     try {
       const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve({ ok: false, code: "TIMEOUT" }), writeTimeoutMs); });
@@ -295,12 +308,15 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
       if (reference !== project.meta?.verse?.reference) verseText = await verseTextFor(reference, lookup);
     }
 
-    let locked = false;
+    // Checked again inside the write: a film or portrait run may have started while the verse was looked up.
+    let refused = null;
     const saved = updateProject(req.ctx.dataDir, project.id, (current) => {
-      if (draft && isLocked(current)) { locked = true; return null; }
+      if (draft && (isFilming(current.id) || portraitRuns.has(current.id))) { refused = "RUNNING"; return null; }
+      if (draft && isLocked(current)) { refused = "LOCKED"; return null; }
       return applyEdit(draft ? rescript(current, draft, { verseText }) : current, body);
     });
-    if (locked) return fail(res, 409, "LOCKED", "The lines are locked once a clip has been ordered. Start over to change them; the clips stay in the library.");
+    if (refused === "RUNNING") return fail(res, 409, "RUNNING", "Wait for the film and portraits to finish before changing the script.");
+    if (refused === "LOCKED") return fail(res, 409, "LOCKED", "The lines are locked once a clip has been ordered. Start over to change them; the clips stay in the library.");
     if (!saved) return fail(res, 404, "NOT_FOUND", NOT_FOUND);
     return res.json({ ok: true, project: view(saved) });
   }));
@@ -329,9 +345,13 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
       names = Object.entries(project.cast || {}).filter(([, m]) => m?.portrait?.status !== "done").map(([name]) => name);
     }
     if (!names.length) return fail(res, 400, "NOTHING_TO_MAKE", "Every character already has a portrait.");
-    const marked = updateProject(req.ctx.dataDir, project.id, (p) => markMaking(p, names.filter((n) => ownMember(p, n))));
+    let present = [];
+    const marked = updateProject(req.ctx.dataDir, project.id, (p) => {
+      present = names.filter((n) => ownMember(p, n));
+      return present.length ? markMaking(p, present) : null;
+    });
     if (!marked) return fail(res, 404, "NOT_FOUND", NOT_FOUND);
-    runPortraits(req.ctx, project.id, names, deps.image);
+    runPortraits(req.ctx, project.id, present, deps.image);
     return res.json({ ok: true, project: view(marked) });
   }));
 
@@ -400,13 +420,19 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     const project = load(req, res);
     if (!project) return undefined;
     if (!project.shotListApproved) return fail(res, 409, "SHOTS_NOT_APPROVED", "Approve the shot list before ordering the film.");
+    // A backstop: an approved shot list should mean an approved cast, but a clip is paid for, so check again.
+    const waiting = unreadyCast(project);
+    if (waiting.length) {
+      return fail(res, 409, "CAST_NOT_READY", `Approve the portrait${waiting.length > 1 ? "s" : ""} of ${listNames(waiting)} first.`, { waiting });
+    }
     if (isRendering(project.id)) return fail(res, 409, "RENDERING", "Wait for the render to finish, or stop it, first.");
     if (isFilming(project.id)) return fail(res, 409, "RUNNING", "The film is already being made.");
     const only = onlyOf(req.body);
     const est = estimateFilm(project, only);
     if (!est.clips) return fail(res, 400, "NOTHING_TO_ORDER", "Every shot already has a clip.");
-    // The whole remaining film must fit the monthly cap, so a film is never left half-made (spec section 7.6).
-    const budget = wouldExceedCap(ledgerDir, estimateFilm(project).usd);
+    // The whole remaining film, plus any paid re-make of a done shot, must fit the monthly cap,
+    // so a film is never left half-made (spec section 7.6).
+    const budget = wouldExceedCap(ledgerDir, budgetUsd(project, only));
     if (budget.exceeded) return fail(res, 409, "BUDGET", budget.error);
     if (est.overBenchmark && req.body?.confirmOverBenchmark !== true) {
       return fail(res, 409, "OVER_BENCHMARK", `This cartoon would cost about $${est.totalUsd.toFixed(2)}, above the $${est.benchmarkUsd} benchmark. Confirm to go ahead.`, { estimate: est });

@@ -27,13 +27,25 @@ export const DEFAULT_STYLE = "family3d";
 // Short names an admin is likely to type that are not an id or a full label.
 const ALIASES = Object.freeze({ "3d": "family3d", "3d family film": "family3d", clay: "clay" });
 
-/** Maps an id, a label or a short name (any case) to a style id; anything else gets the default. */
-export function styleId(text) {
+/**
+ * The style id an id, label or short name (any case) names, or null. Own keys
+ * only: "constructor" or "__proto__" must never reach Object.prototype.
+ */
+function namedStyle(text) {
   const key = typeof text === "string" ? text.trim().toLowerCase() : "";
-  if (key === "") return DEFAULT_STYLE;
-  const byId = Object.keys(STYLES).find((id) => id === key);
-  if (byId) return byId;
+  if (key === "") return null;
+  if (Object.hasOwn(STYLES, key)) return key;
   const byLabel = Object.values(STYLES).find((style) => style.label.toLowerCase() === key);
   if (byLabel) return byLabel.id;
-  return ALIASES[key] || DEFAULT_STYLE;
+  return Object.hasOwn(ALIASES, key) ? ALIASES[key] : null;
+}
+
+/** Whether the text names a real style (by id, label or short name). */
+export function isStyleName(text) {
+  return namedStyle(text) !== null;
+}
+
+/** Maps an id, a label or a short name (any case) to a style id; anything else gets the default. */
+export function styleId(text) {
+  return namedStyle(text) ?? DEFAULT_STYLE;
 }
