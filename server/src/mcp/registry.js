@@ -6,6 +6,7 @@ import { chargeAll } from "../lib/agentKeys/caps.js";
 import { logActivity } from "../lib/agentKeys/activity.js";
 import { ApiError } from "./api.js";
 import { fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "./toolResult.js";
+import { lacksPublishConsent } from "./autoPublish.js";
 
 export { PUBLISH_NOT_ALLOWED_MESSAGE };
 
@@ -122,7 +123,7 @@ function chargeCapFor(ctx, charged) {
 }
 
 async function runTool(def, ctx, input, charged) {
-  if (def.publish && !ctx.agentKey?.publishAllowed) {
+  if (def.publish && lacksPublishConsent(ctx)) {
     return fail("PUBLISH_NOT_ALLOWED", PUBLISH_NOT_ALLOWED_MESSAGE);
   }
   try {

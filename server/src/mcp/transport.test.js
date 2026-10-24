@@ -391,3 +391,17 @@ test("a multi-bucket charge that fits spends every bucket and logs it", async ()
   const [entry] = activity.readActivity({ keyId: key.id });
   assert.deepEqual(entry.caps, { renders: 1, publishes: 1 });
 });
+
+test("publish consent is strict: a stored publishAllowed that is truthy but not true is refused", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { key, plain } = newKey("u_other", "truthy-consent");
+  const file = path.join(testApp.dataDir, "agent-keys.json");
+  const stored = JSON.parse(fs.readFileSync(file, "utf-8"));
+  const keys = stored.keys.map((k) => (k.id === key.id ? { ...k, publishAllowed: "yes" } : k));
+  fs.writeFileSync(file, JSON.stringify({ keys }, null, 2));
+  const client = await connect(plain);
+  const refused = await client.callTool({ name: "publish_echo", arguments: { text: "go" } });
+  assert.equal(refused.structuredContent.error, "PUBLISH_NOT_ALLOWED");
+  store.revokeKey("u_other", key.id);
+});
