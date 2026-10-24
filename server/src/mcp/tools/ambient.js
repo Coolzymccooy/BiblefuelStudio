@@ -311,10 +311,15 @@ const ambientCancel = {
   title: "Stop an ambient session",
   description:
     "Stop whatever the session is doing (pictures being made or a render; verses being voiced finish first). The session then reads cancelled (status error, \"Cancelled.\"); run the step or ambient_render again to carry on. " +
-    "Also clears a session a server restart left marked as busy. Instant. " + FREE_NOTE,
+    "Also clears a session a server restart left marked as busy. NOTHING_RUNNING when nothing is running; a finished session is left as it is. Instant. " + FREE_NOTE,
   inputSchema: { id: AMBIENT_ID.describe("The session id.") },
   routes: ["/api/ambient"],
   async handler(ctx, { id }) {
+    const { project } = await readSession(ctx, id);
+    // Cancelling marks the session failed, so an idle or finished one is left alone.
+    if (!AMBIENT_BUSY.includes(project.status)) {
+      return fail("NOTHING_RUNNING", "Nothing is running on this session (no voicing, pictures or render).");
+    }
     await ctx.api.call("POST", `${projectPath(id)}/cancel`);
     return ok({ kind: "ambient", id, cancelled: true });
   },

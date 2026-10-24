@@ -332,12 +332,24 @@ test("ambient_render without plan quota is refused before any charge", async () 
   assert.equal(chargeCalls.length, 0);
 });
 
-test("ambient_cancel stops the session for free", async () => {
-  const { ctx, calls, chargeCalls } = ctxWith({ "POST /api/ambient/a1/cancel": { ok: true, project: SESSION({ status: "error", error: "Cancelled." }) } });
+test("ambient_cancel stops a busy session for free", async () => {
+  const { ctx, calls, chargeCalls } = ctxWith(
+    { "POST /api/ambient/a1/cancel": { ok: true, project: SESSION({ status: "error", error: "Cancelled." }) } },
+    { session: SESSION({ status: "rendering" }) },
+  );
   const result = await byName.ambient_cancel.handler(ctx, { id: "a1" });
   assert.deepEqual(result.structuredContent, { kind: "ambient", id: "a1", cancelled: true });
-  assert.deepEqual(routesCalled(calls), ["POST /api/ambient/a1/cancel"]);
+  assert.deepEqual(routesCalled(calls), ["GET /api/ambient/a1", "POST /api/ambient/a1/cancel"]);
   assert.equal(chargeCalls.length, 0);
+});
+
+test("ambient_cancel leaves an idle or finished session alone (cancelling marks it failed)", async () => {
+  for (const status of ["draft", "ready_to_render", "done", "error"]) {
+    const { ctx, calls } = ctxWith({}, { session: SESSION({ status }) });
+    const result = await byName.ambient_cancel.handler(ctx, { id: "a1" });
+    assert.equal(result.structuredContent.error, "NOTHING_RUNNING", status);
+    assert.deepEqual(routesCalled(calls), ["GET /api/ambient/a1"]);
+  }
 });
 
 // ---- through the real MCP client ----
@@ -367,10 +379,11 @@ test("a real session is created, edited, read, listed, cancelled and deleted", a
   assert.deepEqual(bed.structuredContent.project.bed.tracks, ["library:peaceful-worship"]);
   const listed = await client.callTool({ name: "ambient_project", arguments: { action: "list" } });
   assert.ok(listed.structuredContent.projects.some((p) => p.projectId === id));
-  const cancelled = await client.callTool({ name: "ambient_cancel", arguments: { id } });
-  assert.ok(!cancelled.isError, JSON.stringify(cancelled.structuredContent));
+  const idle = await client.callTool({ name: "ambient_cancel", arguments: { id } });
+  assert.equal(idle.structuredContent.error, "NOTHING_RUNNING");
   const waited = await client.callTool({ name: "jobs_wait", arguments: { kind: "ambient", id, timeoutSec: 1 } });
-  assert.equal(waited.structuredContent.status, "cancelled");
+  assert.equal(waited.structuredContent.status, "done");
+  assert.equal(waited.structuredContent.phase, "draft");
   const gone = await client.callTool({ name: "ambient_project", arguments: { action: "delete", id } });
   assert.deepEqual(gone.structuredContent, { id, deleted: true });
 });
@@ -392,4 +405,28 @@ test("a real bed change naming another user's file is refused before the app see
   const result = await client.callTool({ name: "ambient_update", arguments: { id, section: "bed", patch: { filePath: path.join(testApp.dataDir, "users.json") } } });
   assert.equal(result.isError, true);
   assert.equal(result.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+});
+
+/** The stored file of a session, wherever the test app keeps this user's data. */
+function sessionFile(id) {
+  const found = fs.readdirSync(testApp.dataDir, { recursive: true }).find((f) => f.split(/[\\/]/).slice(-2).join("/") === `ambient/${id}.json`);
+  assert.ok(found, `no stored file for ${id}`);
+  return path.join(testApp.dataDir, found);
+}
+
+test("a real render a restart stopped reads failed, and ambient_cancel clears it", async () => {
+  const made = await client.callTool({ name: "ambient_project", arguments: { action: "create", title: "Restarted" } });
+  const id = made.structuredContent.project.id;
+  const file = sessionFile(id);
+  const stored = JSON.parse(fs.readFileSync(file, "utf8"));
+  fs.writeFileSync(file, JSON.stringify({ ...stored, status: "rendering", render: { jobId: "gone", status: "running", percent: 40, phase: "rendering" }, updatedAt: Date.now() - 3600_000 }));
+  const stopped = await client.callTool({ name: "jobs_wait", arguments: { kind: "ambient", id, timeoutSec: 1 } });
+  assert.equal(stopped.structuredContent.status, "failed");
+  assert.match(stopped.structuredContent.error, /server restarted/);
+  const busy = await client.callTool({ name: "ambient_step", arguments: { id, step: "images" } });
+  assert.equal(busy.structuredContent.error, "SESSION_BUSY");
+  const cancelled = await client.callTool({ name: "ambient_cancel", arguments: { id } });
+  assert.ok(!cancelled.isError, JSON.stringify(cancelled.structuredContent));
+  const waited = await client.callTool({ name: "jobs_wait", arguments: { kind: "ambient", id, timeoutSec: 1 } });
+  assert.equal(waited.structuredContent.status, "cancelled");
 });
