@@ -315,6 +315,33 @@ describe("submitSeedanceTask cartoon options", () => {
     }
   });
 
+  test("an unreadable first frame is BAD_FIRST_FRAME with no POST when the fallback is off", async () => {
+    const gif = path.join(tmp, "start.gif");
+    fs.writeFileSync(gif, PNG);
+    for (const bad of [path.join(tmp, "missing.png"), gif]) {
+      const fetchImpl = fakeFetch([jsonRes(200, { id: "never" })]);
+      const r = await submitSeedanceTask({ prompt: "x", firstFramePath: bad, allowTextFallback: false, fetchImpl });
+      assert.deepEqual(r, {
+        ok: false, code: "BAD_FIRST_FRAME",
+        error: "The starting picture for this shot could not be read. Make the shot before it again.",
+      });
+      assert.equal(fetchImpl.calls.length, 0);
+    }
+  });
+
+  test("an unreadable first frame is still sent text-only when the fallback is on", async () => {
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-bf" })]);
+    const r = await submitSeedanceTask({ prompt: "x", firstFramePath: path.join(tmp, "missing.png"), fetchImpl });
+    assert.deepEqual(r, { ok: true, taskId: "cgt-bf", mode: "text" });
+    assert.equal(fetchImpl.calls[0].body.content.length, 1);
+  });
+
+  test("no first frame at all is fine with the fallback off", async () => {
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-nf" })]);
+    const r = await submitSeedanceTask({ prompt: "x", allowTextFallback: false, fetchImpl });
+    assert.deepEqual(r, { ok: true, taskId: "cgt-nf", mode: "text" });
+  });
+
   test("a reference picture refused as a real person returns PERSON_REFUSED when the fallback is off", async () => {
     const ref = path.join(tmp, "r.png");
     fs.writeFileSync(ref, PNG);

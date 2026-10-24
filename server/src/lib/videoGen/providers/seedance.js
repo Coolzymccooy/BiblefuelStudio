@@ -38,6 +38,9 @@ const MAX_SEED = 2147483647;
 const BAD_REFERENCE = Object.freeze({
   ok: false, code: "BAD_REFERENCE", error: "A character picture could not be read. Make the portrait again.",
 });
+const BAD_FIRST_FRAME = Object.freeze({
+  ok: false, code: "BAD_FIRST_FRAME", error: "The starting picture for this shot could not be read. Make the shot before it again.",
+});
 const PERSON_REFUSED = Object.freeze({
   ok: false, code: "PERSON_REFUSED", error: "BytePlus thinks this picture shows a real person. Make a new picture for this shot.",
 });
@@ -148,7 +151,9 @@ async function postTask(body, fetcher) {
  *   seed                 an integer 1..2147483647, else ignored
  *   allowTextFallback    false: a "real person" refusal of the first frame or
  *                        the references is PERSON_REFUSED after one POST,
- *                        instead of a text-only clip with a different face
+ *                        instead of a text-only clip with a different face;
+ *                        an unreadable firstFramePath is then BAD_FIRST_FRAME
+ *                        (no POST) rather than a quiet text-only request
  */
 export async function submitSeedanceTask({
   prompt, framePrompt = null, firstFramePath = null, aspect = "portrait", durationSec = 5,
@@ -171,6 +176,7 @@ export async function submitSeedanceTask({
     const refs = referenceItems(referenceImagePaths);
     if (refs === null) return { ...BAD_REFERENCE };
     const frame = firstFrameItem(firstFramePath);
+    if (!frame && firstFramePath && !allowTextFallback) return { ...BAD_FIRST_FRAME };
     const pictures = [...(frame ? [frame] : []), ...refs];
     if (pictures.length > 0) {
       const withPictures = [{ type: "text", text: frame ? frameText : text }, ...pictures];
