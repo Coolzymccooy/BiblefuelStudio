@@ -15,7 +15,7 @@ const TRANSCRIPT_LIST_LIMIT = 50;
 // voice name: letters, digits, - and _, no dots, slashes, colons or spaces.
 const CLONE_ALIAS = /^cb:[\w-]+$/;
 const VOICE_NAME = /^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*$/;
-const VOICE_ID_PATTERN = new RegExp(`${CLONE_ALIAS.source}|${VOICE_NAME.source}`);
+export const VOICE_ID_PATTERN = new RegExp(`${CLONE_ALIAS.source}|${VOICE_NAME.source}`);
 
 /** An error message when voiceId is not acceptable for this provider, else null. */
 function voiceIdProblem(provider, voiceId) {
