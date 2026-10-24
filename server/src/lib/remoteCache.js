@@ -9,6 +9,9 @@
 // across renders (zero re-downloads). Cache lives under OUTPUT_DIR/cache
 // to share the existing static `/outputs/...` mount and skip new routing.
 //
+// Every download is SSRF-vetted (downloadPublicUrl): a user-supplied URL
+// must never make the server fetch loopback, private or metadata addresses.
+//
 // Integrity matters: stream.pipeline resolves SUCCESSFULLY even when the
 // server closes the connection before sending Content-Length bytes, which
 // previously left truncated files in the cache that ffmpeg would happily
@@ -18,9 +21,9 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { pipeline } from "stream/promises";
-import fetch from "node-fetch";
 import { OUTPUT_DIR } from "./paths.js";
+import { downloadPublicUrl, isUrlGuardError } from "./safeDownload.js";
+import { MAX_INPUT_MB } from "./backgroundLimits.js";
 
 const CACHE_DIR = path.join(OUTPUT_DIR, "cache", "remote-bg");
 // A 22s portrait Pexels clip is typically 10–50 MB. Anything smaller than
@@ -28,6 +31,10 @@ const CACHE_DIR = path.join(OUTPUT_DIR, "cache", "remote-bg");
 // preflight redirect body, or an aborted stream — reject it.
 const MIN_USABLE_BYTES = 256 * 1024;
 const MAX_DOWNLOAD_ATTEMPTS = 3;
+// A 200 MB clip on a slow CDN needs minutes; downloadPublicUrl's 60 s default
+// would cut legitimate backgrounds off. A stalled body still dies after its
+// 30 s idle timeout.
+const DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
 
 function ensureCacheDir() {
   if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -43,61 +50,88 @@ function urlExtension(url) {
   return "mp4";
 }
 
+/** The cached copy when it exists and is big enough to be plausibly complete. */
+function reusableCacheFile(outFile, minBytes) {
+  if (!fs.existsSync(outFile)) return null;
+  const size = fs.statSync(outFile).size;
+  if (size >= minBytes) return outFile;
+  console.warn(`[remoteCache] discarding ${path.basename(outFile)} (${size}B < ${minBytes}B)`);
+  try { fs.unlinkSync(outFile); } catch { /* ignore */ }
+  return null;
+}
+
+/**
+ * One vetted download to `tmpFile`, checked against the declared size and the
+ * usable floor. `stream.pipeline` can resolve even when the source aborts
+ * mid-stream, so without the size check a truncated file would be cached and
+ * ffmpeg would crash mid-render with "Conversion failed!".
+ */
+async function downloadOnce(url, tmpFile, downloadOpts, minBytes) {
+  const { declaredBytes } = await downloadPublicUrl(url, tmpFile, downloadOpts);
+  const actualSize = fs.statSync(tmpFile).size;
+  if (declaredBytes > 0 && actualSize !== declaredBytes) {
+    throw new Error(`truncated: got ${actualSize}B expected ${declaredBytes}B`);
+  }
+  if (actualSize < minBytes) {
+    throw new Error(`too small: ${actualSize}B < ${minBytes}B`);
+  }
+}
+
+function downloadOptionsFrom(opts) {
+  return {
+    maxBytes: opts.maxBytes ?? MAX_INPUT_MB * 1024 * 1024,
+    timeoutMs: opts.timeoutMs ?? DOWNLOAD_TIMEOUT_MS,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+    ...(opts.lookup ? { lookup: opts.lookup } : {}),
+    ...(opts.unvettedHostsForTests ? { unvettedHostsForTests: opts.unvettedHostsForTests } : {}),
+  };
+}
+
 /**
  * Resolve a path to a local file. Local paths pass through unchanged.
  * HTTP(S) URLs are downloaded to the cache (or reused if already cached
  * AND large enough to be plausibly valid) and the local cache file path
  * is returned.
  *
+ * Downloads go through downloadPublicUrl: loopback, private and metadata
+ * hosts are refused, every redirect is re-vetted and the body is capped at
+ * `maxBytes`. A refusal (URL_SCHEME, URL_PRIVATE, URL_REDIRECTS,
+ * URL_TOO_LARGE) is thrown at once with its `.code`; it is never retried.
+ *
  * @param {string} pathOrUrl  Path or URL to materialize.
+ * @param {{
+ *   minBytes?: number, // smallest download accepted; default 256 KB (video clips)
+ *   maxBytes?: number, // default MAX_INPUT_MB
+ *   timeoutMs?: number,
+ *   fetchImpl?: Function, lookup?: Function, unvettedHostsForTests?: Iterable<string>,
+ * }} [opts] the last three are test seams.
  * @returns {Promise<string>} Local filesystem path that FFmpeg can read.
  */
-export async function ensureLocalPath(pathOrUrl) {
+export async function ensureLocalPath(pathOrUrl, opts = {}) {
   const value = String(pathOrUrl || "").trim();
   if (!value) return value;
   if (!/^https?:\/\//i.test(value)) return value;
 
+  const minBytes = opts.minBytes ?? MIN_USABLE_BYTES;
   ensureCacheDir();
   const hash = crypto.createHash("sha1").update(value).digest("hex").slice(0, 16);
-  const ext = urlExtension(value);
-  const outFile = path.join(CACHE_DIR, `${hash}.${ext}`);
+  const outFile = path.join(CACHE_DIR, `${hash}.${urlExtension(value)}`);
+  const cached = reusableCacheFile(outFile, minBytes);
+  if (cached) return cached;
 
-  // Already cached? Re-use only if large enough to be plausibly complete.
-  // Anything smaller than MIN_USABLE_BYTES is almost certainly a corrupt
-  // leftover from a partial download — delete it and re-fetch.
-  if (fs.existsSync(outFile)) {
-    const size = fs.statSync(outFile).size;
-    if (size >= MIN_USABLE_BYTES) return outFile;
-    console.warn(`[remoteCache] discarding ${path.basename(outFile)} (${size}B < ${MIN_USABLE_BYTES}B)`);
-    try { fs.unlinkSync(outFile); } catch { /* ignore */ }
-  }
-
-  // Download with retries. Verify the on-disk size matches Content-Length
-  // (when the server provides it) — `stream.pipeline` resolves even when
-  // the source aborts mid-stream, so without this check we'd silently
-  // cache truncated files and ffmpeg would crash mid-render with
-  // "Conversion failed!".
+  const downloadOpts = downloadOptionsFrom(opts);
+  const tmpFile = `${outFile}.part`;
   let lastErr = null;
   for (let attempt = 0; attempt < MAX_DOWNLOAD_ATTEMPTS; attempt++) {
-    const tmpFile = `${outFile}.part`;
     try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
     try {
-      const resp = await fetch(value);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${value}`);
-      const expectedSize = Number(resp.headers.get("content-length")) || 0;
-      await pipeline(resp.body, fs.createWriteStream(tmpFile));
-      const actualSize = fs.statSync(tmpFile).size;
-      if (expectedSize > 0 && actualSize !== expectedSize) {
-        throw new Error(`truncated: got ${actualSize}B expected ${expectedSize}B`);
-      }
-      if (actualSize < MIN_USABLE_BYTES) {
-        throw new Error(`too small: ${actualSize}B < ${MIN_USABLE_BYTES}B`);
-      }
+      await downloadOnce(value, tmpFile, downloadOpts, minBytes);
       fs.renameSync(tmpFile, outFile);
       return outFile;
     } catch (err) {
       lastErr = err;
       try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+      if (isUrlGuardError(err)) throw err;
       console.warn(`[remoteCache] attempt ${attempt + 1}/${MAX_DOWNLOAD_ATTEMPTS} failed for ${value}: ${err?.message || err}`);
     }
   }
