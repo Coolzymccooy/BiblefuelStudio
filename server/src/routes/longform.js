@@ -12,7 +12,7 @@ import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { createProject, readProject, writeProject, STORY_STATUS } from "../lib/story/projectStore.js";
 import { runStoryPipeline, isCancelled, clearCancelled } from "./story.js";
 import { markNarrationActive, clearNarrationActive, isNarrationActive } from "../lib/longform/narrationRegistry.js";
-import { confineToDir } from "../lib/confinePath.js";
+import { confineUserPath, UserPathError } from "../lib/userPathScope.js";
 import { quota } from "../middleware/quota.js";
 
 let _plan = planLongformScript;
@@ -114,10 +114,16 @@ router.post("/draft", renderQuota, async (req, res) => {
 
     let idea = String(req.body?.idea || "").trim();
     if (!idea && req.body?.audioPath) {
-      // Lexical only — rejects a path that merely names somewhere outside
-      // the caller's outputs before anything tries to read it.
-      const audioPath = confineToDir(req.ctx.outputDir, req.body.audioPath);
-      if (!audioPath) return res.status(400).json({ ok: false, error: "audioPath must point inside your outputs folder" });
+      // Checked by name first (nothing outside is touched), then by real
+      // path, so a link inside the caller's outputs cannot lead out (#112).
+      let audioPath;
+      try {
+        audioPath = confineUserPath(req.body.audioPath, req.ctx);
+      } catch (err) {
+        if (!(err instanceof UserPathError)) throw err;
+        const error = err.code === "FILE_NOT_FOUND" ? "audioPath not found" : "audioPath must point inside your outputs folder";
+        return res.status(400).json({ ok: false, error });
+      }
       const transcribed = await _transcribe(audioPath);
       idea = (transcribed?.words || []).map((w) => w.text).join(" ").trim();
       if (!idea) return res.status(400).json({ ok: false, error: "voice note transcription returned no words" });

@@ -120,19 +120,28 @@ describe("POST /api/transcribe — media-folder jail for agents", () => {
     assert.deepEqual(res.body.words, [{ text: "Amen", startMs: 0, endMs: 300 }]);
   });
 
-  test("a normal app session may still name a file outside the media folder", async (t) => {
+  test("a normal app session is held to its media folder too (#112)", async (t) => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "tx-jail-"));
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "tx-elsewhere-"));
     const audioPath = path.join(elsewhere, "fake.mp3");
     fs.writeFileSync(audioPath, Buffer.alloc(200, 0));
+    let called = false;
     t.after(() => {
       _resetTranscribeAudioImpl();
       fs.rmSync(outDir, { recursive: true, force: true });
       fs.rmSync(elsewhere, { recursive: true, force: true });
     });
-    _setTranscribeAudioImpl(async () => ({ words: [{ text: "Grace", startMs: 0, endMs: 400 }] }));
-    const res = await request(makeAgentApp(outDir, { sub: "u1", role: "user" })).post("/api/transcribe")
-      .send({ mediaPath: audioPath });
-    assert.equal(res.status, 200, JSON.stringify(res.body));
+    _setTranscribeAudioImpl(async () => { called = true; return { words: [{ text: "Grace", startMs: 0, endMs: 400 }] }; });
+    const app = makeAgentApp(outDir, { sub: "u1", role: "user" });
+    const existing = await request(app).post("/api/transcribe").send({ mediaPath: audioPath });
+    const missing = await request(app).post("/api/transcribe").send({ mediaPath: path.join(elsewhere, "nothing.mp3") });
+    assert.equal(existing.status, 400);
+    assert.deepEqual(existing.body, {
+      ok: false,
+      error: "PATH_OUTSIDE_MEDIA",
+      message: "mediaPath must be a file in your media folder",
+    });
+    assert.deepEqual(missing.body, existing.body, "an outside path answers the same whether or not it exists");
+    assert.equal(called, false);
   });
 });

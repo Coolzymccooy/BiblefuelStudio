@@ -65,16 +65,16 @@ describe('GET /api/timeline/peaks — guards', () => {
 
   test('refuses a path outside the output directory', async () => {
     const { status, body } = await getPeaks(`path=${encodeURIComponent(secretPath)}`);
-    assert.equal(status, 400);
+    assert.equal(status, 403);
     assert.equal(body.ok, false);
-    assert.match(body.error, /outside the output directory/i);
+    assert.equal(body.error, 'PATH_OUTSIDE_MEDIA');
   });
 
   test('refuses a traversal escape dressed as an output path', async () => {
     const escape = path.join(OUTPUT_DIR, '..', '..', 'package.json');
     const { status, body } = await getPeaks(`path=${encodeURIComponent(escape)}`);
-    assert.equal(status, 400);
-    assert.match(body.error, /outside the output directory/i);
+    assert.equal(status, 403);
+    assert.equal(body.error, 'PATH_OUTSIDE_MEDIA');
   });
 
   test('refuses a remote URL — there is nothing local to decode', async () => {
@@ -110,13 +110,13 @@ describe('GET /api/timeline/peaks — per-tenant output directories', () => {
     fs.writeFileSync(path.join(tenantDir, name), 'not really audio');
     currentCtx = { userId: 'tenant-1', outputDir: tenantDir };
 
-    // Not 400 ("outside the output directory") and not 404 ("asset not found"):
+    // Not 403 (PATH_OUTSIDE_MEDIA) and not 404 ("asset not found"):
     // the file IS found, so the request gets as far as decoding it, which fails
     // on a text file. Any of those two statuses would mean the tenant's own file
     // was invisible to the endpoint.
     const res = await getPeaks(`path=${encodeURIComponent('/outputs/' + name)}`);
     assert.notEqual(res.status, 404, 'the tenant own file must be found');
-    assert.notEqual(res.body.error, 'asset outside the output directory');
+    assert.notEqual(res.body.error, 'PATH_OUTSIDE_MEDIA');
 
     currentCtx = { userId: 'admin', outputDir: OUTPUT_DIR };
   });
@@ -127,7 +127,7 @@ describe('GET /api/timeline/peaks — per-tenant output directories', () => {
     currentCtx = { userId: 'tenant-1', outputDir: tenantDir };
 
     const res = await getPeaks(`path=${encodeURIComponent(abs)}`);
-    assert.notEqual(res.body.error, 'asset outside the output directory');
+    assert.notEqual(res.body.error, 'PATH_OUTSIDE_MEDIA');
 
     currentCtx = { userId: 'admin', outputDir: OUTPUT_DIR };
   });
@@ -137,8 +137,8 @@ describe('GET /api/timeline/peaks — per-tenant output directories', () => {
     // this endpoint has tests at all.
     currentCtx = { userId: 'tenant-1', outputDir: tenantDir };
     const res = await getPeaks(`path=${encodeURIComponent(secretPath)}`);
-    assert.equal(res.status, 400);
-    assert.equal(res.body.error, 'asset outside the output directory');
+    assert.equal(res.status, 403);
+    assert.equal(res.body.error, 'PATH_OUTSIDE_MEDIA');
 
     currentCtx = { userId: 'admin', outputDir: OUTPUT_DIR };
   });
@@ -150,8 +150,8 @@ describe('GET /api/timeline/peaks — per-tenant output directories', () => {
     currentCtx = { userId: 'tenant-1', outputDir: tenantDir };
 
     const res = await getPeaks(`path=${encodeURIComponent(victim)}`);
-    assert.equal(res.status, 400);
-    assert.equal(res.body.error, 'asset outside the output directory');
+    assert.equal(res.status, 403);
+    assert.equal(res.body.error, 'PATH_OUTSIDE_MEDIA');
 
     currentCtx = { userId: 'admin', outputDir: OUTPUT_DIR };
     fs.rmSync(otherDir, { recursive: true, force: true });

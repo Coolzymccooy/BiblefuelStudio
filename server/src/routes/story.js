@@ -25,7 +25,7 @@ import { buildImportedTranscript, normalizeWordTimings } from "../lib/story/scri
 import { CHARACTER_ANCHORS, composeScenePrompt, sceneMatchText } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
 import { isRemoteUrl } from "../lib/downloadInput.js";
-import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
+import { confineUserPath, isSharedTtsFile, sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 import { OUTPUT_DIR } from "../lib/paths.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 import { expandScenesToBeats } from "../lib/story/visualBeats.js";
@@ -62,25 +62,47 @@ const NO_SCENE_VIDEO = Object.freeze({
 });
 
 /**
+ * The music bed a caller may use (#112): a `library:`/`mylib:` ref that
+ * resolves, or a file in the caller's own media folder (shared tts-* voice
+ * files too). Anything else throws a UserPathError: another account's file, a
+ * URL in any form, a UNC path, a link that leads out. Used when the bed is set
+ * and again at render, for projects stored before this check.
+ *
+ * @param {{ dataDir: string, outputDir: string }} ctx
+ * @param {string} raw
+ * @returns {string} the path to hand ffmpeg
+ */
+export function confineStoryMusic(ctx, raw) {
+  const value = String(raw || "").trim();
+  if (MUSIC_REF_PREFIX.test(value)) {
+    const resolved = resolveLibraryTrack(value) || resolveTenantTrack(ctx.dataDir, value);
+    if (!resolved) throw new UserPathError("MUSIC_NOT_FOUND", 400, "That music track is not in your library any more.");
+    return resolved;
+  }
+  return confineUserPath(value, ctx, { allowShared: isSharedTtsFile });
+}
+
+/**
  * Resolve `project.music.path` for the final ffmpeg render.
  *
  * A `library:`/`mylib:` ref that fails to resolve (the track was forgotten,
- * its file deleted, or the project is stale) must come back `null`, not the
- * literal ref string — buildStoryFfmpegArgs has no existence check of its
- * own and would hand ffmpeg an `-i library:foo` / `-i mylib:<uuid>` that
- * doesn't exist, failing the WHOLE render instead of just dropping the music.
+ * its file deleted, or the project is stale) comes back `null`, not the
+ * literal ref string: buildStoryFfmpegArgs has no existence check of its own
+ * and would hand ffmpeg an `-i library:foo` that doesn't exist, failing the
+ * WHOLE render instead of just dropping the music.
  *
- * A bare absolute path (pre-library back-compat — see MusicPicker's
- * REF_PREFIX comment) is not a ref at all, so it is passed through exactly
- * as before: only the two known ref prefixes are treated as "must resolve or
- * degrade to silence".
+ * A bare path (pre-library back-compat, see MusicPicker's REF_PREFIX comment)
+ * must be the caller's own file (#112); one outside throws a UserPathError.
  */
-export function resolveMusicPathForRender(dataDir, rawMusicPath) {
+export function resolveMusicPathForRender(ctx, rawMusicPath) {
   const raw = rawMusicPath || null;
   if (!raw) return null;
-  const resolved = resolveLibraryTrack(raw) || resolveTenantTrack(dataDir, raw);
-  if (resolved) return resolved;
-  return MUSIC_REF_PREFIX.test(raw) ? null : raw;
+  try {
+    return confineStoryMusic(ctx, raw);
+  } catch (err) {
+    if (err instanceof UserPathError && err.code === "MUSIC_NOT_FOUND") return null;
+    throw err;
+  }
 }
 
 const REMOTE_AUDIO_REFUSAL = "audioPath must be a file on this server, not a web link.";
@@ -99,16 +121,15 @@ function confinedProjectAudio(ctx, project) {
 }
 
 /**
- * The project's music bed as a local path (or null). ffmpeg would fetch a URL
- * bed itself with no SSRF check, so a remote one is downloaded through the
- * guard; a refusal or failed download is reported, not rendered.
+ * The project's music bed as a local path (or null), re-checked at render.
+ * A refusal is reported, not rendered.
  */
-async function localiseStoryMusic(dataDir, rawMusicPath) {
-  const resolved = resolveMusicPathForRender(dataDir, rawMusicPath);
+function storyMusicForRender(ctx, rawMusicPath) {
   try {
-    return { ok: true, path: await localiseInput(resolved) };
+    return { ok: true, path: resolveMusicPathForRender(ctx, rawMusicPath) };
   } catch (err) {
-    return { ok: false, ...remoteInputFailure(err, "the music track") };
+    if (err instanceof UserPathError) return { ok: false, status: err.status, error: err.code, message: err.message };
+    throw err;
   }
 }
 
@@ -1282,7 +1303,18 @@ router.patch("/:id/music", (req, res) => {
   try {
     const project = readProject(req.ctx.dataDir, req.params.id);
     if (!project) return res.status(404).json({ ok: false, error: "project not found" });
-    const path = req.body?.path ? String(req.body.path) : null;
+    const raw = req.body?.path ? String(req.body.path).trim() : "";
+    let path = null;
+    if (raw) {
+      // A ref is stored as the ref (it resolves again at render); a file as its checked real path.
+      try {
+        const confined = confineStoryMusic(req.ctx, raw);
+        path = MUSIC_REF_PREFIX.test(raw) ? raw : confined;
+      } catch (err) {
+        if (sendUserPathError(res, err)) return;
+        throw err;
+      }
+    }
     const volume = Math.min(1, Math.max(0, Number(req.body?.volume ?? project.music?.volume ?? 0.3)));
     const autoDuck = req.body?.autoDuck === undefined ? (project.music?.autoDuck ?? true) : Boolean(req.body.autoDuck);
     const updated = writeProject(req.ctx.dataDir, { ...project, music: { path, volume, autoDuck } });
@@ -1303,8 +1335,8 @@ router.post("/:id/render", async (req, res) => {
     // Both checked BEFORE a job exists, so a refusal leaves the project as it was.
     const sourceAudio = confinedProjectAudio(req.ctx, project);
     if (!sourceAudio.ok) return res.status(400).json({ ok: false, error: STORY_AUDIO_REFUSAL });
-    const music = await localiseStoryMusic(req.ctx.dataDir, project.music?.path);
-    if (!music.ok) return res.status(music.status).json({ ok: false, error: music.error });
+    const music = storyMusicForRender(req.ctx, project.music?.path);
+    if (!music.ok) return res.status(music.status).json({ ok: false, error: music.error, message: music.message });
     const out = storyOutDir(req.ctx.outputDir, project.projectId);
     if (!fs.existsSync(out)) fs.mkdirSync(out, { recursive: true });
     const outPath = path.join(out, "video.mp4");

@@ -25,6 +25,7 @@ import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
 import { ApiError } from '../lib/apiError';
 import { toastError } from '../lib/errors';
 import { cleanSpeakableText } from '../lib/speakableScript';
+import { buildChatterboxPayload } from '../lib/chatterboxRequest';
 import { Link } from 'react-router-dom';
 import {
     Play,
@@ -216,9 +217,13 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
     const [edgeVoiceId, setEdgeVoiceId] = useState('');
     const [stability, setStability] = useState(0.5);
     const [similarity, setSimilarity] = useState(0.75);
-    // Chatterbox controls. audio_prompt_path is sent through the generic
-    // voiceId field; exaggeration/cfg_weight are forwarded as voiceSettings.
+    // Chatterbox controls. The voice is a saved clone (cb:<id>); only the
+    // owner may type a reference file on the bridge host instead (ruling R36,
+    // reported by the server as freeTextReference). exaggeration/cfg_weight
+    // are forwarded as voiceSettings.
+    const [chatterboxCloneId, setChatterboxCloneId] = useState('');
     const [chatterboxAudioPrompt, setChatterboxAudioPrompt] = useState('');
+    const [chatterboxFreeTextAllowed, setChatterboxFreeTextAllowed] = useState(false);
     const [chatterboxStyle, setChatterboxStyle] = useState(0.5);
     const [chatterboxCfg, setChatterboxCfg] = useState(0.5);
     const [voicePresets, setVoicePresets] = useState<VoicePreset[]>([]);
@@ -359,12 +364,13 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
 
     // Load per-user Chatterbox clones once on mount. Chatterbox "voices" are
     // reference-WAV aliases stored server-side; the user sees them as a saved
-    // list under Voice Clone and can click "Use" to drop the alias into the
-    // TTS Voice ID field.
+    // list under Voice Clone and can click "Use" to pick the clone as the
+    // Chatterbox reference voice (sent as voiceId: "cb:<id>").
     const loadChatterboxVoices = async () => {
-        const res = await api.get<{ ok: boolean; voices: ChatterboxVoice[] }>('/api/tts/chatterbox-voices');
+        const res = await api.get<{ ok: boolean; voices: ChatterboxVoice[]; freeTextReference?: boolean }>('/api/tts/chatterbox-voices');
         if (res.ok && Array.isArray(res.data?.voices)) {
             setChatterboxVoices(res.data.voices);
+            setChatterboxFreeTextAllowed(res.data.freeTextReference === true);
         }
     };
     useEffect(() => {
@@ -376,6 +382,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
         const res = await api.delete(`/api/tts/chatterbox-voices/${encodeURIComponent(id)}`);
         if (res.ok) {
             setChatterboxVoices((curr) => curr.filter((v) => v.id !== id));
+            setChatterboxCloneId((curr) => (curr === id ? '' : curr));
             toast.success('Cloned voice removed');
         } else {
             toast.error(res.error || 'Failed to delete cloned voice');
@@ -462,12 +469,14 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                 providerLabel = 'Edge-TTS';
             } else if (provider === 'chatterbox') {
                 url = '/api/tts/chatterbox';
-                payload = {
+                payload = { ...buildChatterboxPayload({
                     text: formattedTtsText,
-                    voiceId: chatterboxAudioPrompt.trim() || undefined,
-                    exaggeration: typeof chatterboxStyle === 'number' ? chatterboxStyle : undefined,
-                    cfgWeight: typeof chatterboxCfg === 'number' ? chatterboxCfg : undefined,
-                };
+                    cloneId: chatterboxCloneId,
+                    referencePath: chatterboxAudioPrompt,
+                    canUseReferencePath: chatterboxFreeTextAllowed,
+                    style: chatterboxStyle,
+                    cfg: chatterboxCfg,
+                }) };
                 providerLabel = 'Chatterbox';
             } else if (provider === 'azure') {
                 // Azure voice id is an Azure voice name (e.g. en-US-GuyNeural);
@@ -1166,17 +1175,42 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
             </div>
             {provider === 'chatterbox' ? (
                 <div className="voice-tuning grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <Field
-                        label="Reference voice"
-                        badge="Optional"
-                        tooltip="Absolute path to a WAV file on the Chatterbox host. Leave empty to use the model's default voice. The path is resolved by the Chatterbox server, not Biblefuel."
-                    >
-                        <Input
-                            value={chatterboxAudioPrompt}
-                            onChange={(e) => setChatterboxAudioPrompt(e.target.value)}
-                            placeholder="/path/to/reference.wav"
-                        />
-                    </Field>
+                    <div className="space-y-3">
+                        <Field
+                            label="Reference voice"
+                            htmlFor="chatterbox-clone"
+                            badge="Optional"
+                            tooltip="One of your saved Chatterbox clones. Leave on the default voice to use the model's own voice."
+                            hint={chatterboxFreeTextAllowed ? undefined : 'Only your saved clones can be used. Clone a voice under Voice clone to add one.'}
+                        >
+                            <Select
+                                id="chatterbox-clone"
+                                value={chatterboxCloneId}
+                                onChange={(e) => setChatterboxCloneId(e.target.value)}
+                            >
+                                <option value="">Default voice</option>
+                                {chatterboxVoices.map((cv) => (
+                                    <option key={cv.id} value={cv.id}>{cv.name}</option>
+                                ))}
+                            </Select>
+                        </Field>
+                        {chatterboxFreeTextAllowed && (
+                            <Field
+                                label="Reference file path"
+                                htmlFor="chatterbox-reference-path"
+                                badge="Optional"
+                                tooltip="Absolute path to a WAV file on the Chatterbox host, used when no saved clone is picked. The path is resolved by the Chatterbox server, not Biblefuel."
+                            >
+                                <Input
+                                    id="chatterbox-reference-path"
+                                    value={chatterboxAudioPrompt}
+                                    onChange={(e) => setChatterboxAudioPrompt(e.target.value)}
+                                    placeholder="/path/to/reference.wav"
+                                    disabled={Boolean(chatterboxCloneId)}
+                                />
+                            </Field>
+                        )}
+                    </div>
                     <Field
                         label={`Exaggeration (${chatterboxStyle})`}
                         tooltip="Controls expressive intensity. Higher values yield more dramatic delivery; lower values stay closer to neutral."
@@ -1821,7 +1855,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                                     className="text-[0.6875rem] h-7"
                                                     onClick={() => {
                                                         setProvider('chatterbox');
-                                                        setVoiceId(cv.id);
+                                                        setChatterboxCloneId(cv.id);
                                                         toast.success(`Voice "${cv.name}" selected — generate to test.`);
                                                     }}
                                                 >

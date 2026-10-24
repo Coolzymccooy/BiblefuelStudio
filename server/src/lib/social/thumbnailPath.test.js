@@ -22,12 +22,31 @@ describe("resolveThumbnail", () => {
     const r = resolveThumbnail("/outputs/thumb.png", ctxOutputDir, globalOutputDir);
     assert.deepEqual(r, { ok: true, path: path.join(ctxOutputDir, "thumb.png") });
   });
-  test("a non-admin tenant can use a genImg scene image from the GLOBAL outputs dir", () => {
-    const { globalOutputDir, ctxOutputDir } = dirs();
-    const r = resolveThumbnail("/outputs/genImg/p1/part-1.png", ctxOutputDir, globalOutputDir);
+  test("the owner can use any genImg scene image from the global outputs dir", () => {
+    const { globalOutputDir } = dirs();
+    const r = resolveThumbnail("/outputs/genImg/p1/part-1.png", globalOutputDir, globalOutputDir, { userId: "owner", isOwner: true });
     assert.equal(r.ok, true);
     assert.equal(r.path, path.join(globalOutputDir, "genImg", "p1", "part-1.png"));
     assert.ok(fs.existsSync(r.path));
+  });
+  test("a tenant reaches the global genImg folder only for their own generated images (#112)", () => {
+    const { globalOutputDir, ctxOutputDir } = dirs();
+    const opts = { userId: "u1", isOwner: false };
+    const global = (rel) => path.join(globalOutputDir, "genImg", rel);
+    const own = (rel) => path.join(ctxOutputDir, "genImg", rel);
+    for (const rel of ["genvis-u1-abc/img.png", "auto-u1/bg.png", "series_ab12_cd34/part-1.png"]) {
+      assert.deepEqual(resolveThumbnail(`/outputs/genImg/${rel}`, ctxOutputDir, globalOutputDir, opts), { ok: true, path: global(rel) }, rel);
+    }
+    // Anything else under the alias is the caller's own genImg folder (Story
+    // scene images live there), never another account's pictures.
+    for (const rel of ["p1/part-1.png", "genvis-u2-abc/img.png", "auto-u2/bg.png", "genvis-u10-abc/img.png"]) {
+      assert.deepEqual(resolveThumbnail(`/outputs/genImg/${rel}`, ctxOutputDir, globalOutputDir, opts), { ok: true, path: own(rel) }, rel);
+    }
+  });
+  test("with no caller given, the global genImg folder is closed", () => {
+    const { globalOutputDir, ctxOutputDir } = dirs();
+    const r = resolveThumbnail("/outputs/genImg/p1/part-1.png", ctxOutputDir, globalOutputDir);
+    assert.deepEqual(r, { ok: true, path: path.join(ctxOutputDir, "genImg", "p1", "part-1.png") });
   });
   test("genImg alias cannot escape the genImg folder", () => {
     const { globalOutputDir, ctxOutputDir } = dirs();
