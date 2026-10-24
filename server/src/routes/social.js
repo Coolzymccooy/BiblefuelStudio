@@ -377,12 +377,15 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   }
 
   // Resolve webhook in this order:
-  //   1. Explicit webhookId match in the store (and enabled).
+  //   1. A named webhookId: that webhook, enabled, or the post fails (R40).
+  //      A schedule or campaign whose webhook was disabled or removed must
+  //      not quietly post to another of the user's webhooks.
   //   2. Caller-supplied webhookUrl.
-  //   3. The first enabled webhook in the store (so one-click Auto-Publish
-  //      Just Works without the caller having to know which webhook ID to pass).
+  //   3. With no webhookId, the first enabled webhook in the store (so one-click
+  //      Auto-Publish Just Works without the caller having to know which ID to pass).
   const webhooks = Array.isArray(store.webhooks) ? store.webhooks : [];
   const exact = webhookId ? webhooks.find((w) => w.id === webhookId && w.enabled) : null;
+  if (webhookId && !exact) throw new Error(`Webhook ${webhookId} is disabled or removed. Pick an enabled webhook in Settings.`);
   const firstEnabled = !exact && !webhookUrl ? webhooks.find((w) => w.enabled && String(w.url || "").trim()) : null;
   const target = exact || firstEnabled;
   const url = String(target?.url || webhookUrl || "").trim();

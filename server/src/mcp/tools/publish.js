@@ -39,7 +39,7 @@ async function videoLink(ctx, videoPath, { absolute = false } = {}) {
 
 /**
  * WEBHOOK_NOT_FOUND unless `webhookId` names one of the user's saved webhooks that is enabled.
- * The route falls back to the first enabled hook for an unknown id, so an id is checked first.
+ * The route also fails a post to a disabled or removed id (R40); checking first refuses it before any charge.
  */
 async function webhookRefusal(ctx, webhookId) {
   if (webhookId === undefined) return null;
