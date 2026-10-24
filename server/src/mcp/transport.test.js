@@ -166,6 +166,24 @@ test("a capped tool refuses at the cap with MCP_CAP_REACHED", async () => {
   assert.equal(second.structuredContent.used, 1);
   assert.equal(second.structuredContent.limit, 1);
   assert.match(second.structuredContent.resetsAt, /T00:00:00\.000Z$/);
+  assert.equal(second.structuredContent.scope, "key");
+  assert.equal(second.content[0].text, "MCP_CAP_REACHED: Daily renders cap reached for this agent (1 of 1).");
+});
+
+test("a second key of the same user meets the account cap with scope user", async () => {
+  const first = await connect(testApp.keyFor("u_other", "Account cap one"));
+  const second = await connect(testApp.keyFor("u_other", "Account cap two"));
+  assert.notEqual((await first.callTool({ name: "render_echo", arguments: { text: "one" } })).isError, true);
+
+  const refused = await second.callTool({ name: "render_echo", arguments: { text: "two" } });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.structuredContent.error, "MCP_CAP_REACHED");
+  assert.equal(refused.structuredContent.scope, "user");
+  assert.equal(refused.structuredContent.bucket, "renders");
+  assert.equal(
+    refused.content[0].text,
+    "MCP_CAP_REACHED: Daily renders cap reached for your account across all agents (1 of 1).",
+  );
 });
 
 test("every call is logged", async () => {

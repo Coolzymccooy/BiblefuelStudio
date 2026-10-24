@@ -154,3 +154,76 @@ test("capsSummary reports used, limit and remaining; unknown bucket throws", asy
   assert.deepEqual(summary.renders, { used: 0, limit: 10, remaining: 10 });
   await assert.rejects(() => caps.charge("k_1", key, "nope"), /caps: unknown bucket nope/);
 });
+
+test("two keys of one user together cannot exceed the ceiling (scope user)", async () => {
+  process.env.MCP_DAILY_RENDERS = "3";
+  const keyA = { id: "k_a", userId: "u_1", caps: {} };
+  const keyB = { id: "k_b", userId: "u_1", caps: {} };
+  assert.equal((await caps.charge("k_a", keyA, "renders")).ok, true);
+  assert.equal((await caps.charge("k_a", keyA, "renders")).ok, true);
+  assert.equal((await caps.charge("k_b", keyB, "renders")).ok, true);
+  const before = fs.readFileSync(usageFile, "utf-8");
+  const refused = await caps.charge("k_b", keyB, "renders");
+  assert.deepEqual(refused, {
+    ok: false,
+    scope: "user",
+    used: 3,
+    limit: 3,
+    resetsAt: "2026-01-02T00:00:00.000Z",
+  });
+  assert.equal(fs.readFileSync(usageFile, "utf-8"), before, "a refusal writes neither counter");
+  assert.equal(caps.readKeyUsage("k_b").counts.renders, 1);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 3);
+});
+
+test("another user's keys do not share the account counter", async () => {
+  process.env.MCP_DAILY_RENDERS = "1";
+  assert.equal((await caps.charge("k_a", { id: "k_a", userId: "u_1", caps: {} }, "renders")).ok, true);
+  assert.equal((await caps.charge("k_z", { id: "k_z", userId: "u_2", caps: {} }, "renders")).ok, true);
+});
+
+test("a lower per-key cap still refuses first with scope key", async () => {
+  process.env.MCP_DAILY_RENDERS = "2";
+  const low = { id: "k_low", userId: "u_1", caps: { renders: 1 } };
+  const other = { id: "k_other", userId: "u_1", caps: {} };
+  assert.equal((await caps.charge("k_low", low, "renders")).ok, true);
+  const keyRefusal = await caps.charge("k_low", low, "renders");
+  assert.equal(keyRefusal.ok, false);
+  assert.equal(keyRefusal.scope, "key");
+  assert.equal(keyRefusal.limit, 1);
+
+  // Both counters full: the key's own cap is still the one reported.
+  assert.equal((await caps.charge("k_other", other, "renders")).ok, true);
+  const both = await caps.charge("k_low", low, "renders");
+  assert.equal(both.scope, "key");
+  assert.equal(both.used, 1);
+  assert.equal(both.limit, 1);
+});
+
+test("a key-scope refusal reports scope key on a plain key cap", async () => {
+  const key = keyWith({ tts: 1 });
+  await caps.charge("k_1", key, "tts");
+  assert.equal((await caps.charge("k_1", key, "tts")).scope, "key");
+});
+
+test("the account counter rolls over at UTC midnight", async () => {
+  process.env.MCP_DAILY_PUBLISHES = "1";
+  const keyA = { id: "k_a", userId: "u_1", caps: {} };
+  const keyB = { id: "k_b", userId: "u_1", caps: {} };
+  assert.equal((await caps.charge("k_a", keyA, "publishes")).ok, true);
+  assert.equal((await caps.charge("k_b", keyB, "publishes")).scope, "user");
+  caps._setClock(() => "2026-01-02");
+  assert.equal(caps.readUserUsage("u_1").counts.publishes, 0);
+  assert.equal((await caps.charge("k_b", keyB, "publishes")).ok, true);
+  assert.equal(caps.readUserUsage("u_1").counts.publishes, 1);
+});
+
+test("accountCapsSummary reports the account's use against the ceilings", async () => {
+  process.env.MCP_DAILY_TTS = "4";
+  await caps.charge("k_a", { id: "k_a", userId: "u_1", caps: { tts: 1 } }, "tts");
+  await caps.charge("k_b", { id: "k_b", userId: "u_1", caps: {} }, "tts", 2);
+  const summary = caps.accountCapsSummary("u_1");
+  assert.deepEqual(summary.tts, { used: 3, limit: 4, remaining: 1 });
+  assert.deepEqual(summary.renders, { used: 0, limit: 10, remaining: 10 });
+  assert.deepEqual(caps.capsSummary("k_b", { id: "k_b", userId: "u_1", caps: {} }).tts, { used: 2, limit: 4, remaining: 2 });
+});

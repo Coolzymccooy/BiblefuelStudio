@@ -8,7 +8,8 @@ import { DATA_DIR } from "../paths.js";
  *
  * File: DATA_DIR/agent-keys-usage.json
  * Shape: { subjects: { [subjectId]: { day: "YYYY-MM-DD", counts: Caps } } }
- * subjectId is the agent key id.
+ * subjectId is the agent key id, or `user:<userId>` for the account counter
+ * that every key of one user shares (its limit is the environment ceiling).
  *
  * Counters reset at midnight UTC, lazily: a stored day that is not today reads
  * as all zeros. Writes are serialised through one in-process promise chain.
@@ -118,6 +119,13 @@ export function readKeyUsage(subjectId) {
   return usageFor(readStore(), subjectId, clock());
 }
 
+const userSubject = (userId) => `user:${userId}`;
+
+/** Today's use across every key of one user. @returns {{ day: string, counts: Caps }} */
+export function readUserUsage(userId) {
+  return readKeyUsage(userSubject(userId));
+}
+
 function nextMidnightUtc(day) {
   return new Date(Date.parse(`${day}T00:00:00.000Z`) + MS_PER_DAY).toISOString();
 }
@@ -126,27 +134,39 @@ function roundCount(value) {
   return Math.round(value * 1e6) / 1e6;
 }
 
+/** The counters one charge touches: the key's own, then the account's (when the key has an owner). */
+function countersFor(subjectId, key) {
+  const counters = [{ scope: "key", subjectId, limits: effectiveCaps(key) }];
+  if (key?.userId) counters.push({ scope: "user", subjectId: userSubject(key.userId), limits: ceilings() });
+  return counters;
+}
+
 function doCharge(subjectId, key, bucket, amount) {
   const day = clock();
   const store = readStore();
-  const usage = usageFor(store, subjectId, day);
-  const limit = effectiveCaps(key)[bucket];
-  const used = usage.counts[bucket];
-  if (used + amount > limit + EPSILON) {
-    return { ok: false, used, limit, resetsAt: nextMidnightUtc(day) };
+  const checked = countersFor(subjectId, key).map((counter) => ({
+    ...counter,
+    usage: usageFor(store, counter.subjectId, day),
+    limit: counter.limits[bucket],
+  }));
+  // The key's own cap is checked first, so a lower per-key cap is what the agent is told about.
+  const over = checked.find(({ usage, limit }) => usage.counts[bucket] + amount > limit + EPSILON);
+  if (over) {
+    return { ok: false, scope: over.scope, used: over.usage.counts[bucket], limit: over.limit, resetsAt: nextMidnightUtc(day) };
   }
-  const nextUsed = roundCount(used + amount);
-  const nextSubjects = {
-    ...store.subjects,
-    [subjectId]: { day, counts: { ...usage.counts, [bucket]: nextUsed } },
-  };
+  const charged = checked.map(({ subjectId: id, usage }) => [
+    id,
+    { day, counts: { ...usage.counts, [bucket]: roundCount(usage.counts[bucket] + amount) } },
+  ]);
+  const nextSubjects = { ...store.subjects, ...Object.fromEntries(charged) };
   writeStore({ ...store, subjects: nextSubjects });
-  return { ok: true, used: nextUsed, limit };
+  return { ok: true, used: nextSubjects[subjectId].counts[bucket], limit: checked[0].limit };
 }
 
 /**
- * Reserve `amount` of `bucket` for this subject. Refuses without writing when
- * it would exceed the effective cap. Calls run one after another.
+ * Reserve `amount` of `bucket` for this key and for its owner's account.
+ * Refuses without writing either counter when either would exceed its cap;
+ * the refusal's `scope` ("key" or "user") says which. Calls run one after another.
  */
 export async function charge(subjectId, key, bucket, amount = 1) {
   assertBucket(bucket);
@@ -158,10 +178,7 @@ export async function charge(subjectId, key, bucket, amount = 1) {
   return run;
 }
 
-/** @returns {{ [bucket]: { used:number, limit:number, remaining:number } }} */
-export function capsSummary(subjectId, key) {
-  const { counts } = readKeyUsage(subjectId);
-  const limits = effectiveCaps(key);
+function summarise(counts, limits) {
   return Object.fromEntries(
     CAP_BUCKETS.map((bucket) => [
       bucket,
@@ -172,4 +189,14 @@ export function capsSummary(subjectId, key) {
       },
     ]),
   );
+}
+
+/** One key's use today. @returns {{ [bucket]: { used:number, limit:number, remaining:number } }} */
+export function capsSummary(subjectId, key) {
+  return summarise(readKeyUsage(subjectId).counts, effectiveCaps(key));
+}
+
+/** The account's use today across all its keys, against the environment ceilings. Same shape as capsSummary. */
+export function accountCapsSummary(userId) {
+  return summarise(readUserUsage(userId).counts, ceilings());
 }

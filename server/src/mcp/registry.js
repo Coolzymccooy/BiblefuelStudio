@@ -16,7 +16,7 @@ export { PUBLISH_NOT_ALLOWED_MESSAGE };
  * activity log and the [MCP] info line.
  *
  * A handler also gets `ctx.chargeCap(bucket, amount)`: it spends `amount` from one of the key's
- * daily cap buckets mid-handler (for tools whose cost depends on what they find) and returns
+ * (and its account's) daily cap buckets mid-handler (for tools whose cost depends on what they find) and returns
  * null on success, or the MCP_CAP_REACHED tool error to hand straight back.
  *
  * @typedef {{ user: object, agentKey: object, subjectId: string, isSuperAdmin: boolean,
@@ -85,9 +85,11 @@ function allowed(def, ctx) {
 async function chargeBucket(ctx, bucket, amount, charged) {
   const outcome = await charge(ctx.subjectId, ctx.agentKey, bucket, amount);
   if (!outcome.ok) {
-    const { used, limit, resetsAt } = outcome;
-    return fail("MCP_CAP_REACHED", `Daily ${bucket} cap reached for this agent (${used} of ${limit}).`, {
+    const { scope, used, limit, resetsAt } = outcome;
+    const whose = scope === "user" ? "your account across all agents" : "this agent";
+    return fail("MCP_CAP_REACHED", `Daily ${bucket} cap reached for ${whose} (${used} of ${limit}).`, {
       bucket,
+      scope,
       used,
       limit,
       resetsAt,

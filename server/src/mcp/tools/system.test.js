@@ -39,6 +39,8 @@ test("whoami reports the user, plan, quota, caps and the key", async () => {
   assert.equal(data.plan, "free");
   assert.equal(typeof data.quota.scripts.limit, "number");
   assert.equal(data.caps.renders.limit, 10);
+  assert.deepEqual(data.accountCaps.renders, { used: 0, limit: 10, remaining: 10 });
+  assert.deepEqual(Object.keys(data.accountCaps).sort(), Object.keys(data.caps).sort());
   assert.equal(data.key.name, "test");
   assert.equal(data.key.publishAllowed, false);
   assert.equal(typeof data.key.id, "string");

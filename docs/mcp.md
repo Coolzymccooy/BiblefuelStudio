@@ -78,6 +78,7 @@ A success looks like this (`whoami`, shortened):
   "plan": "free",
   "quota": { "render": { "used": 1, "limit": 5, "unlimited": false, "remaining": 4 } },
   "caps": { "renders": { "used": 1, "limit": 10, "remaining": 9 } },
+  "accountCaps": { "renders": { "used": 3, "limit": 10, "remaining": 7 } },
   "key": { "id": "k_abc", "name": "hermes laptop", "publishAllowed": false }
 }
 ```
@@ -85,7 +86,7 @@ A success looks like this (`whoami`, shortened):
 A failure has `isError: true`. The text block reads `CODE: message`, and `structuredContent` holds the same as an object:
 
 ```json
-{ "error": "MCP_CAP_REACHED", "message": "Daily renders cap reached for this agent (10 of 10).", "bucket": "renders", "used": 10, "limit": 10, "resetsAt": "2026-10-24T00:00:00.000Z" }
+{ "error": "MCP_CAP_REACHED", "message": "Daily renders cap reached for this agent (10 of 10).", "bucket": "renders", "scope": "key", "used": 10, "limit": 10, "resetsAt": "2026-10-24T00:00:00.000Z" }
 ```
 
 Branch on the `CODE`, not on the message. Errors that come from the app's own routes also carry `hint` (what to do) and `status` (the HTTP status).
@@ -291,7 +292,7 @@ Two limits apply, and the lower one wins.
 
 **Your plan quota.** The same daily quotas the app uses. A free account hits free limits. When you pass one, the call fails with `QUOTA_EXCEEDED` and a `hint`. `whoami` shows what is left in `quota` (buckets `scripts`, `tts`, `render` and `imageGen`; premium and admin accounts are unlimited).
 
-**The daily agent caps.** Every key has its own counters, and they apply to every account, premium and admin included. They reset at midnight UTC.
+**The daily agent caps.** Every key has its own counters, and they apply to every account, premium and admin included. Your account also has one shared counter per bucket that all your keys add to, and its limit is the server ceiling, so several keys together cannot pass it. They all reset at midnight UTC.
 
 | Bucket | What counts | Default per key per day |
 |---|---|---|
@@ -301,9 +302,9 @@ Two limits apply, and the lower one wins.
 | `tts` | Voice synthesis calls | 30 |
 | `publishes` | Publishing calls | 3 |
 
-A call that would cross a cap is refused before anything runs, so nothing is spent. The error is `MCP_CAP_REACHED` with `bucket`, `used`, `limit` and `resetsAt` (an ISO time, the next midnight UTC). Stop, tell the user, and retry after `resetsAt`.
+A call that would cross a cap is refused before anything runs, so nothing is spent. The error is `MCP_CAP_REACHED` with `bucket`, `scope`, `used`, `limit` and `resetsAt` (an ISO time, the next midnight UTC). `scope` is `key` when this key's own cap is reached, and `user` when your account's shared cap is reached across all your agents. Stop, tell the user, and retry after `resetsAt`.
 
-`whoami` returns `caps` with `used`, `limit` and `remaining` for each bucket. Read it before starting a long plan. The server operator sets the ceilings with `MCP_DAILY_RENDERS`, `MCP_DAILY_AI_VIDEO_USD`, `MCP_DAILY_IMAGES`, `MCP_DAILY_TTS` and `MCP_DAILY_PUBLISHES`. The key owner can set lower numbers for one key under **Daily limits** on **Settings, Connected agents**.
+`whoami` returns `caps` (this key) and `accountCaps` (all your keys together), each with `used`, `limit` and `remaining` for each bucket. Read it before starting a long plan. The server operator sets the ceilings with `MCP_DAILY_RENDERS`, `MCP_DAILY_AI_VIDEO_USD`, `MCP_DAILY_IMAGES`, `MCP_DAILY_TTS` and `MCP_DAILY_PUBLISHES`. The key owner can set lower numbers for one key under **Daily limits** on **Settings, Connected agents**.
 
 ## What a key can never do
 
@@ -327,7 +328,7 @@ A call that would cross a cap is refused before anything runs, so nothing is spe
 | HTTP 405 | A `GET` or `DELETE` to `/api/mcp`. | Use `POST`. |
 | HTTP 429, `RATE_LIMITED` | More than 120 requests a minute on one key. | Wait a minute. Use `jobs_wait` rather than polling in a loop. |
 | `PUBLISH_NOT_ALLOWED` | The key's owner has not allowed publishing. | Ask them to switch on **This key may publish** in Settings, Connected agents. |
-| `MCP_CAP_REACHED` | A daily cap is used up. | Read `bucket` and `resetsAt`. Wait for the reset, or ask the owner to raise the server ceiling. |
+| `MCP_CAP_REACHED` | A daily cap is used up: this key's (`scope` `key`) or your account's across all agents (`scope` `user`). | Read `bucket`, `scope` and `resetsAt`. Wait for the reset, or ask the owner to raise the server ceiling. |
 | `QUOTA_EXCEEDED` | The account's own plan quota is used up. | Wait for the daily reset or change plan in the app. |
 | `BAD_KIND` | `jobs_wait` got a `kind` it does not know. | Use the `kind` the starting tool returned. |
 | `INVALID_URL`, `INVALID_KIND`, `INVALID_FILENAME`, `URL_PRIVATE`, `URL_SCHEME`, `URL_REDIRECTS`, `URL_TOO_LARGE`, `URL_TIMEOUT`, `DOWNLOAD_FAILED`, `IMPORT_FAILED` | `media_import_url` could not fetch the file. | See the table under Getting media in. |
