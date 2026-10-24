@@ -173,6 +173,18 @@ describe("cartoon render data", () => {
     assert.equal(verseText("  A  short   verse. "), "A short verse.");
   });
 
+  test("a cut verse never ends on a semicolon, comma or colon", () => {
+    // The last sentence-like break that fits is a semicolon: the card ends with an ellipsis instead.
+    const semi = `${"What man of you, having an hundred sheep, if he lose one of them".padEnd(150, " x")}; doth not leave the ninety and nine in the wilderness, and go after that which is lost until he find it`;
+    const cut = verseText(semi);
+    assert.ok(cut.length <= MAX_VERSE_CHARS + 1, cut);
+    assert.ok(!/[;,:]$/.test(cut) && !/[;,:]…$/.test(cut), cut);
+    assert.ok(/(\.|…)$/.test(cut), cut);
+    const comma = `${"word ".repeat(39)}end, ${"more ".repeat(20)}`;
+    const cutComma = verseText(comma);
+    assert.ok(!/[;,:]…?$/.test(cutComma), cutComma);
+  });
+
   test("a film over 40 s does not fit", () => {
     const p = filmed({ durations: [12, 12, 12, 12] });
     const tight = { ...p, shots: p.shots.map((s) => ({ ...s, seconds: 12 })) };
@@ -208,14 +220,32 @@ describe("cartoon film curves", () => {
     assert.equal(duckAmount(5, bed.windows), 0);
   });
 
-  test("caption pages break at pauses and at the word limit, never leaving one word alone", () => {
-    const w = (text, start, end) => ({ text, start, end });
+  const w = (text, start, end) => ({ text, start, end });
+  /** Words laid back to back with no gap, as timeWords places them inside one speech window. */
+  const gapless = (text) => text.split(" ").map((t, i) => w(t, i * 0.3, i * 0.3 + 0.3));
+  const texts = (pages) => pages.map((p) => p.map((x) => x.text));
+
+  test("caption pages break at pauses and at the word limit", () => {
     const pages = captionPages([w("a", 0, 0.2), w("b", 0.2, 0.4), w("c", 1.2, 1.4), w("d", 1.4, 1.6)]);
-    assert.deepEqual(pages.map((p) => p.map((x) => x.text)), [["a", "b"], ["c", "d"]]);
-    const many = Array.from({ length: PAGE_MAX_WORDS + 1 }, (_, i) => w(`w${i}`, i * 0.2, i * 0.2 + 0.2));
-    const paged = captionPages(many);
-    assert.equal(paged.length, 1, "a single trailing word joins the page before it");
+    assert.deepEqual(texts(pages), [["a", "b"], ["c", "d"]]);
     const more = Array.from({ length: PAGE_MAX_WORDS + 3 }, (_, i) => w(`w${i}`, i * 0.2, i * 0.2 + 0.2));
     assert.deepEqual(captionPages(more).map((p) => p.length), [PAGE_MAX_WORDS, 3]);
+  });
+
+  test("caption pages break at sentence ends, even with no pause", () => {
+    assert.deepEqual(texts(captionPages(gapless("Pip, look! The star is here."))), [["Pip,", "look!"], ["The", "star", "is", "here."]]);
+    assert.deepEqual(texts(captionPages(gapless("Where? “Here!” he said."))), [["Where?"], ["“Here!”"], ["he", "said."]]);
+    assert.deepEqual(texts(captionPages(gapless("He came (for me.) Then home."))), [["He", "came", "(for", "me.)"], ["Then", "home."]]);
+  });
+
+  test("a lone last word borrows one from a full page, never crossing a sentence end or a pause", () => {
+    const eight = gapless("one two three four five six seven eight");
+    assert.deepEqual(captionPages(eight).map((p) => p.length), [PAGE_MAX_WORDS - 1, 2]);
+    for (const page of captionPages(eight)) assert.ok(page.length <= PAGE_MAX_WORDS);
+    // A one-word sentence after a full stop stays on its own page.
+    assert.deepEqual(texts(captionPages(gapless("I came for you. Always."))), [["I", "came", "for", "you."], ["Always."]]);
+    // A lone word after a pause stays alone, and never makes an 8-word page.
+    const paused = [...gapless("one two three four five six seven"), w("later", 5, 5.3)];
+    assert.deepEqual(captionPages(paused).map((p) => p.length), [PAGE_MAX_WORDS, 1]);
   });
 });

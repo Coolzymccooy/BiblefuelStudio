@@ -152,19 +152,31 @@ export function duckWindows(project, timeline) {
   return merged.map((w) => ({ from: round(w.from), to: round(w.to) }));
 }
 
+/** Where the last full sentence in `text` ends (after any closing quote or bracket), or -1. */
+function lastSentenceEnd(text) {
+  const re = /[.!?]["'”’)\]]*(?=\s|$)/g;
+  let end = -1;
+  for (let m = re.exec(text); m; m = re.exec(text)) end = m.index + m[0].length;
+  return end;
+}
+
 /**
  * The verse as the card shows it: whitespace tidied and, when it is too long
- * for about four lines, cut at the last sentence end that fits (else the last
- * whole word, with an ellipsis).
+ * for about four lines, cut to a clean end: the last full sentence that fits,
+ * else just before the last semicolon or colon with an ellipsis, else the last
+ * whole word with an ellipsis. The card never ends on ; , or :.
  */
 export function verseText(text) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
   if (clean.length <= MAX_VERSE_CHARS) return clean;
-  const head = clean.slice(0, MAX_VERSE_CHARS);
-  const sentence = Math.max(...[".", ";", "!", "?"].map((c) => head.lastIndexOf(c)));
-  if (sentence >= MAX_VERSE_CHARS * 0.4) return head.slice(0, sentence + 1);
+  const head = clean.slice(0, MAX_VERSE_CHARS - 1); // room for the ellipsis
+  const enough = MAX_VERSE_CHARS * 0.4;
+  const sentence = lastSentenceEnd(head);
+  if (sentence >= enough) return head.slice(0, sentence);
+  const clause = Math.max(head.lastIndexOf(";"), head.lastIndexOf(":"));
   const space = head.lastIndexOf(" ");
-  return `${(space > 0 ? head.slice(0, space) : head).replace(/[,:;\s]+$/, "")}…`;
+  const cut = clause >= enough ? clause : (space > 0 ? space : head.length);
+  return `${head.slice(0, cut).replace(/[,:;\s]+$/, "")}…`;
 }
 
 /**

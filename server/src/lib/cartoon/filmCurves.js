@@ -44,10 +44,18 @@ export function bedVolume(bed, t, { inTo, outFrom, total }) {
   return clamp01(level * fadeIn * fadeOut);
 }
 
+/** A word that ends a sentence: . ! or ? optionally followed by closing quotes or brackets. */
+const SENTENCE_END = /[.!?]["'”’)\]]*$/;
+const endsSentence = (w) => SENTENCE_END.test(String(w?.text || ""));
+
 /**
- * Split a line's timed words into phrases for the screen: a new phrase at
- * each pause and every PAGE_MAX_WORDS words. A lone last word joins the
- * phrase before it rather than flashing up on its own.
+ * Split a line's timed words into phrases for the screen: a new phrase after
+ * each sentence end, at each pause, and every PAGE_MAX_WORDS words. Words in
+ * one speech window are timed back to back, so the sentence rule is what keeps
+ * "look! The" from sharing a phrase. A lone last word that was split off only
+ * by the word limit takes one word from the full phrase before it, so it never
+ * flashes up on its own and no phrase grows past the limit; a lone word after
+ * a sentence end or a pause stays on its own.
  * @param {{text:string,start:number,end:number}[]} words
  * @returns {{text:string,start:number,end:number}[][]}
  */
@@ -56,12 +64,15 @@ export function captionPages(words) {
   for (const w of words || []) {
     const page = pages[pages.length - 1];
     const prev = page?.[page.length - 1];
-    if (!page || page.length >= PAGE_MAX_WORDS || w.start - prev.end > PAGE_GAP_SEC) pages.push([w]);
+    if (!page || page.length >= PAGE_MAX_WORDS || w.start - prev.end > PAGE_GAP_SEC || endsSentence(prev)) pages.push([w]);
     else page.push(w);
   }
-  if (pages.length > 1 && pages[pages.length - 1].length === 1 && pages[pages.length - 2].length < PAGE_MAX_WORDS + 2) {
-    const last = pages.pop();
-    pages[pages.length - 1] = [...pages[pages.length - 1], ...last];
+  const last = pages[pages.length - 1];
+  const before = pages[pages.length - 2];
+  const tail = before?.[before.length - 1];
+  const splitByLimitOnly = before && before.length === PAGE_MAX_WORDS && !endsSentence(tail) && last[0].start - tail.end <= PAGE_GAP_SEC;
+  if (last?.length === 1 && splitByLimitOnly && before.length > 2) {
+    return [...pages.slice(0, -2), before.slice(0, -1), [tail, ...last]];
   }
   return pages;
 }
