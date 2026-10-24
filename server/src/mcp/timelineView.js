@@ -109,12 +109,18 @@ export async function confineAssets(ctx, project) {
 const isVoicePlaceholder = (asset) =>
   asset?.kind === "audio" && VOICE_SOURCES.has(asset.source) && !asset.path && Boolean(asset.prompt);
 
-/** How many voiceover clips the render will synthesise (the renderer voices each placeholder clip on a visible voiceover lane). */
+/** lib/timelineRender/planner.js assetIsRenderable: what the plan keeps of a lane. */
+const isRenderable = (asset) =>
+  Boolean(asset?.kind) && (asset.kind === "caption" || asset.kind === "effect" || Boolean(asset.path) || isVoicePlaceholder(asset));
+
+/**
+ * How many voiceover clips the render will synthesise. The plan keeps visible lanes with at least one
+ * renderable clip, and the renderer voices the placeholders of the FIRST voiceover lane among them only
+ * (proofRenderer.js prepareVoiceoverAssets), so only that lane is counted.
+ */
 export function voicePlaceholderCount(project) {
   const assets = project.assets || {};
-  return listOf(project.tracks)
-    .filter((t) => t?.kind === "voiceover" && t.hidden !== true)
-    .flatMap((t) => listOf(t.clips))
-    .filter((clip) => Number(clip?.durationSec) > 0 && isVoicePlaceholder(assets[clip.assetId]))
-    .length;
+  const renderableClips = (track) => listOf(track?.clips).filter((c) => Number(c?.durationSec) > 0 && isRenderable(assets[c.assetId]));
+  const lane = listOf(project.tracks).find((t) => t?.kind === "voiceover" && t.hidden !== true && renderableClips(t).length > 0);
+  return lane ? renderableClips(lane).filter((clip) => isVoicePlaceholder(assets[clip.assetId])).length : 0;
 }

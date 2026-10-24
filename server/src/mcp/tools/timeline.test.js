@@ -147,6 +147,23 @@ test("timeline_render charges one daily tts per voiceover placeholder it will sy
   assert.deepEqual(chargeCalls, [{ renders: 1, tts: 2 }]);
 });
 
+test("timeline_render charges tts only for the first visible voiceover lane with renderable clips (what the renderer voices)", async () => {
+  const dir = mediaWith("vo.mp3");
+  const vo = (id) => ({ id, kind: "audio", source: "chatterbox", label: id, prompt: `Words ${id}` });
+  const recorded = { id: "rec", kind: "audio", source: "upload", label: "Recorded", path: path.join(dir, "vo.mp3") };
+  const clip = (id, assetId) => ({ id, assetId, startSec: 0, durationSec: 3 });
+  const project = PROJECT({ cap1: captionAsset, a: vo("a"), b: vo("b"), c: vo("c"), rec: recorded }, [
+    PROJECT().tracks[0],
+    { id: "t-empty", kind: "voiceover", label: "Empty", clips: [clip("e1", "missing-asset")] },
+    { id: "t-first", kind: "voiceover", label: "First", clips: [clip("f1", "rec"), clip("f2", "a")] },
+    { id: "t-second", kind: "voiceover", label: "Second", clips: [clip("s1", "b"), clip("s2", "c")] },
+  ]);
+  const { ctx, chargeCalls } = ctxWith({ "POST /api/timeline/render": QUEUED });
+  const result = await byName.timeline_render.handler(ctx, { project });
+  assert.equal(result.structuredContent.ttsCharged, 1);
+  assert.deepEqual(chargeCalls, [{ renders: 1, tts: 1 }]);
+});
+
 test("timeline_render needs exactly one of projectId and project, and refuses bad assets and no quota before any charge", async () => {
   const both = ctxWith();
   assert.equal((await byName.timeline_render.handler(both.ctx, { projectId: "tl_1", project: PROJECT() })).structuredContent.error, "BAD_INPUT");
