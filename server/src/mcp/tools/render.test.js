@@ -23,6 +23,8 @@ const LIBRARY = { ok: true, library: { items: [{ id: "pexels_123" }, { id: "agen
 const QUEUED = (body) => ({ ok: true, job: { id: "job_new", type: body.type, status: "queued", payload: body.payload } });
 const AUTO_ON = { ok: true, enabled: true, platforms: ["tiktok"] };
 const AUTO_OFF = { ok: true, enabled: false, platforms: [] };
+const UNLIMITED_USAGE = { ok: true, usage: { plan: "premium", buckets: { render: { used: 0, limit: -1, unlimited: true, remaining: null } } } };
+const SPENT_USAGE = { ok: true, usage: { plan: "free", buckets: { render: { used: 5, limit: 5, unlimited: false, remaining: 0 } } } };
 
 /** A media folder for unit tests, with the given empty files in it. */
 function mediaWith(...names) {
@@ -35,7 +37,7 @@ function mediaWith(...names) {
 /** A fake ctx whose chargeCap records each call as one object, so atomic charges are visible. */
 function ctxWith(responses, { agentKey, refuse } = {}) {
   const chargeCalls = [];
-  const fake = fakeMcpCtx(responses, {
+  const fake = fakeMcpCtx({ "GET /api/billing/usage": UNLIMITED_USAGE, ...responses }, {
     chargeCap: async (bucketOrAmounts, amount) => {
       const amounts = typeof bucketOrAmounts === "string" ? { [bucketOrAmounts]: amount ?? 1 } : bucketOrAmounts;
       chargeCalls.push(amounts);
@@ -78,8 +80,8 @@ test("render_short without consent enqueues with auto-publish suppressed and cha
   }, { agentKey: { publishAllowed: false } });
   const result = await byName.render_short.handler(ctx, { lines: ["The Lord is my shepherd"], backgrounds: ["pexels_123"] });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
-  assert.deepEqual(routesCalled(calls), ["GET /api/library", "POST /api/jobs/enqueue"]);
-  const body = calls[1].opts.body;
+  assert.deepEqual(routesCalled(calls), ["GET /api/library", "GET /api/billing/usage", "POST /api/jobs/enqueue"]);
+  const body = calls.at(-1).opts.body;
   assert.equal(body.type, "render_video");
   assert.equal(body.autoPublish, false);
   assert.equal(body.payload.backgroundPath, "pexels_123");
@@ -305,4 +307,17 @@ test("render_short through MCP on a key without consent queues a render that can
 test("render_cancel through MCP on an unknown job is a tool error", async () => {
   const result = await client.callTool({ name: "render_cancel", arguments: { id: "nope" } });
   assert.equal(result.isError, true);
+});
+
+test("render_short refuses with QUOTA_EXCEEDED before charging any daily cap when the plan's renders are used up (R34)", async () => {
+  const { ctx, calls, chargeCalls } = ctxWith({
+    "GET /api/library": LIBRARY,
+    "GET /api/billing/usage": SPENT_USAGE,
+  }, { agentKey: { publishAllowed: true } });
+  const result = await byName.render_short.handler(ctx, { lines: ["x"], backgrounds: ["pexels_123"] });
+  assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
+  assert.equal(result.structuredContent.bucket, "render");
+  assert.deepEqual(chargeCalls, []);
+  assert.equal(routesCalled(calls).includes("POST /api/jobs/enqueue"), false);
+  assert.equal(routesCalled(calls).includes("GET /api/postiz/auto-publish"), false);
 });

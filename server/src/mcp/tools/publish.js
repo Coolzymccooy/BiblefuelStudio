@@ -3,6 +3,7 @@ import { ok, fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "../toolResult.js";
 import { NORMALISERS, outputUrl } from "../jobs.js";
 import { resolveMediaOutput } from "../mediaPath.js";
 import { lacksPublishConsent } from "../autoPublish.js";
+import { renderQuotaRefusal } from "../planQuota.js";
 import { VOICE_ID_PATTERN } from "./voice.js";
 
 // Publishing tools (spec "Publishing needs the key owner's consent", rulings
@@ -312,7 +313,7 @@ const autopublishRun = {
   description:
     "The Home page's one-click Auto-Publish: the server writes a fresh Bible short script, speaks it, picks backgrounds from your library by mood, renders it and posts it to destination (webhook by default; buffer or youtube). " +
     "Needs the key's publish switch and at least one background in your library (library_items). Every field is optional. If nothing is connected to post to, the video is still made and the result says it was not shared. " +
-    "Returns a job handle of kind job: call jobs_wait with kind job and the id. Costs one daily render and one daily publish. Takes a few minutes.",
+    "Returns a job handle of kind job: call jobs_wait with kind job and the id. Costs one daily render and one daily publish, charged together, and one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up, before any cap is spent). Takes a few minutes.",
   inputSchema: {
     destination: z.enum(CAMPAIGN_DESTINATIONS).optional().describe("webhook (default), buffer or youtube."),
     webhookId: z.string().regex(SAVED_ID).optional().describe("webhook: a saved webhook id from social_status."),
@@ -330,9 +331,13 @@ const autopublishRun = {
   },
   routes: ["/api/jobs"],
   publish: true,
-  caps: { renders: 1, publishes: 1 },
   async handler(ctx, input) {
     const payload = pick(input, CAMPAIGN_FIELDS);
+    // R34: the route spends the plan's render quota; read it first so a refused run spends no daily caps.
+    const outOfQuota = await renderQuotaRefusal(ctx);
+    if (outOfQuota) return outOfQuota;
+    const refused = await ctx.chargeCap({ renders: 1, publishes: 1 });
+    if (refused) return refused;
     const response = await ctx.api.call("POST", "/api/jobs/enqueue", { body: { type: "campaign_auto_post", payload } });
     return ok(NORMALISERS.job.normalise({ job: response?.job }, { outputUrl: (p) => outputUrl(p, ctx.publicBase) }));
   },

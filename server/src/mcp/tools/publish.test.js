@@ -63,7 +63,8 @@ test("the publish file declares the six publishing tools with their consent and 
   assert.deepEqual(byName.publish_post.caps, { publishes: 1 });
   assert.equal(byName.youtube_thumbnail.caps, undefined);
   assert.equal(byName.schedules.caps, undefined);
-  assert.deepEqual(byName.autopublish_run.caps, { renders: 1, publishes: 1 });
+  // autopublish_run pre-checks the plan quota (R34), then charges a render and a publish together in its handler.
+  assert.equal(byName.autopublish_run.caps, undefined);
   assert.deepEqual(byName.autopublish_run.routes, ["/api/jobs"]);
   for (const name of ["social_status", "publish_youtube", "publish_post", "youtube_thumbnail", "schedules"]) {
     assert.deepEqual(byName[name].routes, ["/api/social"], name);
@@ -365,17 +366,21 @@ test("schedules remove with consent deletes by id and charges nothing", async ()
 // ---- autopublish_run ----
 
 test("autopublish_run enqueues campaign_auto_post with only allowlisted fields and returns a job handle", async () => {
-  const { ctx, calls } = ctxWith({ "POST /api/jobs/enqueue": (_m, _p, opts) => ({ ok: true, job: { id: "job_c", type: opts.body.type, status: "queued" } }) }, CONSENT);
+  const { ctx, calls, charges } = ctxWith({
+    "GET /api/billing/usage": { ok: true, usage: { buckets: { render: { used: 1, limit: 5, unlimited: false, remaining: 4 } } } },
+    "POST /api/jobs/enqueue": (_m, _p, opts) => ({ ok: true, job: { id: "job_c", type: opts.body.type, status: "queued" } }),
+  }, CONSENT);
   const result = await byName.autopublish_run.handler(ctx, {
     destination: "youtube", privacyStatus: "public", niche: "hope", voiceId: "en-US-AriaNeural", kineticCaptions: true,
     webhookUrl: HOOK_URL, generatedImage: "C:/x.png", musicPath: "C:/x.mp3",
   });
-  assert.deepEqual(calls[0].opts.body, {
+  assert.deepEqual(calls.at(-1).opts.body, {
     type: "campaign_auto_post",
     payload: { destination: "youtube", privacyStatus: "public", niche: "hope", voiceId: "en-US-AriaNeural", kineticCaptions: true },
   });
   assert.equal(result.structuredContent.kind, "job");
   assert.equal(result.structuredContent.id, "job_c");
+  assert.deepEqual(charges, [{ bucket: "renders", amount: 1 }, { bucket: "publishes", amount: 1 }]);
 });
 
 test("publish_youtube through MCP with consent reaches the real route, which refuses an unconnected channel", async () => {
@@ -387,4 +392,24 @@ test("publish_youtube through MCP with consent reaches the real route, which ref
   const result = await client.callTool({ name: "publish_youtube", arguments: { videoPath: "/outputs/agent-clip.mp4", title: "Psalm 23" } });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /YouTube is not connected/);
+});
+
+test("autopublish_run refuses with QUOTA_EXCEEDED before charging when the plan's renders are used up (R34)", async () => {
+  const { ctx, calls, charges } = ctxWith({
+    "GET /api/billing/usage": { ok: true, usage: { buckets: { render: { used: 5, limit: 5, unlimited: false, remaining: 0 } } } },
+  }, CONSENT);
+  const result = await byName.autopublish_run.handler(ctx, {});
+  assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
+  assert.deepEqual(charges, []);
+  assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage"]);
+});
+
+test("autopublish_run charges render and publish in one atomic call", async () => {
+  const seen = [];
+  const fake = fakeMcpCtx({
+    "GET /api/billing/usage": { ok: true, usage: { buckets: { render: { unlimited: true } } } },
+    "POST /api/jobs/enqueue": { ok: true, job: { id: "job_d", status: "queued" } },
+  }, { chargeCap: async (amounts) => { seen.push(amounts); return null; } });
+  await byName.autopublish_run.handler({ ...fake.ctx, ...CONSENT }, {});
+  assert.deepEqual(seen, [{ renders: 1, publishes: 1 }]);
 });

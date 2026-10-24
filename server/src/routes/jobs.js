@@ -2033,6 +2033,9 @@ router.get("/:id", (req, res) => {
   res.json({ ok: true, job: withVolatileProgress(j) });
 });
 
+// Job types that render, so enqueue and retry each spend one unit of the plan's render quota.
+const RETRY_COUNTED_TYPES = new Set(["render_video", "render_waveform", "campaign_auto_post"]);
+
 router.post("/enqueue", (req, res) => {
   const type = String(req.body?.type || "").trim();
   const payload = req.body?.payload || {};
@@ -2051,6 +2054,13 @@ router.post("/enqueue", (req, res) => {
     throw err;
   } finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
+
+  // A queued render spends the plan's render quota exactly as a retry does
+  // (R34); without this, the queue was an unmetered way to render.
+  if (RETRY_COUNTED_TYPES.has(type)) {
+    const spent = consumeQuota(req.ctx, "render");
+    if (!spent.ok) return res.status(spent.status).json(spent.body);
+  }
 
   const id = `job_${uuid()}`;
   const job = {
@@ -2087,8 +2097,6 @@ router.post("/enqueue", (req, res) => {
  * Ownership: only the job's owner (or super-admin) can retry. Anything
  * else returns 404 to avoid leaking job existence across tenants.
  */
-const RETRY_COUNTED_TYPES = new Set(["render_video", "render_waveform", "campaign_auto_post"]);
-
 router.post("/:id/retry", (req, res) => {
   store = loadJobs();
   const original = store.jobs.find((j) => j.id === req.params.id);

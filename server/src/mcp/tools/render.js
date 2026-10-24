@@ -3,6 +3,7 @@ import { ok, fail } from "../toolResult.js";
 import { NORMALISERS, outputUrl } from "../jobs.js";
 import { resolveMediaInput } from "../mediaPath.js";
 import { renderPublishPlan } from "../autoPublish.js";
+import { renderQuotaRefusal } from "../planQuota.js";
 import { VOICE_ID_PATTERN } from "./voice.js";
 
 // A library item id (pexels_123, agent_<uuid>): no dots, slashes or colons, so
@@ -112,7 +113,7 @@ const renderShort = {
     "Needs lines and EITHER backgrounds (library ids from library_items, or video/picture files in your media folder; several play one after another) OR autoBackground: true (the server picks clips from your library by mood and AI-generates any it cannot find). " +
     "audioPath is a voice file (from voice_synthesize or your media folder); musicPath is a music_library ref or a media file. URLs and paths outside your media folder are refused. " +
     "Returns a job handle of kind job: call jobs_wait with kind job and the id; the finished video's path is what publish_youtube and publish_post take. " +
-    "Costs one daily render (plus four daily images with autoBackground, for possible AI pictures), charged together. Videos are capped at the server's maximum length (30 seconds by default). Takes about one to three minutes. " +
+    "Costs one daily render (plus four daily images with autoBackground, for possible AI pictures), charged together, and one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up, before any cap is spent). Videos are capped at the server's maximum length (30 seconds by default). Takes about one to three minutes. " +
     "If the user has turned on auto-publish in Settings, a finished render is posted automatically only when this key may publish and auto-publish is on when you call this; then it also costs one daily publish. Otherwise the render is queued with auto-publish off and never posts. " +
     "autoPublish in the result says which: suppressed (no publish consent), off (auto-publish is off) or on.",
   inputSchema: {
@@ -138,6 +139,8 @@ const renderShort = {
     if (problem) return fail("BAD_INPUT", problem);
     const built = await shortPayload(ctx, input);
     if (built.refusal) return built.refusal;
+    const outOfQuota = await renderQuotaRefusal(ctx);
+    if (outOfQuota) return outOfQuota;
     const plan = await renderPublishPlan(ctx);
     // One atomic charge (R31): a refused publish or image leaves no render spent.
     const refused = await ctx.chargeCap({
