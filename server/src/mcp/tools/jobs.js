@@ -173,7 +173,7 @@ const jobsCancel = {
     "Pass the kind, id and (for lyric_render) projectId from the handle that started it; for story, longform, ambient, moments and scene the id is the project id. " +
     "It reads the job first: NOTHING_RUNNING (with jobStatus) when it is not queued or running, so nothing is stopped; a job a server restart stopped reads failed, and its error says what to call. " +
     "Voicing (ambient, scene) cannot be stopped: VOICING_CANNOT_CANCEL. A story or long-form project stops its running step, or its AI motion clip orders while only those run; a scene script stops its render, else its clip orders (scene_script_cancel picks one). " +
-    "Clips already ordered still arrive and are paid for; a post a finishing auto-post job already sent still goes out. Other kinds (lyric_align, timeline, instrumental, publish) have no cancel: BAD_KIND. " +
+    "Clips already ordered still arrive and are paid for; a post a finishing auto-post job already sent still goes out. Other kinds (lyric_align, timeline, instrumental, publish) have no cancel: BAD_KIND (vocal removal stops with music_instrumental_decide discard). " +
     "Free and instant; jobs_wait then reads cancelled.",
   inputSchema: {
     kind: z.string().describe(`The handle's kind: ${CANCELLABLE}.`),
