@@ -169,7 +169,8 @@ test("narrate is refused before any charge: no sections, plan quota spent, or wo
     [PROJECT({ longform: { templateId: "sleep-30", sections: [] } }), UNLIMITED, "NO_SECTIONS"],
     [PROJECT(), SPENT, "QUOTA_EXCEEDED"],
     [PROJECT({ status: "narrating", longform: { sections: SECTIONS, progress: { done: 1, total: 4, alive: true } } }), UNLIMITED, "PROJECT_BUSY"],
-    [PROJECT({ status: "generating_images" }), UNLIMITED, "PROJECT_BUSY"],
+    // A picture being made: generating_images with none being made is idle (slice 3) and may be narrated.
+    [PROJECT({ status: "generating_images", scenes: [{ id: "scene-001", imageStatus: "generating" }] }), UNLIMITED, "PROJECT_BUSY"],
   ];
   for (const [project, usage, code] of cases) {
     const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": { ok: true, project } }, { usage });
