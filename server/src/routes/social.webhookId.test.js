@@ -4,7 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { dispatchPost, runScheduledPost } from "./social.js";
+import { dispatchPost, runScheduledPost, _setLookupImpl, _setUnvettedHostsForTests, _resetLookupImpl } from "./social.js";
 import { writeSocialStore } from "../lib/socialStore.js";
 
 // R40: a post that names a webhook (schedule runs, campaign retries, publish_post) goes to that
@@ -33,10 +33,16 @@ before(async () => {
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  hookUrl = `http://127.0.0.1:${server.address().port}`;
+  // Delivery refuses private addresses (#112 SSRF guard). "hook.test" is not in
+  // real DNS: the stub lookup answers the loopback fixture and the test seam
+  // lets that one name past the public-address check.
+  _setLookupImpl(async () => ({ address: "127.0.0.1", family: 4 }));
+  _setUnvettedHostsForTests(["hook.test"]);
+  hookUrl = `http://hook.test:${server.address().port}`;
 });
 
 after(async () => {
+  _resetLookupImpl();
   if (saved.key !== undefined) process.env.ZERNIO_API_KEY = saved.key;
   if (saved.account !== undefined) process.env.ZERNIO_TIKTOK_ACCOUNT_ID = saved.account;
   await new Promise((resolve) => server.close(resolve));
