@@ -68,6 +68,7 @@ import { cacheControlForOutput, publicAssetHeaders, setOutputSafetyHeaders } fro
 import { reconcileAllPersistedJobs } from "./src/lib/renderJobs.js";
 import { resumeAnimations } from "./src/lib/story/animateStage.js";
 import { createSceneScriptRouter, resumeSceneScriptShots } from "./src/routes/sceneScript.js";
+import { createCartoonRouter, resumeCartoonFilms } from "./src/routes/cartoon.js";
 import { createVisualLibraryRouter, resumeLibraryRerolls } from "./src/routes/visualLibrary.js";
 import { isSeedanceConfigured } from "./src/lib/videoGen/providers/seedance.js";
 import { hasLibass } from "./src/lib/kinetic/capability.js";
@@ -467,6 +468,7 @@ app.use("/api/longform",  requireAuth, withUserScope, requireVerifiedEmail,     
 app.use("/api/timeline",  requireAuth, withUserScope, requireVerifiedEmail,                      timelineRouter);
 // Scene scripts and the visual library spend the shared BytePlus balance: super admins only (Phase 1).
 app.use("/api/scene-script", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createSceneScriptRouter());
+app.use("/api/cartoon", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createCartoonRouter());
 app.use("/api/visual-library", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createVisualLibraryRouter());
 app.use("/api/pexels",    requireAuth, withUserScope, requireVerifiedEmail,                       pexelsRouter);
 app.use("/api/pixabay",   requireAuth, withUserScope, requireVerifiedEmail,                       pixabayRouter);
@@ -549,6 +551,9 @@ if (isSeedanceConfigured()) {
   resumeSceneScriptShots({ ledgerDir: DATA_DIR })
     .then((n) => { if (n) console.log(`[scene-script] collecting ${n} clip(s) ordered before the restart`); })
     .catch((e) => console.warn("[scene-script] clip resume skipped:", e?.message || e));
+  resumeCartoonFilms({ ledgerDir: DATA_DIR })
+    .then((n) => { if (n) console.log(`[cartoon] collecting ${n} clip(s) ordered before the restart`); })
+    .catch((e) => console.warn("[cartoon] clip resume skipped:", e?.message || e));
   resumeLibraryRerolls({ ledgerDir: DATA_DIR })
     .then((n) => { if (n) console.log(`[visual-library] collecting ${n} re-roll(s) ordered before the restart`); })
     .catch((e) => console.warn("[visual-library] re-roll resume skipped:", e?.message || e));
