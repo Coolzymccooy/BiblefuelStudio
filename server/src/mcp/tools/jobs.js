@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ok, fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "../toolResult.js";
 import { JOB_KINDS, NORMALISERS, clampTimeoutSec, outputUrl, waitForJob } from "../jobs.js";
+import { lacksPublishConsent, renderPublishPlan } from "../autoPublish.js";
 
 const DEFAULT_LIST_LIMIT = 20;
 
@@ -45,9 +46,6 @@ const jobsGet = {
 const POSTING_JOB_TYPE = "campaign_auto_post";
 const AUTO_PUBLISH_JOB_TYPES = new Set(["render_video", "render_waveform"]);
 
-/** Fails closed: no agent key (or no publish switch on it) means no consent to post. */
-const lacksPublishConsent = (ctx) => !ctx.agentKey?.publishAllowed;
-
 /** Retrying a posting job renders and posts: it needs the publish switch and spends renders and publishes. */
 async function retryPostingJob(ctx, path) {
   if (lacksPublishConsent(ctx)) return fail("PUBLISH_NOT_ALLOWED", PUBLISH_NOT_ALLOWED_MESSAGE);
@@ -58,35 +56,16 @@ async function retryPostingJob(ctx, path) {
 }
 
 /**
- * True when the user's Postiz auto-publish would post a finished render.
- * If the setting cannot be read, assume it would (a retry that may post counts as one).
- */
-async function autoPublishIsOn(ctx) {
-  try {
-    const setting = await ctx.api.call("GET", "/api/postiz/auto-publish");
-    return Boolean(setting?.enabled) && Array.isArray(setting?.platforms) && setting.platforms.length > 0;
-  } catch (err) {
-    // Matched by name: importing ApiError from ../api.js would load auth.js
-    // (and its env-at-import paths) whenever this tool module is imported.
-    if (err?.name === "ApiError") return true;
-    throw err;
-  }
-}
-
-/**
  * Retrying a render spends a render. Without consent the retry is queued with
  * autoPublish off, so it can never post. With consent it posts only if the
- * user's own Postiz auto-publish is on, and then it also spends a publish.
+ * user's own Postiz auto-publish is on, and then it also spends a publish,
+ * charged with the render in one atomic call.
  */
 async function retryRender(ctx, path) {
-  const refused = await ctx.chargeCap("renders", 1);
+  const plan = await renderPublishPlan(ctx);
+  const refused = await ctx.chargeCap({ renders: 1, ...plan.charge });
   if (refused) return refused;
-  if (lacksPublishConsent(ctx)) return ok(await queueRetry(ctx, path, { autoPublish: false }));
-  if (await autoPublishIsOn(ctx)) {
-    const publishRefused = await ctx.chargeCap("publishes", 1);
-    if (publishRefused) return publishRefused;
-  }
-  return ok(await queueRetry(ctx, path));
+  return ok(await queueRetry(ctx, path, plan.suppress ? { autoPublish: false } : undefined));
 }
 
 async function queueRetry(ctx, path, body) {

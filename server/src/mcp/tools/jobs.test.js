@@ -280,6 +280,22 @@ test("a posting-job retry refused on publishes spends no render either (one atom
   keyStore.revokeKey("u_pub", made.key.id);
 });
 
+test("a render retry that would auto-post, refused on publishes, spends no render either (one atomic charge)", async () => {
+  writeSocialStore(userDir("u_pub"), { postiz: { autoPublish: true, autoPublishPlatforms: ["tiktok"] } });
+  seedJobs([renderJob()]);
+  const made = keyStore.createKey("u_pub", "render-retry-no-publishes");
+  keyStore.updateKey("u_pub", made.key.id, { publishAllowed: true, caps: { publishes: 0 } });
+  const client = await connect(made.plain);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.bucket, "publishes");
+  assert.equal(readJobRows().length, 1);
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 0);
+  keyStore.revokeKey("u_pub", made.key.id);
+  writeSocialStore(userDir("u_pub"), { postiz: { autoPublish: false, autoPublishPlatforms: [] } });
+});
+
 // ---- Consent fails closed: a context without an agent key never posts ----
 
 const jobsRetryDef = jobsTools.find((def) => def.name === "jobs_retry");
