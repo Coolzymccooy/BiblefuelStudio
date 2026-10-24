@@ -55,3 +55,13 @@ describe("pixabayHitToVideo", () => {
     assert.deepEqual(video.files, []);
   });
 });
+
+test("a hit with a user image but no picture_id has no image (no broken vimeo URL)", () => {
+  const video = pixabayHitToVideo({ id: 9, duration: 2, pageURL: "u", userImageURL: "https://u/x.jpg" });
+  assert.equal(video.image, undefined);
+});
+
+test("a hit with a picture_id gets its vimeo still", () => {
+  const video = pixabayHitToVideo({ id: 10, duration: 2, pageURL: "u", picture_id: "abc" });
+  assert.equal(video.image, "https://i.vimeocdn.com/video/abc_640x360.jpg");
+});

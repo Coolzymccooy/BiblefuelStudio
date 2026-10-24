@@ -19,7 +19,7 @@ export function pixabayHitToVideo(v) {
     id: v.id,
     duration: v.duration,
     url: v.pageURL,
-    image: v.userImageURL || v.picture_id ? `https://i.vimeocdn.com/video/${v.picture_id}_640x360.jpg` : undefined,
+    image: v.picture_id ? `https://i.vimeocdn.com/video/${v.picture_id}_640x360.jpg` : undefined,
     previewUrl: pickPreview?.url,
     files: SIZES.filter((s) => files[s]).map((s) => ({
       quality: s,
