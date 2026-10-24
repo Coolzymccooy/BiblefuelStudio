@@ -548,3 +548,10 @@ test("ambient_update drops refuses a reference spanning a whole chapter or more 
   assert.ok(!accepted.isError, JSON.stringify(accepted.structuredContent));
   assert.equal(calls.filter((c) => c.method === "PATCH").length, 1);
 });
+
+test("descriptions say renders wait their turn and how to voice more verses than one day's tts cap", () => {
+  assert.match(byName.ambient_render.description, /one at a time/);
+  assert.match(byName.ambient_render.description, /waiting for another job to finish/);
+  assert.match(byName.ambient_step.description, /several days/);
+  assert.match(byName.ambient_plan.description, /several days/);
+});

@@ -99,7 +99,7 @@ const ambientPlan = {
     "Suggest Bible verse references for the session's theme and space them across its length (by default one every fifteen minutes; count asks for a number, spread over the whole length). " +
     "It REPLACES every verse the session has (any voicing is lost; pictures are kept by position). The words themselves are looked up verbatim later by ambient_step voice. " +
     "Waits for the answer (a few seconds). Costs one unit of the plan's daily scripts quota; no daily cap. Refused while the session is busy. " +
-    "Then adjust with ambient_update section drops if you like, and call ambient_step voice. Long sessions: each verse later costs one daily tts and one daily images, so ask for fewer verses with count if the daily caps are tight.",
+    "Then adjust with ambient_update section drops if you like, and call ambient_step voice. Long sessions: each verse later costs one daily tts and one daily images, so if the session needs more verses than the daily caps have left, plan fewer with count, voice them, and add the rest with ambient_update section drops over several days.",
   inputSchema: {
     id: AMBIENT_ID.describe("The session id."),
     count: z.number().int().min(1).max(200).optional().describe("How many verses (default: one per fifteen minutes)."),
@@ -155,7 +155,7 @@ const ambientStep = {
   title: "Voice the verses or make the pictures",
   description:
     "Run one step of an ambient session in the background; both return a handle of kind ambient: call jobs_wait with kind ambient and the session id. " +
-    "voice: look up every verse not yet voiced, word for word, and speak it. Costs one daily tts per verse it speaks (charged up front) and one unit of the plan's daily tts quota. Refused for music-only sessions. " +
+    "voice: look up every verse not yet voiced, word for word, and speak it. Costs one daily tts per verse it speaks (charged up front) and one unit of the plan's daily tts quota. It speaks every unvoiced verse at once, so more verses than the daily tts cap has left are refused (MCP_CAP_REACHED): add verses with ambient_update section drops and voice them over several days. Refused for music-only sessions. " +
     "images: make one picture per movement (one per verse, or one for a music-only session) for every movement without one; force: true remakes them all, movementId remakes just that one. A picture may be reused from your image library instead of generated. " +
     "Costs one daily images per picture it will make (charged up front; reused ones are not given back) and one unit of the plan's daily image quota. " +
     "Each takes seconds per verse or picture. jobs_wait: done with phase ready_to_render when the session has what it needs; failed says how many verses or pictures are missing (often a provider or quota limit: run the step again later). " +
@@ -334,7 +334,7 @@ const ambientRender = {
   description:
     "Build the music bed and render the session into one video: the pictures, the spoken verses over the music, and the captions. Every movement needs a picture (ambient_step images), the bed needs music (ambient_update bed) and every verse must be voiced (UNVOICED_VERSES otherwise; not for music-only sessions); it is refused while a step is still running (SESSION_BUSY). A refused call costs nothing. " +
     "Returns a handle of kind ambient: call jobs_wait with kind ambient and the session id, again and again, until done; output.path is the video, which publish_youtube takes (then ambient_project mark_published). " +
-    "Long sessions take a long time: building the bed takes minutes and the render runs at about real time or slower, so a two-hour session can take an hour or more and a ten-hour one many hours. " +
+    "Long sessions take a long time: building the bed takes minutes and the render runs at about real time or slower, so a two-hour session can take an hour or more and a ten-hour one many hours. Heavy jobs run one at a time on this server: behind another render or a vocal removal it waits its turn first (jobs_wait shows phase \"waiting for another job to finish\"). " +
     "A server deploy or restart stops a running render: jobs_wait then reports failed saying so; call ambient_cancel, then ambient_render again (a bed already built is reused). " +
     "Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up). It never posts anywhere. ambient_cancel stops it.",
   inputSchema: { id: AMBIENT_ID.describe("The session id.") },
