@@ -119,6 +119,34 @@ describe("GET /api/ambient/:id", () => {
     assert.equal(res.status, 404);
     assert.equal(res.body.ok, false);
   });
+
+  /** Store the project as a previous server process last wrote it. */
+  function writtenBeforeThisServer(project, fields) {
+    const file = path.join(dataDir, "ambient", `${project.projectId}.json`);
+    fs.writeFileSync(file, JSON.stringify({ ...project, ...fields, updatedAt: Date.now() - 24 * 3600_000 }));
+  }
+
+  test("a stage a server restart killed is reported as interrupted", async () => {
+    for (const status of ["voicing", "generating_images", "assembling", "rendering"]) {
+      const p = await createSession();
+      writtenBeforeThisServer(p, { status });
+      const res = await request(app).get(`/api/ambient/${p.projectId}`);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.interrupted, true, status);
+      assert.equal(res.body.project.status, status, "the project itself is left as stored");
+    }
+  });
+
+  test("a stage this server is running, and an idle session, are not interrupted", async () => {
+    const busy = await createSession();
+    writeProject(dataDir, { ...busy, status: "rendering" });
+    const live = await request(app).get(`/api/ambient/${busy.projectId}`);
+    assert.equal(live.body.interrupted, undefined);
+    const idle = await createSession();
+    writtenBeforeThisServer(idle, { status: "ready_to_render" });
+    const old = await request(app).get(`/api/ambient/${idle.projectId}`);
+    assert.equal(old.body.interrupted, undefined);
+  });
 });
 
 describe("DELETE /api/ambient/:id", () => {

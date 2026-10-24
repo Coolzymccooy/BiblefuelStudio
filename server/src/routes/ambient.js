@@ -127,20 +127,38 @@ router.get("/", (req, res) => {
   return res.json({ ok: true, projects: listProjects(req.ctx.dataDir) });
 });
 
-// GET /:id — the full project, with live render progress folded in.
+/**
+ * When this server process started. Every stage writes its project when it
+ * starts and as it goes, so a project still marked busy that was last written
+ * before this moment belongs to a process that is gone: a deploy or restart
+ * killed the stage, and nothing will ever move it on.
+ */
+const SERVER_STARTED_AT = Date.now();
+const BUSY_STATUSES = new Set([
+  AMBIENT_STATUS.VOICING, AMBIENT_STATUS.GENERATING_IMAGES, AMBIENT_STATUS.ASSEMBLING, AMBIENT_STATUS.RENDERING,
+]);
+
+function interruptedByRestart(project) {
+  return BUSY_STATUSES.has(project.status) && Number(project.updatedAt) < SERVER_STARTED_AT;
+}
+
+// GET /:id — the full project, with live render progress folded in, and
+// `interrupted: true` when a restart killed the stage it shows as running
+// (the project is left as stored; Cancel resets it).
 router.get("/:id", (req, res) => {
   const project = loadOr404(req, res);
   if (!project) return undefined;
+  const interrupted = interruptedByRestart(project) ? { interrupted: true } : {};
   // The in-memory job knows the current percent; the project file may be up to
   // one throttle window behind it.
   const jobId = project.render?.jobId;
   if (jobId) {
     const job = getRenderJob(jobId);
     if (job && typeof job.percent === "number") {
-      return res.json({ ok: true, project: { ...project, render: { ...project.render, percent: job.percent } } });
+      return res.json({ ok: true, project: { ...project, render: { ...project.render, percent: job.percent } }, ...interrupted });
     }
   }
-  return res.json({ ok: true, project });
+  return res.json({ ok: true, project, ...interrupted });
 });
 
 // DELETE /:id
