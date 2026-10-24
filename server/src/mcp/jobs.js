@@ -296,7 +296,7 @@ function fromPublish(payload, ctx) {
 
 const routeFor = (prefix) => (id) => `${prefix}${routeSegment(id)}`;
 
-/** @type {Record<string, { route: (id: string, projectId?: string) => string, normalise: (payload: object, ctx: { outputUrl: (p: string) => string }) => JobHandle, needsProjectId?: boolean }>} */
+/** @type {Record<string, { route: (id: string, projectId?: string) => string, normalise: (payload: object, ctx: { outputUrl: (p: string) => string, outputDir?: string }) => JobHandle, needsProjectId?: boolean, needsOutputDir?: boolean }>} */
 export const NORMALISERS = {
   job: { route: routeFor("/api/jobs/"), normalise: fromJobsRoute },
   captioned: { route: routeFor("/api/render/captioned-video-status/"), normalise: fromCaptioned },
@@ -321,11 +321,11 @@ const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  *
  * @param {{ call: Function }} api
  * @param {{ kind: string, id: string, projectId?: string, timeoutSec?: number,
- *   outputUrl?: (p: string) => string, sleep?: (ms: number) => Promise<void>, now?: () => number }} options
+ *   outputUrl?: (p: string) => string, outputDir?: string, sleep?: (ms: number) => Promise<void>, now?: () => number }} options
  * @returns {Promise<JobHandle>}
  */
 export async function waitForJob(api, options) {
-  const { kind, id, projectId, timeoutSec, outputUrl: toUrl = (p) => outputUrl(p, ""), sleep = realSleep, now = Date.now } = options;
+  const { kind, id, projectId, timeoutSec, outputUrl: toUrl = (p) => outputUrl(p, ""), outputDir, sleep = realSleep, now = Date.now } = options;
   const entry = Object.hasOwn(NORMALISERS, kind) ? NORMALISERS[kind] : null;
   if (!entry) throw Object.assign(new Error(`Unknown job kind "${kind}". Use one of: ${JOB_KINDS.join(", ")}.`), { code: "BAD_KIND" });
   if (entry.needsProjectId && !projectId) throw Object.assign(new Error(`A ${kind} job needs its projectId.`), { code: "NEEDS_PROJECT_ID" });
@@ -334,7 +334,7 @@ export async function waitForJob(api, options) {
   const deadline = now() + clampTimeoutSec(timeoutSec) * 1000;
   for (;;) {
     const payload = await api.call("GET", entry.route(id, projectId));
-    const handle = { ...entry.normalise(payload, { outputUrl: toUrl }), id, ...(projectId ? { projectId } : {}) };
+    const handle = { ...entry.normalise(payload, { outputUrl: toUrl, outputDir }), id, ...(projectId ? { projectId } : {}) };
     const remaining = deadline - now();
     if (TERMINAL.has(handle.status) || remaining <= 0) return handle;
     await sleep(Math.min(POLL_MS, remaining));

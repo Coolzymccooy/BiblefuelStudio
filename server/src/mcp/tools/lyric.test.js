@@ -395,3 +395,36 @@ test("lyric_set_lyrics says the lyrics come from the user, not from transcribe",
   assert.match(description, /Ask the user for the lyrics/);
   assert.match(description, /transcribe/);
 });
+
+/** A finished lyric render saved the way the render route saves one, with its video in the user's outputs. */
+async function savedLyricRender(jobId, projectId) {
+  const { resolveScopeDirs } = await import("../../lib/paths.js");
+  const { persistJob } = await import("../../lib/renderJobs.js");
+  const { dataDir, outputDir } = resolveScopeDirs({ sub: USER.id, email: USER.email, role: USER.role });
+  const file = path.join(outputDir, `lyric-${jobId}.mp4`);
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(file, "video");
+  persistJob(dataDir, { jobId, userId: USER.id, projectId, status: "done", outputPath: file });
+  return fs.realpathSync(file);
+}
+
+test("a real finished lyric_render handle gives output.path as the absolute real path and output.url as the /outputs link (#121)", async () => {
+  _setScopeForTests(null);
+  const real = await savedLyricRender("abc-121", "lv_121");
+  const result = await client.callTool({ name: "jobs_wait", arguments: { kind: "lyric_render", id: "abc-121", projectId: "lv_121", timeoutSec: 1 } });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  const { status, output } = result.structuredContent;
+  assert.equal(status, "done");
+  assert.equal(output.path, real);
+  assert.ok(path.isAbsolute(output.path));
+  assert.match(output.url, /\/outputs\/lyric-abc-121\.mp4$/);
+});
+
+test("the job resource reads a finished lyric_render with the same absolute path (#121)", async () => {
+  _setScopeForTests(null);
+  const real = await savedLyricRender("def-121", "lv_121");
+  const { contents } = await client.readResource({ uri: "biblefuel://jobs/lyric_render/def-121?projectId=lv_121" });
+  const handle = JSON.parse(contents[0].text);
+  assert.equal(handle.output.path, real);
+  assert.match(handle.output.url, /\/outputs\/lyric-def-121\.mp4$/);
+});

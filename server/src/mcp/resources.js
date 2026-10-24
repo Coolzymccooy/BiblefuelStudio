@@ -2,6 +2,7 @@ import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { JOB_KINDS, NORMALISERS, outputUrl } from "./jobs.js";
 import { jobAddressProblem } from "./jobHandle.js";
+import { ownOutputDir } from "./mediaPath.js";
 
 /**
  * The job handle as an MCP resource, for clients that prefer reading resources
@@ -83,8 +84,9 @@ export async function readJobHandle(ctx, address) {
   const entry = NORMALISERS[kind];
   try {
     const payload = await ctx.api.call("GET", entry.route(id, projectId));
+    const outputDir = entry.needsOutputDir ? await ownOutputDir(ctx.user) : undefined;
     // Inside the try: a payload the normaliser cannot read is the server's failure, answered as INTERNAL.
-    const handle = entry.normalise(payload, { outputUrl: (p) => outputUrl(p, ctx.publicBase) });
+    const handle = entry.normalise(payload, { outputUrl: (p) => outputUrl(p, ctx.publicBase), outputDir });
     return withJobRow(kind, { ...handle, id, ...(projectId ? { projectId } : {}) }, payload);
   } catch (err) {
     if (err?.name === "ApiError") throw fromApiError(err);

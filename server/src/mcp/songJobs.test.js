@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import { NORMALISERS, JOB_KINDS, outputUrl, waitForJob } from "./jobs.js";
 
 const BASE = "https://biblefuel.tiwaton.co.uk";
@@ -104,4 +105,14 @@ test("moments: a render a restart stopped is failed and says what to do; no rend
   const none = moment(null);
   assert.equal(none.status, "failed");
   assert.match(none.error, /moments_render/);
+});
+
+test("lyric_render: with the owner's output folder the path is absolute and the url stays the /outputs link (#121)", () => {
+  const outputDir = path.resolve("/srv/users/u1/outputs");
+  const done = NORMALISERS.lyric_render.normalise({ job: { jobId: "j9", status: "done", progress: 100, file: "lyric-9.mp4" } }, { outputUrl: toUrl, outputDir });
+  assert.deepEqual(done.output, { url: `${BASE}/outputs/lyric-9.mp4`, path: path.join(outputDir, "lyric-9.mp4") });
+});
+
+test("lyric_render is the kind that asks its callers for the owner's output folder", () => {
+  assert.equal(NORMALISERS.lyric_render.needsOutputDir, true);
 });

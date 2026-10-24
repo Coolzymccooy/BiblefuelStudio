@@ -4,6 +4,7 @@ import { JOB_KINDS, NORMALISERS, clampTimeoutSec, outputUrl, waitForJob } from "
 import { lacksPublishConsent, renderPublishPlan } from "../autoPublish.js";
 import { renderQuotaRefusal } from "../planQuota.js";
 import { jobAddressProblem } from "../jobHandle.js";
+import { ownOutputDir } from "../mediaPath.js";
 
 const DEFAULT_LIST_LIMIT = 20;
 
@@ -132,12 +133,14 @@ const jobsWait = {
     if (NORMALISERS[kind].needsProjectId && !projectId) {
       return fail("BAD_INPUT", `A ${kind} job needs projectId as well as id: pass both from the handle that started it.`);
     }
+    const outputDir = NORMALISERS[kind].needsOutputDir ? await ownOutputDir(ctx.user) : undefined;
     const handle = await waitImpl(ctx.api, {
       kind,
       id,
       projectId,
       timeoutSec: clampTimeoutSec(timeoutSec),
       outputUrl: (p) => outputUrl(p, ctx.publicBase),
+      ...(outputDir ? { outputDir } : {}),
     });
     return ok(handle);
   },

@@ -1,3 +1,4 @@
+import path from "node:path";
 import { toHandle, toPercent, text, routeSegment } from "./jobHandle.js";
 
 /**
@@ -49,16 +50,24 @@ export function fromLyricAlign(payload, ctx) {
   return { ...handle, lines: lineCounts(project.lines), ...(warning ? { warning } : {}) };
 }
 
-/** The render route names the video by its file name in the user's outputs: as an /outputs/ path other tools accept. */
-function lyricVideoPath(file) {
+/**
+ * The render route names the video by its file name, flat in the user's outputs. Like every other kind, the
+ * handle's path is the real file (in `ctx.outputDir`, the key owner's own output folder, which jobs_wait and
+ * the job resource pass for this kind) and its url the /outputs/ link. Without the folder the path stays the
+ * /outputs/ form, which the media tools also accept.
+ */
+function lyricVideo(file, outputDir) {
   const name = text(file)?.split(/[\\/]/).pop();
-  return name ? `/outputs/${name}` : null;
+  if (!name) return { file: null, url: null };
+  const link = `/outputs/${name}`;
+  return { file: outputDir ? path.join(outputDir, name) : link, url: link };
 }
 
 export function fromLyricRender(payload, ctx) {
   const job = payload?.job || {};
+  const video = lyricVideo(job.file, ctx.outputDir);
   return toHandle(
-    { kind: "lyric_render", id: job.jobId, rawStatus: job.status, percent: toPercent(job.progress), file: lyricVideoPath(job.file), error: job.error },
+    { kind: "lyric_render", id: job.jobId, rawStatus: job.status, percent: toPercent(job.progress), ...video, error: job.error },
     ctx,
   );
 }
@@ -90,6 +99,7 @@ export const SONG_NORMALISERS = {
     route: (id, projectId) => `/api/lyric-video/${encoded(projectId, "projectId")}/render/${encoded(id)}`,
     normalise: fromLyricRender,
     needsProjectId: true,
+    needsOutputDir: true,
   },
   moments: { route: (id) => `/api/moments/${encoded(id)}`, normalise: fromMoments },
 };
