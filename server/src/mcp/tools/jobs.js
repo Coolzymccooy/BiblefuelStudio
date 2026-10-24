@@ -45,7 +45,8 @@ const jobsGet = {
 const POSTING_JOB_TYPE = "campaign_auto_post";
 const AUTO_PUBLISH_JOB_TYPES = new Set(["render_video", "render_waveform"]);
 
-const lacksPublishConsent = (ctx) => Boolean(ctx.agentKey && !ctx.agentKey.publishAllowed);
+/** Fails closed: no agent key (or no publish switch on it) means no consent to post. */
+const lacksPublishConsent = (ctx) => !ctx.agentKey?.publishAllowed;
 
 /** Retrying a posting job renders and posts: it needs the publish switch and spends renders and publishes. */
 async function retryPostingJob(ctx, path) {

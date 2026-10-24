@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
-import { _setWaitForJobForTests } from "./jobs.js";
+import jobsTools, { _setWaitForJobForTests } from "./jobs.js";
+import { fakeMcpCtx } from "../../../test/helpers/fakeMcpCtx.js";
 
 const USERS = [
   { id: "u_user", email: "user@example.com", role: "user", emailVerified: true },
@@ -277,4 +278,29 @@ test("a posting-job retry refused on publishes spends no render either (one atom
   assert.equal(used.renders, 0);
   assert.equal(used.publishes, 0);
   keyStore.revokeKey("u_pub", made.key.id);
+});
+
+// ---- Consent fails closed: a context without an agent key never posts ----
+
+const jobsRetryDef = jobsTools.find((def) => def.name === "jobs_retry");
+
+test("jobs_retry with no agentKey refuses a posting job and never queues it", async () => {
+  const { ctx, calls, charges } = fakeMcpCtx({ "GET /api/jobs/job_camp": { ok: true, job: campaignJob() } });
+  const result = await jobsRetryDef.handler(ctx, { id: "job_camp" });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error, "PUBLISH_NOT_ALLOWED");
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["GET /api/jobs/job_camp"]);
+  assert.deepEqual(charges, []);
+});
+
+test("jobs_retry with no agentKey queues a render with auto-publish off", async () => {
+  const { ctx, calls, charges } = fakeMcpCtx({
+    "GET /api/jobs/job_render": { ok: true, job: renderJob() },
+    "POST /api/jobs/job_render/retry": { ok: true, job: renderJob({ id: "job_new", status: "queued" }) },
+  });
+  const result = await jobsRetryDef.handler(ctx, { id: "job_render" });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["GET /api/jobs/job_render", "POST /api/jobs/job_render/retry"]);
+  assert.deepEqual(calls[1].opts, { body: { autoPublish: false } });
+  assert.deepEqual(charges, [{ bucket: "renders", amount: 1 }]);
 });
