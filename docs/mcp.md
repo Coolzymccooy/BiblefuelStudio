@@ -277,7 +277,7 @@ The public host sits behind a proxy that rejects bodies over 100 MB. For a large
 
 ## Pipelines
 
-Each pipeline is an ordered list of tools. Tools marked **coming** are planned and are not in the server yet: a tool that is not in `tools/list` does not exist, so do not call it. Call `whoami` and `capabilities` before any pipeline.
+Each pipeline is an ordered list of tools. A tool that is not in `tools/list` does not exist for your key, so do not call it. Call `whoami` and `capabilities` before any pipeline.
 
 ### Media: import, transcribe, trim (available now)
 
