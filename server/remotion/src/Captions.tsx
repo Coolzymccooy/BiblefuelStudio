@@ -7,7 +7,7 @@ import type { Line, RenderData } from "./types";
 import { SANS, SERIF, SERIF_ITALIC } from "./fonts";
 
 export const GOLD = "#F2C46D";
-const SHADOW = "0 4px 24px rgba(0,0,0,0.85), 0 2px 6px rgba(0,0,0,0.9)";
+export const SHADOW = "0 4px 24px rgba(0,0,0,0.85), 0 2px 6px rgba(0,0,0,0.9)";
 
 function useScale() {
   const { width, height } = useVideoConfig();
@@ -124,7 +124,8 @@ export const Captions: React.FC<{ data: RenderData }> = ({ data }) => {
   );
 };
 
-export const EndCard: React.FC<{ data: RenderData }> = ({ data }) => {
+// Cartoon renders reuse this card, so it reads only the two fields it shows.
+export const EndCard: React.FC<{ data: Pick<RenderData, "endCard" | "brand"> }> = ({ data }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { s, height } = useScale();

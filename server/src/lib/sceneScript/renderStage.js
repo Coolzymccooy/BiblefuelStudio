@@ -26,7 +26,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REMOTION_ENTRY = path.resolve(HERE, "..", "..", "..", "remotion", "src", "index.ts");
 export const COMPOSITION_ID = "SceneScript";
 export const MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
-const FONTS = Object.freeze({
+export const FONTS = Object.freeze({
   sans: "Montserrat-Variable.ttf",
   serif: "CormorantGaramond-Variable.ttf",
   serifItalic: "CormorantGaramond-Italic-Variable.ttf",
@@ -51,7 +51,8 @@ export function getServeUrl() {
   return bundlePromise;
 }
 
-async function remotionRender({ serveUrl, inputProps, outputLocation, onProgress, signal }) {
+/** Render one composition of the bundle (Scene script's by default; Cartoon passes its own id). */
+export async function remotionRender({ serveUrl, inputProps, outputLocation, onProgress, signal, compositionId = COMPOSITION_ID }) {
   const { selectComposition, renderMedia, makeCancelSignal } = await import("@remotion/renderer");
   const { cancelSignal, cancel } = makeCancelSignal();
   const onAbort = () => cancel();
@@ -59,7 +60,7 @@ async function remotionRender({ serveUrl, inputProps, outputLocation, onProgress
   if (signal?.aborted) cancel();
   const chromiumOptions = { enableMultiProcessOnLinux: true };
   try {
-    const composition = await selectComposition({ serveUrl, id: COMPOSITION_ID, inputProps, chromiumOptions });
+    const composition = await selectComposition({ serveUrl, id: compositionId, inputProps, chromiumOptions });
     await renderMedia({
       composition, serveUrl, codec: "h264", crf: 20, audioCodec: "aac", outputLocation, inputProps,
       concurrency: Number(process.env.REMOTION_CONCURRENCY) || 2,
@@ -145,6 +146,7 @@ async function measureLoudness(deps, file, signal) {
   try { return JSON.parse(m[0]); } catch { return null; }
 }
 
+/** Two-pass loudness to -14 LUFS, then shrink under the upload limit if needed. Cartoon reuses it. */
 async function finish(deps, raw, out, signal) {
   const stats = await measureLoudness(deps, raw, signal);
   const af = stats
@@ -157,6 +159,8 @@ async function finish(deps, raw, out, signal) {
     fs.renameSync(smaller, out);
   }
 }
+
+export { finish as finishLoudness };
 
 const slug = (t) => String(t || "scene-script").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || "scene-script";
 

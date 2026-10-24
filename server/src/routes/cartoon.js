@@ -15,6 +15,10 @@ import { EXAMPLES, PLACEHOLDER } from "../lib/cartoon/examples.js";
 import { writeCartoonScript } from "../lib/cartoon/writer.js";
 import { makePortrait } from "../lib/cartoon/images.js";
 import { startFilm, isFilming, cancelFilm, resumeFilm } from "../lib/cartoon/filmStage.js";
+import {
+  startCartoonRender, isRenderingCartoon, cancelCartoonRender, cartoonRenderBlockers, cartoonRenderWarnings,
+  recoverInterruptedCartoonRender,
+} from "../lib/cartoon/renderStage.js";
 import { listShelf, shelve, fromShelf, removeFromShelf } from "../lib/cartoon/shelf.js";
 import {
   applyEdit, rescript, scriptDraft, fits, tooLongSentence, checkOf, isLocked,
@@ -22,12 +26,13 @@ import {
 } from "../lib/cartoon/edits.js";
 
 /**
- * Cartoon mode API (spec section 7): script, cast portraits, shot list, film.
+ * Cartoon mode API (spec section 7): script, cast portraits, shot list, film,
+ * render.
  * Super admins only, like scene scripts: one BytePlus balance pays for every
  * clip, so the spend ledger lives in the shared DATA_DIR. Mounted behind
  * requireAuth + withUserScope + requireVerifiedEmail + requireSuperAdmin.
  *
- * Portraits and the film run in the background; the page polls GET /:id.
+ * Portraits, the film and the render run in the background; the page polls GET /:id.
  * Errors are always { ok: false, code, error } with a sentence a person can
  * act on. Express 4 does not catch a rejected async handler, so every handler
  * goes through `handle`, which answers 500 instead of leaving the request
@@ -47,8 +52,7 @@ const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : undefi
 const portraitRuns = new Set();
 export const isMakingPortraits = (id) => portraitRuns.has(id);
 
-/** Task 13 adds the render; until then a cartoon is never rendering. */
-const isRendering = () => false;
+const isRendering = isRenderingCartoon;
 
 /** A portrait left "making" by a restart has no worker; show it as stopped so it can be made again. */
 function recoverPortraits(project) {
@@ -73,6 +77,13 @@ function withoutFile(value) {
 
 const publicClip = (clip) => (clip ? { ...withoutFile(clip), previous: withoutFile(clip.previous) } : null);
 
+/** The render state with its URL; the stored file names stay on the server. */
+function publicRender(render) {
+  if (!render || typeof render !== "object") return { status: "idle" };
+  const { previous: _previous, ...rest } = withoutFile(render);
+  return rest;
+}
+
 function blockersOf(project) {
   const blockers = [];
   const waiting = unreadyCast(project);
@@ -81,9 +92,13 @@ function blockersOf(project) {
   return blockers;
 }
 
-/** The project as the page sees it: stored fields plus what is derived from them. */
-function view(raw) {
-  const project = recoverPortraits(raw);
+/**
+ * The project as the page sees it: stored fields plus what is derived from
+ * them. A render left running by a restart shows as stopped. `renderBlockers`
+ * stop a render; `renderWarnings` (shots made from an out-of-date frame) do not.
+ */
+function view(raw, ctx) {
+  const project = recoverInterruptedCartoonRender(recoverPortraits(raw));
   const check = checkOf(project);
   const { source = {}, ...rest } = project;
   return {
@@ -96,6 +111,9 @@ function view(raw) {
     estimate: estimateFilm(project),
     running: { pictures: portraitRuns.has(project.id), film: isFilming(project.id), render: isRendering(project.id) },
     blockers: blockersOf(project),
+    render: publicRender(project.render),
+    renderBlockers: ctx ? cartoonRenderBlockers(ctx, project) : [],
+    renderWarnings: cartoonRenderWarnings(project),
   };
 }
 
@@ -276,13 +294,13 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     const text = await verseTextFor(draft.fresh.meta.verse.reference, lookup);
     const fields = { ...draft.fresh, meta: { ...draft.fresh.meta, verse: { ...draft.fresh.meta.verse, text } } };
     const project = createProject(req.ctx.dataDir, fields);
-    return res.status(201).json({ ok: true, project: view(project) });
+    return res.status(201).json({ ok: true, project: view(project, req.ctx) });
   }));
 
   router.get("/:id", handle((req, res) => {
     const project = load(req, res);
     if (!project) return undefined;
-    return res.json({ ok: true, project: view(project), month: ledgerSummary(ledgerDir), seedance: isSeedanceConfigured() });
+    return res.json({ ok: true, project: view(project, req.ctx), month: ledgerSummary(ledgerDir), seedance: isSeedanceConfigured() });
   }));
 
   router.patch("/:id", handle(async (req, res) => {
@@ -318,7 +336,7 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     if (refused === "RUNNING") return fail(res, 409, "RUNNING", "Wait for the film and portraits to finish before changing the script.");
     if (refused === "LOCKED") return fail(res, 409, "LOCKED", "The lines are locked once a clip has been ordered. Start over to change them; the clips stay in the library.");
     if (!saved) return fail(res, 404, "NOT_FOUND", NOT_FOUND);
-    return res.json({ ok: true, project: view(saved) });
+    return res.json({ ok: true, project: view(saved, req.ctx) });
   }));
 
   router.delete("/:id", handle((req, res) => {
@@ -352,7 +370,7 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     });
     if (!marked) return fail(res, 404, "NOT_FOUND", NOT_FOUND);
     runPortraits(req.ctx, project.id, present, deps.image);
-    return res.json({ ok: true, project: view(marked) });
+    return res.json({ ok: true, project: view(marked, req.ctx) });
   }));
 
   router.post("/:id/cast/from-shelf", handle((req, res) => {
@@ -368,7 +386,7 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
       return shelfFailure(res, e);
     }
     const saved = pulled.shotListApproved ? updateProject(req.ctx.dataDir, project.id, (p) => ({ ...p, shotListApproved: false })) : pulled;
-    return res.json({ ok: true, project: view(saved || pulled) });
+    return res.json({ ok: true, project: view(saved || pulled, req.ctx) });
   }));
 
   router.post("/:id/cast/:name/approve", handle((req, res) => {
@@ -382,7 +400,7 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
       ? { ...p, cast: { ...p.cast, [name]: { ...p.cast[name], approved: true } } }
       : null));
     if (!saved) return fail(res, 409, "NO_PORTRAIT", `Make ${name}'s portrait first.`);
-    return res.json({ ok: true, project: view(saved) });
+    return res.json({ ok: true, project: view(saved, req.ctx) });
   }));
 
   router.post("/:id/cast/:name/shelve", handle((req, res) => {
@@ -406,7 +424,7 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     }
     const saved = updateProject(req.ctx.dataDir, project.id, (p) => ({ ...p, shotListApproved: true }));
     if (!saved) return fail(res, 404, "NOT_FOUND", NOT_FOUND);
-    return res.json({ ok: true, project: view(saved) });
+    return res.json({ ok: true, project: view(saved, req.ctx) });
   }));
 
   router.post("/:id/film/estimate", handle((req, res) => {
@@ -439,13 +457,31 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     }
     const started = startFilm(req.ctx, project.id, { only, ledgerDir, deps: deps.film });
     if (!started) return fail(res, 409, "RUNNING", "The film is already being made.");
-    return res.json({ ok: true, project: view(started) });
+    return res.json({ ok: true, project: view(started, req.ctx) });
   }));
 
   router.post("/:id/film/cancel", handle((req, res) => {
     const project = load(req, res);
     if (!project) return undefined;
     return res.json({ ok: true, stopping: cancelFilm(project.id) });
+  }));
+
+  router.post("/:id/render", handle((req, res) => {
+    const project = load(req, res);
+    if (!project) return undefined;
+    if (isRendering(project.id)) return fail(res, 409, "RUNNING", "This cartoon is already rendering.");
+    if (isFilming(project.id) || portraitRuns.has(project.id)) return fail(res, 409, "BUSY", "Wait for the film and portraits to finish first.");
+    const blockers = cartoonRenderBlockers(req.ctx, project);
+    if (blockers.length) return fail(res, 409, "NOT_READY", blockers[0], { blockers });
+    const started = startCartoonRender(req.ctx, project.id, { deps: deps.render });
+    if (!started) return fail(res, 409, "RUNNING", "This cartoon is already rendering.");
+    return res.json({ ok: true, project: view(started, req.ctx) });
+  }));
+
+  router.post("/:id/render/cancel", handle((req, res) => {
+    const project = load(req, res);
+    if (!project) return undefined;
+    return res.json({ ok: true, stopping: cancelCartoonRender(project.id) });
   }));
 
   return router;

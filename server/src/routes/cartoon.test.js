@@ -10,6 +10,7 @@ import { requireSuperAdmin } from "../middleware/requireSuperAdmin.js";
 import { createProject, readProject, updateProject } from "../lib/cartoon/store.js";
 import { cartoonFromScript, estimateFilm } from "../lib/cartoon/model.js";
 import { isFilming } from "../lib/cartoon/filmStage.js";
+import { isRenderingCartoon } from "../lib/cartoon/renderStage.js";
 import { EXAMPLES } from "../lib/cartoon/examples.js";
 import { ledgerSummary } from "../lib/videoGen/spend.js";
 
@@ -63,6 +64,9 @@ describe("/api/cartoon", () => {
   let waitImpl;
   let imageImpl;
   let submitted = 0;
+  let renderImpl;
+  const renders = [];
+  const defaultRender = async (args) => { renders.push(args); fs.writeFileSync(args.outputLocation, "raw"); };
   const ctx = () => ({ dataDir: path.join(root, "data"), outputDir: path.join(root, "out") });
 
   const defaultImage = async ({ partNumber }) => {
@@ -94,6 +98,15 @@ describe("/api/cartoon", () => {
         transcribe: async () => ({ ok: true, text: "" }),
         windows: async () => [],
       },
+      render: {
+        ffmpeg: async (args) => {
+          if (args.at(-1) !== "-") fs.writeFileSync(args.at(-1), "media");
+          return { ok: true, stderr: "" };
+        },
+        probe: async () => 20,
+        serveUrl: async () => "http://bundle.invalid",
+        render: (args) => renderImpl(args),
+      },
     };
     app.use("/api/cartoon", requireSuperAdmin, createCartoonRouter({ ledgerDir: path.join(root, "ledger"), deps, writeTimeoutMs: 200 }));
   });
@@ -105,6 +118,7 @@ describe("/api/cartoon", () => {
     lookupImpl = async (ref) => ({ ok: true, canonical: ref, verses: [{ text: VERSE }] });
     waitImpl = async (taskId) => ({ ok: true, videoUrl: `https://example.com/${taskId}.mp4`, tokens: 100000 });
     imageImpl = defaultImage;
+    renderImpl = defaultRender;
   });
 
   after(() => {
@@ -515,6 +529,92 @@ describe("/api/cartoon", () => {
 
     assert.equal((await request(app).delete(`/api/cartoon/shelf/${characterId}`)).status, 200);
     assert.equal((await request(app).delete(`/api/cartoon/shelf/${characterId}`)).status, 404);
+  });
+
+  test("render waits for every clip, then renders and shows a URL, never a file name", async () => {
+    const id = await readyCartoon();
+    const early = await request(app).post(`/api/cartoon/${id}/render`);
+    assert.equal(early.status, 409);
+    assert.equal(early.body.code, "NOT_READY");
+    assert.match(early.body.error, /no clip yet/);
+    assert.ok(Array.isArray(early.body.blockers));
+    assert.ok((await request(app).get(`/api/cartoon/${id}`)).body.project.renderBlockers.length > 0);
+
+    const film = await request(app).post(`/api/cartoon/${id}/film`).send({ confirmOverBenchmark: true });
+    assert.equal(film.status, 200, JSON.stringify(film.body));
+    await until(() => isFilming(id));
+
+    const before = renders.length;
+    const r = await request(app).post(`/api/cartoon/${id}/render`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.project.running.render, true);
+    assert.equal(r.body.project.render.status, "queued");
+    await until(() => isRenderingCartoon(id));
+    assert.equal(renders.length, before + 1);
+    assert.equal(renders.at(-1).compositionId, "Cartoon");
+
+    const got = (await request(app).get(`/api/cartoon/${id}`)).body.project;
+    assert.equal(got.running.render, false);
+    assert.equal(got.render.status, "done");
+    assert.match(got.render.url, new RegExp(`^/outputs/cartoons/${id}/the-lost-lamb-${id.slice(0, 8)}\\.mp4$`));
+    assert.equal(got.render.file, undefined);
+    assert.equal(got.render.previous, undefined);
+    assert.deepEqual(got.renderBlockers, []);
+    assert.deepEqual(got.renderWarnings, []);
+  });
+
+  test("render is refused while one runs, and the film and edits wait for it", async () => {
+    const id = await readyCartoon();
+    await request(app).post(`/api/cartoon/${id}/film`).send({ confirmOverBenchmark: true });
+    await until(() => isFilming(id));
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    renderImpl = async (args) => {
+      await gate;
+      if (args.signal.aborted) throw new Error("cancelled");
+      fs.writeFileSync(args.outputLocation, "raw");
+    };
+    assert.equal((await request(app).post(`/api/cartoon/${id}/render`)).status, 200);
+    const again = await request(app).post(`/api/cartoon/${id}/render`);
+    assert.equal(again.status, 409);
+    assert.equal(again.body.code, "RUNNING");
+    const film = await request(app).post(`/api/cartoon/${id}/film`).send({ only: ["sh1"], confirmOverBenchmark: true });
+    assert.equal(film.status, 409);
+    assert.equal(film.body.code, "RENDERING");
+    assert.equal((await request(app).patch(`/api/cartoon/${id}`).send({ captions: { enabled: false } })).body.code, "RENDERING");
+    assert.equal((await request(app).delete(`/api/cartoon/${id}`)).body.code, "BUSY");
+
+    const stop = await request(app).post(`/api/cartoon/${id}/render/cancel`);
+    assert.deepEqual(stop.body, { ok: true, stopping: true });
+    release();
+    await until(() => isRenderingCartoon(id));
+    assert.equal(readProject(ctx().dataDir, id).render.status, "cancelled");
+    assert.deepEqual((await request(app).post(`/api/cartoon/${id}/render/cancel`)).body, { ok: true, stopping: false });
+  });
+
+  test("render is BUSY while the film runs, and a stale shot is only a warning", async () => {
+    const id = await readyCartoon();
+    let finish;
+    const hold = new Promise((resolve) => { finish = resolve; });
+    waitImpl = async (taskId) => { await hold; return { ok: true, videoUrl: `https://example.com/${taskId}.mp4`, tokens: 100000 }; };
+    await request(app).post(`/api/cartoon/${id}/film`).send({ confirmOverBenchmark: true });
+    const busy = await request(app).post(`/api/cartoon/${id}/render`);
+    assert.equal(busy.status, 409);
+    assert.equal(busy.body.code, "BUSY");
+    finish();
+    await until(() => isFilming(id));
+    updateProject(ctx().dataDir, id, (p) => ({ ...p, shots: p.shots.map((s, i) => (i === 1 ? { ...s, clip: { ...s.clip, stale: true } } : s)) }));
+    const got = (await request(app).get(`/api/cartoon/${id}`)).body.project;
+    assert.deepEqual(got.renderBlockers, []);
+    assert.equal(got.renderWarnings.length, 1);
+  });
+
+  test("a render left running by a restart reads as stopped", async () => {
+    const id = (await create()).body.project.id;
+    updateProject(ctx().dataDir, id, (p) => ({ ...p, render: { status: "rendering", progress: 30 } }));
+    const got = (await request(app).get(`/api/cartoon/${id}`)).body.project;
+    assert.equal(got.render.status, "error");
+    assert.match(got.render.error, /restart/);
   });
 
   test("delete removes the cartoon and unknown ids are 404", async () => {
