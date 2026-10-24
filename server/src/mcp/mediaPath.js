@@ -7,7 +7,9 @@ import { fail } from "./toolResult.js";
  * The path rule for tools that hand a file to a route that does not check
  * paths itself (voice cloning, audio processing and merging). An agent may
  * name a file only if it sits in the key owner's own media folder, or is a
- * voice file the TTS providers wrote to the shared output folder (`tts-*`).
+ * voice file the TTS providers wrote to the shared output folder (`tts-*`),
+ * or an image this user's images_generate calls wrote to the shared
+ * genImg folder, in a genvis-<their id>-<random> series.
  *
  * Two checks, in this order. First a lexical one on the resolved string, with
  * no file system access at all: a UNC or device path would otherwise make the
@@ -20,6 +22,7 @@ import { fail } from "./toolResult.js";
  */
 
 const SHARED_VOICE_FILE = /^tts-[\w.-]+$/i;
+const GENERATED_IMAGE = /^genImg\/([\w-]+)\/[\w.-]+\.(?:png|jpe?g|webp)$/i;
 const MEDIA_REF = /^(?:library|mylib):[\w.-]+$/;
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const OUTPUTS_ALIAS = /^\.?\/?outputs\/(.+)$/;
@@ -60,25 +63,41 @@ function isSharedVoiceFile(file, sharedDir) {
   return sameDir(path.dirname(file), sharedDir) && SHARED_VOICE_FILE.test(path.basename(file));
 }
 
-/** Pure string check: does this resolved path fall in the media folder or name a shared voice file? */
-function lexicallyInScope(file, outputDir, sharedDir) {
-  return isInsideDir(file, path.resolve(outputDir)) || isSharedVoiceFile(file, path.resolve(sharedDir));
+/** The series folder prefix images_generate gives this user's images (as routes/imagegen.js names it, lower-cased). */
+function generatedSeriesPrefix(user) {
+  return `genvis-${String(user?.sub || "anon")}-`.replace(/[^a-z0-9_-]/gi, "_").slice(0, 60).toLowerCase();
+}
+
+/** True for <sharedDir>/genImg/<this user's series>/<name>.png|jpg|webp, judged on the string only. */
+function isSharedGeneratedImage(file, sharedDir, user) {
+  const match = GENERATED_IMAGE.exec(path.relative(sharedDir, file).split(path.sep).join("/"));
+  return Boolean(match) && match[1].toLowerCase().startsWith(generatedSeriesPrefix(user));
+}
+
+function isSharedFile(file, sharedDir, user) {
+  return isSharedVoiceFile(file, sharedDir) || isSharedGeneratedImage(file, sharedDir, user);
+}
+
+/** Pure string check: does this resolved path fall in the media folder or name a shared voice file or generated image? */
+function lexicallyInScope(file, outputDir, sharedDir, user) {
+  return isInsideDir(file, path.resolve(outputDir)) || isSharedFile(file, path.resolve(sharedDir), user);
 }
 
 /** After realpath: the same rule against the real folders. */
-function realInScope(real, outputDir, sharedDir) {
+function realInScope(real, outputDir, sharedDir, user) {
   const mine = realpathOrNull(outputDir);
   if (mine && isInsideDir(real, mine)) return true;
   const shared = realpathOrNull(sharedDir);
-  return Boolean(shared && isSharedVoiceFile(real, shared));
+  return Boolean(shared && isSharedFile(real, shared, user));
 }
 
-/** Where the raw value may point: an /outputs/ url form maps into the media folder, and a voice file also into the shared one. */
+/** Where the raw value may point: an /outputs/ url form maps into the media folder, and a voice file or generated image also into the shared one. */
 function candidatesFor(raw, outputDir, sharedDir) {
   const match = OUTPUTS_ALIAS.exec(raw.split("\\").join("/"));
   if (!match) return [path.resolve(raw)];
   const own = path.resolve(path.join(outputDir, match[1]));
-  return SHARED_VOICE_FILE.test(path.basename(match[1])) ? [own, path.resolve(path.join(sharedDir, match[1]))] : [own];
+  const maybeShared = SHARED_VOICE_FILE.test(path.basename(match[1])) || GENERATED_IMAGE.test(match[1]);
+  return maybeShared ? [own, path.resolve(path.join(sharedDir, match[1]))] : [own];
 }
 
 /**
@@ -96,23 +115,24 @@ export async function resolveMediaInput(ctx, value, { allowRefs = false } = {}) 
   }
   if (raw.includes("\0") || NETWORK_OR_DEVICE.test(raw)) return refuse("PATH_OUTSIDE_MEDIA", OUTSIDE_MESSAGE);
   const { outputDir, sharedDir } = await scopeOf(ctx.user);
-  const inScope = candidatesFor(raw, outputDir, sharedDir).filter((file) => lexicallyInScope(file, outputDir, sharedDir));
+  const inScope = candidatesFor(raw, outputDir, sharedDir).filter((file) => lexicallyInScope(file, outputDir, sharedDir, ctx.user));
   if (inScope.length === 0) return refuse("PATH_OUTSIDE_MEDIA", OUTSIDE_MESSAGE);
   for (const file of inScope) {
     const real = realpathOrNull(file);
     if (!real) continue;
-    if (!realInScope(real, outputDir, sharedDir)) return refuse("PATH_OUTSIDE_MEDIA", OUTSIDE_MESSAGE);
+    if (!realInScope(real, outputDir, sharedDir, ctx.user)) return refuse("PATH_OUTSIDE_MEDIA", OUTSIDE_MESSAGE);
     return { path: real };
   }
   return refuse("FILE_NOT_FOUND", `File not found: ${raw}`);
 }
 
 /** The /outputs/ link of a real path already confirmed in scope, or null. */
-function outputsLinkFor(real, outputDir, sharedDir) {
+function outputsLinkFor(real, outputDir, sharedDir, user) {
   const mine = realpathOrNull(outputDir);
   if (mine && isInsideDir(real, mine)) return `/outputs/${path.relative(mine, real).split(path.sep).join("/")}`;
   const shared = realpathOrNull(sharedDir);
   if (shared && isSharedVoiceFile(real, shared)) return `/outputs/${path.basename(real)}`;
+  if (shared && isSharedGeneratedImage(real, shared, user)) return `/outputs/${path.relative(shared, real).split(path.sep).join("/")}`;
   return null;
 }
 
@@ -129,7 +149,7 @@ export async function resolveMediaOutput(ctx, value) {
   const checked = await resolveMediaInput(ctx, value);
   if (checked.refusal) return checked;
   const { outputDir, sharedDir } = await scopeOf(ctx.user);
-  const outputsPath = outputsLinkFor(checked.path, outputDir, sharedDir);
+  const outputsPath = outputsLinkFor(checked.path, outputDir, sharedDir, ctx.user);
   if (!outputsPath) return refuse("PATH_OUTSIDE_MEDIA", OUTSIDE_MESSAGE);
   return { path: checked.path, outputsPath };
 }

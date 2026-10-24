@@ -170,3 +170,42 @@ test("resolveMediaOutput refuses what resolveMediaInput refuses, and library ref
   const ref = await resolveMediaOutput(ctx, "library:peaceful");
   assert.equal(ref.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
 });
+
+// ---- generated images: shared genImg/<series>/ folder, the user's own series only ----
+
+const SERIES = "genvis-u1-ab12cd34";
+
+test("an image images_generate wrote to the shared genImg folder is allowed, by path and by /outputs/ link", async () => {
+  const dir = path.join(shared, "genImg", SERIES);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "part-1.png"), "x");
+  const real = fs.realpathSync(path.join(dir, "part-1.png"));
+  assert.equal((await resolveMediaInput(ctx, path.join(dir, "part-1.png"))).path, real);
+  assert.equal((await resolveMediaInput(ctx, `/outputs/genImg/${SERIES}/part-1.png`)).path, real);
+  const out = await resolveMediaOutput(ctx, path.join(dir, "part-1.png"));
+  assert.equal(out.outputsPath, `/outputs/genImg/${SERIES}/part-1.png`);
+});
+
+test("another user's generated image, a non-image and other shared sub-folders are refused", async () => {
+  const other = path.join(shared, "genImg", "genvis-u2-ab12cd34");
+  fs.mkdirSync(other, { recursive: true });
+  fs.writeFileSync(path.join(other, "part-1.png"), "x");
+  const theirs = await resolveMediaInput(ctx, path.join(other, "part-1.png"));
+  assert.equal(theirs.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+  const dir = path.join(shared, "genImg", SERIES);
+  fs.writeFileSync(path.join(dir, "notes.txt"), "x");
+  assert.equal((await resolveMediaInput(ctx, path.join(dir, "notes.txt"))).refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+  fs.mkdirSync(path.join(shared, "private"), { recursive: true });
+  fs.writeFileSync(path.join(shared, "private", "part-1.png"), "x");
+  assert.equal((await resolveMediaInput(ctx, path.join(shared, "private", "part-1.png"))).refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+  const escape = await resolveMediaInput(ctx, path.join(shared, "genImg", SERIES, "..", "genvis-u2-ab12cd34", "part-1.png"));
+  assert.equal(escape.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+});
+
+test("a link in the shared genImg folder that points out is refused (directory junction)", async () => {
+  const series = path.join(shared, "genImg", "genvis-u1-evil0001");
+  fs.symlinkSync(elsewhere, series, "junction");
+  fs.writeFileSync(path.join(elsewhere, "pic.png"), "x");
+  const out = await resolveMediaInput(ctx, path.join(series, "pic.png"));
+  assert.equal(out.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+});
