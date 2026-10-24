@@ -190,7 +190,6 @@ const SECTION_SCHEMAS = {
     volume: z.number().min(0).max(2).optional().describe("bed: music volume, 0 to 2 (default 0.85)."),
     crossfadeSec: z.number().min(0).max(30).optional().describe("bed: seconds of crossfade between tracks (default 6)."),
     order: z.enum(["shuffle", "fixed"]).optional().describe("bed: shuffle (default) or fixed (your order, looped)."),
-    allowUncleared: z.boolean().optional().describe("bed: true only if the user confirmed they hold the rights to tracks with no recorded licence."),
   }).strict(),
   motion: z.object({ motion: z.enum(["still", "drift"]).describe("motion: still pictures or a gentle drift.") }).strict(),
   words: z.object({ words: z.enum(["verses", "none"]).describe("words: spoken verses, or music only.") }).strict(),
@@ -234,21 +233,48 @@ async function bedBody(ctx, patch) {
 
 const UNCLEARED_MESSAGE =
   "Some of the user's own tracks have no recorded licence, so the bed was not changed (a Content ID claim takes the revenue of the whole video). " +
-  "Ask the user to set each track's licence in the app's music library, or, only if they confirm they hold the rights, send the change again with allowUncleared: true (needed on every bed change while those tracks are in it).";
+  "Ask the user to record each track's licence in the app's music library, or to make this bed change in the app themselves, then try again.";
 
-async function patchBed(ctx, id, patch) {
+/** True when a mylib ref's track has a recorded licence (GET /api/music/library); anything else is unknown. */
+async function licensedRefs(ctx, refs) {
+  const tracks = (await ctx.api.call("GET", "/api/music/library"))?.tracks || [];
+  const recorded = new Set(tracks.filter((t) => {
+    const licence = String(t?.licence || "unknown").trim().toLowerCase();
+    return licence && licence !== "unknown";
+  }).map((t) => t.ref));
+  return refs.every((ref) => recorded.has(ref));
+}
+
+/**
+ * R46: an agent never makes the licence choice. One the user already made in
+ * the app (bed.allowUncleared) is sent again only when the change adds no
+ * track that might lack a licence, so a volume change on such a bed still
+ * works. The route resets the choice on every change it is not sent with.
+ */
+async function keptLicenceChoice(ctx, stored, body) {
+  if (stored?.allowUncleared !== true) return {};
+  const before = new Set([...(stored.trackRefs || []), ...(stored.filePath ? [stored.filePath] : [])]);
+  const after = [...(body.trackRefs || []), ...(typeof body.filePath === "string" ? [body.filePath] : [])];
+  const added = [...new Set(after)].filter((ref) => !before.has(ref) && !ref.startsWith("library:"));
+  if (added.some((ref) => !ref.startsWith("mylib:"))) return {};
+  if (added.length > 0 && !(await licensedRefs(ctx, added))) return {};
+  return { allowUncleared: true };
+}
+
+async function patchBed(ctx, id, patch, project) {
   const prepared = await bedBody(ctx, patch);
   if (prepared.refusal) return { refusal: prepared.refusal };
+  const body = { ...prepared.body, ...(await keptLicenceChoice(ctx, project.bed, prepared.body)) };
   try {
-    return { body: await ctx.api.call("PATCH", `${projectPath(id)}/bed`, { body: prepared.body }) };
+    return { body: await ctx.api.call("PATCH", `${projectPath(id)}/bed`, { body }) };
   } catch (err) {
     if (err?.name === "ApiError" && err.status === 409) return { refusal: fail("UNCLEARED_TRACKS", UNCLEARED_MESSAGE) };
     throw err;
   }
 }
 
-async function applyUpdate(ctx, id, section, patch) {
-  if (section === "bed") return patchBed(ctx, id, patch);
+async function applyUpdate(ctx, id, section, patch, project) {
+  if (section === "bed") return patchBed(ctx, id, patch, project);
   const body = section === "captions" ? captionsBody(patch) : patch;
   return { body: await ctx.api.call("PATCH", `${projectPath(id)}/${section}`, { body }) };
 }
@@ -259,7 +285,7 @@ const ambientUpdate = {
   description:
     "Change one section of a session; patch holds that section's fields. " +
     "drops { drops: [{ id?, atMs, reference, translation? }] }: the whole verse list (send every verse; one left out is deleted; a changed reference must be voiced again). " +
-    "bed { mode?, trackRefs?, filePath?, volume?, crossfadeSec?, order?, allowUncleared? }: the music. Tracks are library:... or mylib:... refs (music_library) or audio files in your media folder; URLs and other paths are refused. The user's own tracks need a recorded licence (UNCLEARED_TRACKS otherwise). " +
+    "bed { mode?, trackRefs?, filePath?, volume?, crossfadeSec?, order? }: the music. Tracks are library:... or mylib:... refs (music_library) or audio files in your media folder; URLs and other paths are refused. The user's own tracks need a recorded licence (UNCLEARED_TRACKS otherwise: only the user can record it, in the app's music library). " +
     "motion { motion: still|drift }. words { words: verses|none } (none makes a music-only session with one picture). " +
     "captions { mode?, span?, position?, preset?, energy?, seed? }. A finished session goes back to ready_to_render when its look changes. " +
     "drops and bed are refused while the session is busy. Returns the session. " + FREE_NOTE,
@@ -273,11 +299,13 @@ const ambientUpdate = {
     const parsed = SECTION_SCHEMAS[section].safeParse(patch ?? {});
     if (!parsed.success) return fail("BAD_INPUT", `That patch does not fit section ${section}: ${parsed.error.issues.map((i) => i.message).join("; ")}.`);
     if (Object.keys(parsed.data).length === 0) return fail("BAD_INPUT", `Give at least one ${section} field to change.`);
+    let project = null;
     if (UPDATES_BUSY_STAGE.has(section)) {
-      const busy = busyRefusal((await readSession(ctx, id)).project);
+      project = (await readSession(ctx, id)).project;
+      const busy = busyRefusal(project);
       if (busy) return busy;
     }
-    const result = await applyUpdate(ctx, id, section, parsed.data);
+    const result = await applyUpdate(ctx, id, section, parsed.data, project);
     if (result.refusal) return result.refusal;
     return ok({ project: viewOf(ctx, result.body) });
   },

@@ -309,7 +309,50 @@ test("ambient_update bed: clearing the file sends null; an unlicensed track is e
   const uncleared = ctxWith({ "PATCH /api/ambient/a1/bed": apiError(409, "some tracks have no recorded licence") });
   const result = await byName.ambient_update.handler(uncleared.ctx, { id: "a1", section: "bed", patch: { trackRefs: ["mylib:t1"] } });
   assert.equal(result.structuredContent.error, "UNCLEARED_TRACKS");
-  assert.match(result.content[0].text, /allowUncleared/);
+  assert.match(result.content[0].text, /music library/);
+  assert.doesNotMatch(result.content[0].text, /allowUncleared/);
+});
+
+// ---- R46: agents never make the licence choice ----
+
+test("ambient_update bed has no allowUncleared: the schema and the handler refuse it", async () => {
+  assert.equal(byName.ambient_update.description.includes("allowUncleared"), false);
+  const { ctx, calls } = ctxWith();
+  const result = await byName.ambient_update.handler(ctx, { id: "a1", section: "bed", patch: { volume: 1, allowUncleared: true } });
+  assert.equal(result.structuredContent.error, "BAD_INPUT");
+  assert.equal(calls.filter((c) => c.method === "PATCH").length, 0);
+});
+
+const ACKNOWLEDGED = SESSION({ bed: { ...SESSION().bed, trackRefs: ["mylib:old"], allowUncleared: true } });
+const bedSent = (calls) => calls.find((c) => c.method === "PATCH").opts.body;
+const LIBRARY = { ok: true, tracks: [{ ref: "mylib:cleared", licence: "CC0" }, { ref: "mylib:unknown", licence: "unknown" }, { ref: "mylib:old", licence: "unknown" }] };
+
+test("a licence choice the user made in the app is kept when the change adds no new track", async () => {
+  const { ctx, calls } = ctxWith({ "PATCH /api/ambient/a1/bed": { ok: true, project: ACKNOWLEDGED } }, { session: ACKNOWLEDGED });
+  await byName.ambient_update.handler(ctx, { id: "a1", section: "bed", patch: { volume: 1.2, trackRefs: ["mylib:old", "library:prayer-piano"] } });
+  assert.deepEqual(bedSent(calls), { volume: 1.2, trackRefs: ["mylib:old", "library:prayer-piano"], allowUncleared: true });
+  assert.ok(!calls.some((c) => c.path === "/api/music/library"), "bundled tracks need no lookup");
+});
+
+test("the kept choice also covers a new track whose licence is recorded", async () => {
+  const { ctx, calls } = ctxWith({ "GET /api/music/library": LIBRARY, "PATCH /api/ambient/a1/bed": { ok: true, project: ACKNOWLEDGED } }, { session: ACKNOWLEDGED });
+  await byName.ambient_update.handler(ctx, { id: "a1", section: "bed", patch: { trackRefs: ["mylib:old", "mylib:cleared"] } });
+  assert.equal(bedSent(calls).allowUncleared, true);
+});
+
+test("the kept choice is dropped when the change adds an unlicensed track or a bare file", async () => {
+  const dir = mediaWith("new.mp3");
+  for (const trackRefs of [["mylib:old", "mylib:unknown"], ["mylib:old", "mylib:missing"], ["mylib:old", path.join(dir, "new.mp3")]]) {
+    const { ctx, calls } = ctxWith({ "GET /api/music/library": LIBRARY, "PATCH /api/ambient/a1/bed": { ok: true, project: ACKNOWLEDGED } }, { session: ACKNOWLEDGED });
+    await byName.ambient_update.handler(ctx, { id: "a1", section: "bed", patch: { trackRefs } });
+    assert.equal(bedSent(calls).allowUncleared, undefined, JSON.stringify(trackRefs));
+  }
+});
+
+test("a bed the user never cleared sends no licence choice", async () => {
+  const { ctx, calls } = ctxWith({ "PATCH /api/ambient/a1/bed": { ok: true, project: SESSION() } });
+  await byName.ambient_update.handler(ctx, { id: "a1", section: "bed", patch: { volume: 1 } });
+  assert.deepEqual(bedSent(calls), { volume: 1 });
 });
 
 // ---- ambient_render / ambient_cancel ----
