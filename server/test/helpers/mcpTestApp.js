@@ -55,6 +55,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: pexelsRouter } = await import("../../src/routes/pexels.js");
   const { default: pixabayRouter } = await import("../../src/routes/pixabay.js");
   const { createVisualLibraryRouter } = await import("../../src/routes/visualLibrary.js");
+  const { createSceneScriptRouter } = await import("../../src/routes/sceneScript.js");
   const { requireSuperAdmin } = await import("../../src/middleware/requireSuperAdmin.js");
   const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
   const { createMcpRouter } = await import("../../src/mcp/transport.js");
@@ -89,6 +90,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/pexels", requireAuth, withUserScope, requireVerifiedEmail, pexelsRouter);
   app.use("/api/pixabay", requireAuth, withUserScope, requireVerifiedEmail, pixabayRouter);
   app.use("/api/visual-library", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createVisualLibraryRouter());
+  app.use("/api/scene-script", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createSceneScriptRouter());
   // STUB: index.js's real /api/health shells out to ffmpeg; tools only need its shape.
   app.get("/api/health", (_req, res) => {
     res.json({
