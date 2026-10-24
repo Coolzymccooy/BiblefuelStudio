@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { DATA_DIR } from "../paths.js";
+import { CAP_ENV_NAMES } from "./capEnv.js";
 
 /**
  * Hard daily caps for MCP agent traffic, applied to every caller (premium and
@@ -26,14 +27,7 @@ const DEFAULT_CEILINGS = {
   imports: 20,
 };
 
-const ENV_NAMES = {
-  renders: "MCP_DAILY_RENDERS",
-  aiVideoUsd: "MCP_DAILY_AI_VIDEO_USD",
-  images: "MCP_DAILY_IMAGES",
-  tts: "MCP_DAILY_TTS",
-  publishes: "MCP_DAILY_PUBLISHES",
-  imports: "MCP_DAILY_IMPORTS",
-};
+const ENV_NAMES = CAP_ENV_NAMES;
 
 // Absorbs float drift when fractional amounts (aiVideoUsd) accumulate.
 const EPSILON = 1e-9;

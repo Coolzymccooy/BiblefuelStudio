@@ -7,6 +7,10 @@ import { logActivity } from "../lib/agentKeys/activity.js";
 import { ApiError } from "./api.js";
 import { fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "./toolResult.js";
 import { lacksPublishConsent } from "./autoPublish.js";
+import { planAllows } from "../middleware/featureGate.js";
+import { registerJobResource } from "./resources.js";
+import { registerPrompts } from "./prompts.js";
+import { SERVER_INSTRUCTIONS } from "./instructions.js";
 
 export { PUBLISH_NOT_ALLOWED_MESSAGE };
 
@@ -27,12 +31,12 @@ export { PUBLISH_NOT_ALLOWED_MESSAGE };
  * upload that joined one already running) calls `ctx.refundCap(...)`, which gives back at most what this
  * call charged.
  *
- * @typedef {{ user: object, agentKey: object, subjectId: string, isSuperAdmin: boolean,
+ * @typedef {{ user: object, agentKey: object, subjectId: string, isSuperAdmin: boolean, plan?: string,
  *   baseUrl: string, publicBase: string, api: { call: Function },
  *   chargeCap?: (bucketOrAmounts: string | Record<string, number>, amount?: number) => Promise<object | null>,
  *   refundCap?: (bucketOrAmounts: string | Record<string, number>, amount?: number) => Promise<void> }} McpCtx
  * @typedef {{ name: string, title: string, description: string, inputSchema: object,
- *   requires?: "super_admin", publish?: boolean,
+ *   requires?: "super_admin" | `feature:${string}`, publish?: boolean,
  *   caps?: Record<string, number | ((input: object) => number)>,
  *   handler: (ctx: McpCtx, input: object) => Promise<object> }} ToolDef
  */
@@ -81,13 +85,40 @@ export function _setCatalogueForTests(defs) {
   catalogueOverride = Array.isArray(defs) ? defs : null;
 }
 
-function catalogue() {
+/** Every tool def the server can list (before per-user filtering). */
+export function catalogue() {
   return catalogueOverride || importedCatalogue;
 }
 
+const FEATURE_REQUIREMENT = /^feature:(.+)$/;
+
+/**
+ * Whether the key's user may see the tool: `requires: "super_admin"` for super-admin routes,
+ * `requires: "feature:<capability>"` for routes behind featureGate(<capability>) (the same plan check).
+ * Any other value hides the tool.
+ */
 function allowed(def, ctx) {
   if (def.requires === undefined) return true;
-  return def.requires === "super_admin" && ctx.isSuperAdmin;
+  if (def.requires === "super_admin") return Boolean(ctx.isSuperAdmin);
+  const feature = FEATURE_REQUIREMENT.exec(String(def.requires));
+  return Boolean(feature) && planAllows(ctx.plan, feature[1]);
+}
+
+/**
+ * The refusal text. When some of the cap is left but less than the call needs (four images for
+ * autoBackground, one left), "reached" misleads: say what the call needs and what is left.
+ */
+export function capMessage(refusal) {
+  const { bucket, scope } = refusal;
+  const whose = scope === "user" ? "your account across all agents" : "this agent";
+  // Rounded for display: aiVideoUsd is fractional, and 2 - 1.7 is 0.30000000000000004.
+  const shown = (n) => Number(Number(n).toFixed(2));
+  const [used, limit, needed] = [refusal.used, refusal.limit, refusal.needed].map(shown);
+  const left = shown(refusal.limit - refusal.used);
+  if (left > 0 && needed > left) {
+    return `Daily ${bucket} cap: this call needs ${needed} but ${whose} has ${left} left (${used} of ${limit} used).`;
+  }
+  return `Daily ${bucket} cap reached for ${whose} (${used} of ${limit}).`;
 }
 
 /**
@@ -100,12 +131,13 @@ async function chargeBuckets(ctx, amounts, charged) {
   const outcome = await chargeAll(ctx.subjectId, ctx.agentKey, Object.fromEntries(due));
   if (!outcome.ok) {
     const { bucket, scope, used, limit, resetsAt } = outcome;
-    const whose = scope === "user" ? "your account across all agents" : "this agent";
-    return fail("MCP_CAP_REACHED", `Daily ${bucket} cap reached for ${whose} (${used} of ${limit}).`, {
+    const needed = amounts[bucket];
+    return fail("MCP_CAP_REACHED", capMessage({ bucket, scope, used, limit, needed }), {
       bucket,
       scope,
       used,
       limit,
+      needed,
       resetsAt,
     });
   }
@@ -235,7 +267,7 @@ function readGuide() {
 
 /** @param {McpCtx} ctx */
 export function buildServer(ctx) {
-  const server = new McpServer(SERVER_INFO);
+  const server = new McpServer(SERVER_INFO, { instructions: SERVER_INSTRUCTIONS });
   for (const def of catalogue()) {
     if (!allowed(def, ctx)) continue;
     server.registerTool(
@@ -250,5 +282,7 @@ export function buildServer(ctx) {
     { title: "Connect an agent to BibleFuel", description: "How to use the BibleFuel tools.", mimeType: "text/markdown" },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: readGuide() }] }),
   );
+  registerJobResource(server, ctx);
+  registerPrompts(server);
   return server;
 }

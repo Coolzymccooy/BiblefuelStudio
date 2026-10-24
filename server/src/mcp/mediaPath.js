@@ -126,6 +126,32 @@ export async function resolveMediaInput(ctx, value, { allowRefs = false } = {}) 
   return refuse("FILE_NOT_FOUND", `File not found: ${raw}`);
 }
 
+const OWN_FOLDER_ONLY =
+  "That file is not in your own media folder, and this tool reads only files there (your uploads, imports and renders, see media_list).";
+
+/**
+ * The same rule as resolveMediaInput (no library refs), narrowed to the caller's
+ * own media folder: for routes that read only files inside req.ctx.outputDir
+ * (the lyric video song and background). A shared voice file or generated image
+ * passes resolveMediaInput but would be refused there, so it is refused here.
+ * The refusal never points at media_import_url: the SSRF guard refuses this
+ * server's own files. The owner's media folder IS the shared one, so nothing
+ * changes for the owner.
+ *
+ * @param {{ user: object }} ctx
+ * @param {unknown} value
+ * @param {{ message?: string }} [options] the tool's own BAD_INPUT wording
+ * @returns {Promise<{ path: string } | { refusal: object }>}
+ */
+export async function resolveOwnMediaInput(ctx, value, { message = OWN_FOLDER_ONLY } = {}) {
+  const checked = await resolveMediaInput(ctx, value);
+  if (checked.refusal) return checked;
+  const { outputDir } = await scopeOf(ctx.user);
+  const mine = realpathOrNull(outputDir);
+  if (mine && isInsideDir(checked.path, mine)) return checked;
+  return refuse("BAD_INPUT", message);
+}
+
 /** The /outputs/ link of a real path already confirmed in scope, or null. */
 function outputsLinkFor(real, outputDir, sharedDir, user) {
   const mine = realpathOrNull(outputDir);

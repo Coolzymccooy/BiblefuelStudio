@@ -102,6 +102,19 @@ describe("PATCH /:id/music", () => {
     }
   });
 
+  test("a change without path keeps the stored bed; path null clears it", async () => {
+    const id = readyProject(defaultTrackRef());
+    const kept = await call("patch", "/:id/music", { params: { id }, body: { volume: 0.2 } });
+    assert.equal(kept.statusCode, 200, JSON.stringify(kept.payload));
+    assert.equal(kept.payload.project.music.path, defaultTrackRef());
+    assert.equal(kept.payload.project.music.volume, 0.2);
+    const ducked = await call("patch", "/:id/music", { params: { id }, body: { autoDuck: false } });
+    assert.equal(ducked.payload.project.music.path, defaultTrackRef());
+    const cleared = await call("patch", "/:id/music", { params: { id }, body: { path: null } });
+    assert.equal(cleared.statusCode, 200);
+    assert.equal(cleared.payload.project.music.path, null);
+  });
+
   test("refuses a library ref that does not resolve", async () => {
     const id = readyProject(null);
     const res = await call("patch", "/:id/music", { params: { id }, body: { path: "mylib:00000000-0000-0000-0000-000000000000" } });

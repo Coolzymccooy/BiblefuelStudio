@@ -103,3 +103,7 @@ test("bible_lookup translations lists translations", async () => {
   assert.notEqual(result.isError, true);
   assert.ok(Array.isArray(result.structuredContent.translations));
 });
+
+test("bible_lookup says to use it rather than a web search for verse text", () => {
+  assert.match(byName.bible_lookup.description, /rather than a web search/);
+});

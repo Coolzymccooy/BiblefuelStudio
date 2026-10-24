@@ -3,6 +3,7 @@ import { ok, fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "../toolResult.js";
 import { JOB_KINDS, NORMALISERS, clampTimeoutSec, outputUrl, waitForJob } from "../jobs.js";
 import { lacksPublishConsent, renderPublishPlan } from "../autoPublish.js";
 import { renderQuotaRefusal } from "../planQuota.js";
+import { jobAddressProblem } from "../jobHandle.js";
 
 const DEFAULT_LIST_LIMIT = 20;
 
@@ -39,6 +40,8 @@ const jobsGet = {
   inputSchema: { id: z.string().min(1).describe("The job id, e.g. job_...") },
   routes: ["/api/jobs"],
   async handler(ctx, { id }) {
+    const badId = jobAddressProblem({ id });
+    if (badId) return fail("BAD_INPUT", badId);
     const body = await ctx.api.call("GET", NORMALISERS.job.route(id));
     return ok(jobRow(body.job, ctx));
   },
@@ -92,6 +95,8 @@ const jobsRetry = {
   inputSchema: { id: z.string().min(1).describe("The id of the job to retry.") },
   routes: ["/api/jobs"],
   async handler(ctx, { id }) {
+    const badId = jobAddressProblem({ id });
+    if (badId) return fail("BAD_INPUT", badId);
     const path = NORMALISERS.job.route(id);
     const original = await ctx.api.call("GET", path);
     const type = original?.job?.type;
@@ -109,17 +114,23 @@ const jobsWait = {
   description:
     `Wait up to timeoutSec seconds (1 to 90, default 60) for a job to finish, then return its handle. ` +
     `If it is still running the handle says so: call again to keep waiting. Kinds: ${JOB_KINDS.join(", ")}. ` +
-    `For a story pass the project id as id.`,
+    `For a story, an ambient session, a scene script, a long-form project, a lyric_align or a moments render pass the project id as id. ` +
+    `For a lyric_render pass the render's job id as id and the song's id as projectId (both are on the handle lyric_render returned).`,
   inputSchema: {
     kind: z.string().describe(`What kind of job: ${JOB_KINDS.join(", ")}.`),
-    id: z.string().min(1).describe("The job id (the project id for story)."),
-    projectId: z.string().optional().describe("The project the job belongs to, if any; echoed back on the handle."),
+    id: z.string().min(1).describe("The job id (the project id for story, ambient, scene, longform, lyric_align and moments)."),
+    projectId: z.string().optional().describe("The project the job belongs to (required for lyric_render); echoed back on the handle."),
     timeoutSec: z.number().optional().describe("Seconds to wait, clamped to 1..90. Default 60."),
   },
-  routes: ["/api/jobs", "/api/render", "/api/story", "/api/timeline", "/api/music", "/api/social"],
+  routes: ["/api/jobs", "/api/render", "/api/story", "/api/ambient", "/api/scene-script", "/api/lyric-video", "/api/moments", "/api/timeline", "/api/music", "/api/social"],
   async handler(ctx, { kind, id, projectId, timeoutSec }) {
     if (!Object.hasOwn(NORMALISERS, kind)) {
       return fail("BAD_KIND", `Unknown job kind "${kind}". Use one of: ${JOB_KINDS.join(", ")}.`);
+    }
+    const badId = jobAddressProblem({ id, projectId });
+    if (badId) return fail("BAD_INPUT", badId);
+    if (NORMALISERS[kind].needsProjectId && !projectId) {
+      return fail("BAD_INPUT", `A ${kind} job needs projectId as well as id: pass both from the handle that started it.`);
     }
     const handle = await waitImpl(ctx.api, {
       kind,
