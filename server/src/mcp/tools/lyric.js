@@ -13,6 +13,8 @@ import {
 const OWN_FOLDER = { message: "The lyric video takes only files in your own media folder (your uploads, imports and renders, see media_list)." };
 
 const ROUTES = ["/api/lyric-video"];
+// The router sits behind featureGate("lyric.video") (index.js): a plan without it does not list these tools.
+const LYRIC_FEATURE = "feature:lyric.video";
 const FREE_NOTE = "Free: no daily cap or plan quota is spent.";
 const JOB_ID = z.string().trim().regex(/^[\w-]{1,80}$/, "a render job id");
 
@@ -73,6 +75,7 @@ const lyricProject = {
     jobId: JOB_ID.optional().describe("cancel_render: the render's job id."),
   },
   routes: ROUTES,
+  requires: LYRIC_FEATURE,
   handler: projectAction,
 };
 
@@ -89,6 +92,7 @@ const lyricSetSong = {
     path: z.string().max(1000).describe("The audio or video file, a path in your media folder."),
   },
   routes: ROUTES,
+  requires: LYRIC_FEATURE,
   async handler(ctx, { id, path }) {
     const media = await resolveOwnMediaInput(ctx, path, OWN_FOLDER);
     if (media.refusal) return media.refusal;
@@ -107,6 +111,7 @@ const lyricSetLyrics = {
     sheet: z.string().min(1).max(SHEET_MAX_CHARS).describe("The whole lyric sheet."),
   },
   routes: ROUTES,
+  requires: LYRIC_FEATURE,
   async handler(ctx, { id, sheet }) {
     return ok(viewOf(ctx, await ctx.api.call("PUT", `${projectPath(id)}/sheet`, { body: { sheet } })));
   },
@@ -131,6 +136,7 @@ const lyricAlign = {
     "Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up); refused at no cost without a song (NO_SONG), without lyrics (NO_LYRICS) or while timing already runs (ALREADY_RUNNING), and given back if the app refuses it. Next: lyric_background, then lyric_render.",
   inputSchema: { id: LYRIC_ID.describe("The song's project id.") },
   routes: ROUTES,
+  requires: LYRIC_FEATURE,
   async handler(ctx, { id }) {
     const refused = alignRefusal(await readProject(ctx, id));
     if (refused) return refused;
@@ -156,6 +162,7 @@ const lyricLineUpdate = {
     effect: z.enum(LINE_EFFECTS).optional().describe("How the line is drawn (auto lets the director choose)."),
   },
   routes: ROUTES,
+  requires: LYRIC_FEATURE,
   async handler(ctx, { id, lineId, start, effect }) {
     if (start === undefined && effect === undefined) return fail("BAD_INPUT", "Give start, effect or both.");
     const body = await ctx.api.call("PATCH", `${projectPath(id)}/lines/${encodeURIComponent(lineId)}`, { body: defined({ start, effect }) });
@@ -217,6 +224,7 @@ const lyricBackground = {
     branding: brandingSchema.optional().describe("Logo, intro credit and end card switches."),
   },
   routes: ROUTES,
+  requires: LYRIC_FEATURE,
   handler: setBackground,
 };
 
@@ -248,6 +256,7 @@ const lyricRender = {
     shortsTrim: z.boolean().optional().describe("Portrait only: trim to under three minutes for Shorts."),
   },
   routes: ROUTES,
+  requires: LYRIC_FEATURE,
   async handler(ctx, { id, aspect, quality, shortsTrim }) {
     const refused = renderRefusal(await readProject(ctx, id));
     if (refused) return refused;

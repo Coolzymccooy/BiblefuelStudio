@@ -5,6 +5,7 @@ import path from "node:path";
 import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
 import { fakeMcpCtx } from "../../../test/helpers/fakeMcpCtx.js";
 import { _setScopeForTests } from "../mediaPath.js";
+import { PLAN_CAPABILITIES } from "../../middleware/featureGate.js";
 import lyricTools from "./lyric.js";
 
 const USER = { id: "u_lyric", email: "lyric@example.com", role: "user", emailVerified: true };
@@ -56,7 +57,7 @@ function mediaWith(...names) {
   return fs.realpathSync(dir);
 }
 
-test("the lyric file declares seven tools on /api/lyric-video, charged in their handlers", () => {
+test("the lyric file declares seven tools on /api/lyric-video, charged in their handlers and gated like the router", () => {
   assert.deepEqual(Object.keys(byName).sort(), [
     "lyric_align", "lyric_background", "lyric_line_update", "lyric_project", "lyric_render", "lyric_set_lyrics", "lyric_set_song",
   ]);
@@ -64,8 +65,12 @@ test("the lyric file declares seven tools on /api/lyric-video, charged in their 
     assert.deepEqual(tool.routes, ["/api/lyric-video"], tool.name);
     assert.equal(tool.caps, undefined, tool.name);
     assert.equal(tool.publish, undefined, tool.name);
-    assert.equal(tool.requires, undefined, tool.name);
+    assert.equal(tool.requires, "feature:lyric.video", tool.name);
   }
+  // The capability the tools name is the one index.js gates the router with.
+  const index = fs.readFileSync(path.resolve(import.meta.dirname, "../../../index.js"), "utf-8");
+  const mount = index.split(/\r?\n/).find((line) => line.startsWith('app.use("/api/lyric-video"'));
+  assert.match(mount, /featureGate\("lyric\.video"\)/);
 });
 
 test("descriptions name the job kinds, the costs and what to call next", () => {
@@ -327,6 +332,20 @@ test("tools/list shows every lyric tool", async () => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
   for (const tool of lyricTools) assert.ok(names.includes(tool.name), tool.name);
+});
+
+test("a key whose plan lacks lyric.video is not shown the lyric tools", async () => {
+  // Every plan includes lyric.video today, so the free plan is made to lack it for this one listing.
+  PLAN_CAPABILITIES.free.delete("lyric.video");
+  const lacking = await mcpClient(testApp.port, testApp.keyFor(USER.id));
+  try {
+    const names = (await lacking.listTools()).tools.map((t) => t.name);
+    for (const tool of lyricTools) assert.ok(!names.includes(tool.name), tool.name);
+    assert.ok(names.includes("whoami"), "other tools are still listed");
+  } finally {
+    PLAN_CAPABILITIES.free.add("lyric.video");
+    await lacking.close().catch(() => {});
+  }
 });
 
 test("a real song is created, given lyrics, read, refused where it is not ready, listed and deleted", async () => {
