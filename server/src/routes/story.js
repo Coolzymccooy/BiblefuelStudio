@@ -1111,7 +1111,10 @@ router.post("/:id/images", (req, res) => {
     } catch {}
   });
   // Reflect the in-flight state immediately so the UI shows progress, not idle.
-  writeProject(ctx.dataDir, { ...project, status: STORY_STATUS.GENERATING_IMAGES, error: null });
+  // Read again: the run has already marked its scenes generating, and writing
+  // the copy read above would put their old error statuses back.
+  const started = readProject(ctx.dataDir, id) || project;
+  writeProject(ctx.dataDir, { ...started, status: STORY_STATUS.GENERATING_IMAGES, error: null });
   return res.json({ ok: true, project: readProject(ctx.dataDir, id) });
 });
 
