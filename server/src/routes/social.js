@@ -8,6 +8,7 @@ import cron from "node-cron";
 import { google } from "googleapis";
 import crypto from "node:crypto";
 import { signOAuthState, verifyOAuthState } from "../auth.js";
+import { refuseAgentCalls } from "../middleware/agentAuth.js";
 import { buildZernioPost } from "../lib/zernioPayload.js";
 // readTikTokOutcome replaced this branch's isTikTokCapacityError: the capacity
 // check now reads attempt.outcome.atCapacity rather than sniffing the message.
@@ -909,7 +910,7 @@ async function ownAccountsOr502(res, apiKey) {
   }
 }
 
-router.post("/tiktok/own-key", ownKeyLimiter, async (req, res) => {
+router.post("/tiktok/own-key", refuseAgentCalls, ownKeyLimiter, async (req, res) => {
   const apiKey = cleanZernioKey(req.body?.apiKey);
   if (!apiKey) return res.status(400).json({ ok: false, error: "That does not look like a Zernio API key. Paste the whole key." });
   if (apiKey === zernioApiKey()) {
@@ -936,7 +937,7 @@ router.post("/tiktok/own-key", ownKeyLimiter, async (req, res) => {
   res.json({ ok: true, accounts, selected: only?.accountId || "" });
 });
 
-router.get("/tiktok/own-accounts", ownKeyLimiter, async (req, res) => {
+router.get("/tiktok/own-accounts", refuseAgentCalls, ownKeyLimiter, async (req, res) => {
   const apiKey = cleanZernioKey(readSocialStore(req.ctx.dataDir).zernio?.own?.apiKey);
   if (!apiKey) return res.status(404).json({ ok: false, error: "Add your Zernio API key first." });
   const accounts = await ownAccountsOr502(res, apiKey);
@@ -944,7 +945,7 @@ router.get("/tiktok/own-accounts", ownKeyLimiter, async (req, res) => {
   res.json({ ok: true, accounts });
 });
 
-router.post("/tiktok/own-account", ownKeyLimiter, async (req, res) => {
+router.post("/tiktok/own-account", refuseAgentCalls, ownKeyLimiter, async (req, res) => {
   const apiKey = cleanZernioKey(readSocialStore(req.ctx.dataDir).zernio?.own?.apiKey);
   if (!apiKey) return res.status(404).json({ ok: false, error: "Add your Zernio API key first." });
   const wanted = String(req.body?.accountId || "").trim();
@@ -964,14 +965,14 @@ router.post("/tiktok/own-account", ownKeyLimiter, async (req, res) => {
   res.json({ ok: true, accountId: pick.accountId, username: pick.username });
 });
 
-router.post("/tiktok/own-key/remove", (req, res) => {
+router.post("/tiktok/own-key/remove", refuseAgentCalls, (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   // Only forgotten here: the TikTok stays connected in the user's own Zernio.
   writeSocialStore(req.ctx.dataDir, { ...store, zernio: { ...store.zernio, own: {} } });
   res.json({ ok: true });
 });
 
-router.post("/tiktok/connect", async (req, res) => {
+router.post("/tiktok/connect", refuseAgentCalls, async (req, res) => {
   if (!zernioApiKey()) return res.status(503).json({ ok: false, error: "TikTok posting is not set up on this server yet." });
   if (isOwnerCtx(req.ctx) && String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim()) {
     return res.status(400).json({ ok: false, error: "Your TikTok is already connected through the server settings." });
@@ -1019,7 +1020,7 @@ router.post("/tiktok/connect", async (req, res) => {
   }
 });
 
-router.post("/tiktok/disconnect", async (req, res) => {
+router.post("/tiktok/disconnect", refuseAgentCalls, async (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const accountId = store.zernio?.tiktok?.accountId;
   if (accountId) {
@@ -1117,7 +1118,7 @@ async function newWebhookRefusal(incoming, stored) {
   return null;
 }
 
-router.post("/config", answerErrors(async (req, res) => {
+router.post("/config", refuseAgentCalls, answerErrors(async (req, res) => {
   const payload = req.body || {};
   const store = readSocialStore(req.ctx.dataDir);
   const buffer = payload.buffer || store.buffer || {};
@@ -1229,7 +1230,7 @@ router.delete("/schedules/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/buffer/profiles", async (req, res) => {
+router.post("/buffer/profiles", refuseAgentCalls, async (req, res) => {
   try {
     const store = readSocialStore(req.ctx.dataDir);
     const accessToken = String(req.body?.accessToken || store.buffer?.accessToken || "").trim();
@@ -1460,7 +1461,7 @@ router.get("/webhooks", (req, res) => {
   });
 });
 
-router.post("/webhooks", answerErrors(async (req, res) => {
+router.post("/webhooks", refuseAgentCalls, answerErrors(async (req, res) => {
   const name = String(req.body?.name || "").trim();
   const url = String(req.body?.url || "").trim();
   if (!name) return res.status(400).json({ ok: false, error: "name required" });
@@ -1485,7 +1486,7 @@ router.post("/webhooks", answerErrors(async (req, res) => {
   res.json({ ok: true, webhook: entry });
 }));
 
-router.delete("/webhooks/:id", (req, res) => {
+router.delete("/webhooks/:id", refuseAgentCalls, (req, res) => {
   const id = String(req.params.id || "").trim();
   if (!id) return res.status(400).json({ ok: false, error: "id required" });
   const store = readSocialStore(req.ctx.dataDir);
@@ -1494,7 +1495,7 @@ router.delete("/webhooks/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/webhooks/:id/test", async (req, res) => {
+router.post("/webhooks/:id/test", refuseAgentCalls, async (req, res) => {
   const id = String(req.params.id || "").trim();
   const store = readSocialStore(req.ctx.dataDir);
   const hook = (store.webhooks || []).find((w) => w.id === id);
@@ -1627,7 +1628,7 @@ router.get("/youtube/status", (req, res) => {
   });
 });
 
-router.get("/youtube/connect", (req, res) => {
+router.get("/youtube/connect", refuseAgentCalls, (req, res) => {
   let oauth;
   try { oauth = youtubeOauthClient(); }
   catch (e) { return res.status(503).json({ ok: false, error: String(e?.message || e) }); }
@@ -1667,7 +1668,7 @@ export function _resetYoutubeRevokeImpl() { _revokeYoutubeToken = (token) => you
 // POST /youtube/disconnect — revoke at Google, then forget the token here.
 // Only blanking the local copy left the grant live at Google. Local removal
 // happens even if Google can't be reached; `revoked` says whether it was.
-router.post("/youtube/disconnect", async (req, res) => {
+router.post("/youtube/disconnect", refuseAgentCalls, async (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const yt = store.direct?.youtube || {};
   let revoked = false;
