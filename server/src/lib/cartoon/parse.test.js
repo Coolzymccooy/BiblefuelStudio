@@ -155,6 +155,47 @@ test("keywords are case-insensitive and Voice: splits at the last occurrence", (
   assert.equal(parsed.scenes[0].note, "wide, dusk");
 });
 
+test("Word and phone bullets work in the Cast list", () => {
+  for (const bullet of ["•", "·", "–", "—", "-", "*"]) {
+    const parsed = parseCartoonScript(
+      `Cast:\n${bullet} Eli: a boy. Voice: bright.\n${bullet}\tPip: a lamb. Voice: soft.\n\nScene: Hill\nEli: "Hi"\n`,
+    );
+    assert.deepEqual(
+      parsed.cast,
+      [
+        { name: "Eli", look: "a boy", voice: "bright" },
+        { name: "Pip", look: "a lamb", voice: "soft" },
+      ],
+      bullet,
+    );
+    assert.deepEqual(parsed.ignored, [], bullet);
+    assert.deepEqual(parsed.warnings, [], bullet);
+    assert.equal(parsed.scenes[0].beats[0].speaker, "Eli");
+  }
+});
+
+test("a bulleted line outside Cast is ignored, never a spoken line", () => {
+  const parsed = parseCartoonScript(
+    "Scene: Hill\n• Eli: \"Hi\"\n- Pip: \"Hello\"\n– Eli: \"Bye\"\nEli: \"Real\"\n",
+  );
+  assert.equal(parsed.scenes[0].beats.length, 1);
+  assert.equal(parsed.scenes[0].beats[0].text, "Real");
+  assert.deepEqual(parsed.ignored, [
+    { lineNo: 2, text: "• Eli: \"Hi\"" },
+    { lineNo: 3, text: "- Pip: \"Hello\"" },
+    { lineNo: 4, text: "– Eli: \"Bye\"" },
+  ]);
+  // Only the real "Eli:" line speaks (and Eli is not in a Cast here); the bulleted ones add no warnings.
+  assert.deepEqual(parsed.warnings, ['"Eli" speaks but is not in the Cast list.']);
+});
+
+test("an inline value after Cast: still opens the list but is listed as ignored", () => {
+  const parsed = parseCartoonScript("Cast: Eli, Pip\n- Eli: a boy. Voice: bright.\n\nScene: Hill\nEli: \"Hi\"\n");
+  assert.deepEqual(parsed.ignored, [{ lineNo: 1, text: "Cast: Eli, Pip" }]);
+  assert.equal(parsed.cast.length, 1);
+  assert.equal(parsed.cast[0].name, "Eli");
+});
+
 test("empty and non-string input give an empty result", () => {
   for (const input of ["", "   \n\n", undefined, null]) {
     assert.deepEqual(parseCartoonScript(input), {

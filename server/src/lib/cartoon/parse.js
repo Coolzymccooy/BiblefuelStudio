@@ -24,10 +24,16 @@
 export const MAX_SCRIPT_CHARS = 8000;
 
 const KEYWORD_RE = /^(verse|style|cast|scene)\s*:\s*(.*)$/i;
-const LIST_ITEM_RE = /^[-*]\s+(.*)$/;
+// Bullets: "-" and "*" (need a space), plus the ones Word and phones produce:
+// bullet, middle dot, en dash, em dash.
+const BULLET_CHARS = "•·–—";
+const LIST_ITEM_RE = new RegExp(`^(?:[-*]\\s+|[${BULLET_CHARS}]\\s*)(.*)$`);
 const TITLE_RE = /^#\s+(.*)$/;
 const ACTION_RE = /^\((.*)\)$/;
-const SPEAKER_RE = /^([^\s:"“”„()][^:"“”„()]{0,39}?)\s*:\s*(.*)$/;
+// A speaker name never starts with a bullet, so a bulleted line outside Cast is ignored.
+const SPEAKER_RE = new RegExp(
+  `^([^\\s:"\\u201C\\u201D\\u201E()\\-*${BULLET_CHARS}][^:"\\u201C\\u201D\\u201E()]{0,39}?)\\s*:\\s*(.*)$`,
+);
 const VOICE_RE = /voice\s*:/gi;
 const OPENING_QUOTES = new Set(['"', "“", "”", "„"]);
 const CLOSING_QUOTES = new Set(['"', "“", "”"]);
@@ -131,6 +137,7 @@ export function parseCartoonScript(markdown) {
       const value = keyword[2].trim();
       if (word === "cast") {
         inCast = true;
+        if (value !== "") ignore(lineNo, line);
       } else if (word === "scene") {
         const heading = parseSceneHeading(value);
         openScene(heading.place, heading.note);
