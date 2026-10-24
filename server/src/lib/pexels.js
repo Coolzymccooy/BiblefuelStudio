@@ -1,8 +1,13 @@
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
-import { pipeline } from "stream/promises";
 import { OUTPUT_DIR } from "./paths.js";
+import { existingStockFile, writeStockFile } from "./stockDownload.js";
+
+// Test seam: the module's HTTP client (node-fetch), swappable so tests make no request.
+let _fetch = fetch;
+export function _setFetchForTest(impl) { _fetch = impl; }
+export function _resetFetchForTest() { _fetch = fetch; }
 
 export async function pexelsSearchVideos(query, perPage = 24) {
   const rawKey = (process.env.PEXELS_API_KEY || "");
@@ -15,7 +20,7 @@ export async function pexelsSearchVideos(query, perPage = 24) {
   console.log(`[PEXELS] Searching: ${url}`);
   console.log(`[PEXELS] Using Key: ${key.substring(0, 4)}... (Len: ${key.length})`);
 
-  const resp = await fetch(url, { headers: { Authorization: key } });
+  const resp = await _fetch(url, { headers: { Authorization: key } });
   if (!resp.ok) {
     const errText = await resp.text();
     console.error(`[PEXELS] API Failure ${resp.status}:`, errText);
@@ -44,8 +49,16 @@ export async function pexelsDownloadVideoById(id) {
   const key = rawKey.replace(/['"]/g, '').trim();
   if (!key) throw new Error("PEXELS_API_KEY missing");
 
+  // One global file per id, shared by every account: reuse it rather than
+  // download over a file another render may be reading (#112).
+  const outDir = OUTPUT_DIR;
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  const outFile = path.join(outDir, `pexels-${id}.mp4`);
+  const existing = existingStockFile(outFile);
+  if (existing) return existing;
+
   const url = `https://api.pexels.com/videos/videos/${id}`;
-  const resp = await fetch(url, { headers: { Authorization: key } });
+  const resp = await _fetch(url, { headers: { Authorization: key } });
   if (!resp.ok) {
     const errText = await resp.text();
     console.error(`[PEXELS] Download API Failure ${resp.status}:`, errText);
@@ -58,12 +71,7 @@ export async function pexelsDownloadVideoById(id) {
   const pick = sorted.find(f => (f.width || 0) <= 1080) || sorted[0];
   if (!pick?.link) throw new Error("No downloadable link found");
 
-  const outDir = OUTPUT_DIR;
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  const outFile = path.join(outDir, `pexels-${id}.mp4`);
-
-  const dl = await fetch(pick.link);
+  const dl = await _fetch(pick.link);
   if (!dl.ok) throw new Error(`Download failed: ${dl.status}`);
-  await pipeline(dl.body, fs.createWriteStream(outFile));
-  return outFile;
+  return await writeStockFile(dl.body, outFile);
 }
