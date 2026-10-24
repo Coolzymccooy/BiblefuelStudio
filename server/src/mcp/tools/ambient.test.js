@@ -365,11 +365,23 @@ test("assemble to file: a stored but unused file with no licence drops the kept 
   assert.equal(await bedChoiceSent(licensed, { mode: "file" }), true, "a file with a recorded licence keeps it");
 });
 
-test("file to assemble: stored but unused tracks with no licence drop the kept choice", async () => {
+test("file to assemble: the file-mode choice already covered the track list, so it is kept", async () => {
+  // The route's gate counts trackRefs in file mode too, so the choice the user made there approved them.
   const session = bedOf({ mode: "file", filePath: "mylib:old", trackRefs: ["mylib:unknown"] });
-  assert.equal(await bedChoiceSent(session, { mode: "assemble" }), undefined);
+  assert.equal(await bedChoiceSent(session, { mode: "assemble" }), true);
   const licensed = bedOf({ mode: "file", filePath: "mylib:old", trackRefs: ["mylib:cleared", "library:prayer-piano"] });
   assert.equal(await bedChoiceSent(licensed, { mode: "assemble" }), true);
+});
+
+test("a file-mode bed with old unlicensed tracks the user allowed keeps the choice for a volume change", async () => {
+  const session = bedOf({ mode: "file", filePath: "mylib:old", trackRefs: ["mylib:unknown"] });
+  assert.equal(await bedChoiceSent(session, { volume: 1.1 }), true);
+});
+
+test("assemble to file with an old file the assemble choice never covered still drops it", async () => {
+  // Approved in assemble mode: mylib:old only. The gate never counted the file there.
+  const session = bedOf({ mode: "assemble", trackRefs: ["mylib:old"], filePath: "mylib:unknown" });
+  assert.equal(await bedChoiceSent(session, { mode: "file" }), undefined);
 });
 
 test("a file-mode bed keeps the choice for a change that plays the same file", async () => {
