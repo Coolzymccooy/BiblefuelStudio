@@ -91,6 +91,9 @@ test("make_short_from_verse with publish adds the YouTube steps and says consent
   const publishStep = text.split("\n").find((line) => line.includes("`publish_youtube` with"));
   assert.match(publishStep, /^\d+\. Only if auto-publish is off/, "the upload step is skipped when the render posts by itself");
   assert.match(text, /kind: "publish"/);
+  // With auto-publish on there is no publish id to wait for, so the wait is conditional too.
+  const waitStep = text.split("\n").find((line) => line.includes('kind: "publish"'));
+  assert.match(waitStep, /^\d+\. Only if you called `publish_youtube`/);
   assert.match(text, /publishAllowed/);
   assert.match(text, /This key may publish/);
   assert.match(text, /PUBLISH_NOT_ALLOWED/);

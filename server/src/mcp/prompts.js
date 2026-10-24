@@ -85,7 +85,8 @@ function shortCore({ reference, voice, publish }) {
 const PUBLISH_STEPS = [
   "Only if auto-publish is off (render_short's result said autoPublish \"off\"): `publish_youtube` with { videoPath: <output.path from the render>, title: <up to 100 characters, naming the reference> }. It needs the key's publish consent " +
     "(PUBLISH_NOT_ALLOWED otherwise) and costs one daily publish. privacyStatus defaults to private: tell the user, or ask them before passing \"public\".",
-  "`jobs_wait` with { kind: \"publish\", id: <the id publish_youtube returned> } until done. The finished handle carries the video link.",
+  "Only if you called `publish_youtube` in the step before: `jobs_wait` with { kind: \"publish\", id: <the id publish_youtube returned> } until done. " +
+    "The finished handle carries the video link. If auto-publish posted the video, skip this step and tell the user where it was posted.",
 ];
 
 const NO_PUBLISH_NOTE =
