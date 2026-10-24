@@ -374,9 +374,12 @@ test("schedules create refuses a schedule that fires more than once an hour, and
 });
 
 test("schedules remove with consent deletes by id and charges nothing", async () => {
-  const { ctx, calls, charges } = ctxWith({ "DELETE /api/social/schedules/sch%201": { ok: true } }, CONSENT);
+  const { ctx, calls, charges } = ctxWith({
+    "GET /api/social/schedules": { ok: true, schedules: [{ id: "sch 1", createdByAgentKeyId: "ak_1" }] },
+    "DELETE /api/social/schedules/sch%201": { ok: true },
+  }, CONSENT);
   const result = await byName.schedules.handler(ctx, { action: "remove", id: "sch 1" });
-  assert.deepEqual(routesCalled(calls), ["DELETE /api/social/schedules/sch%201"]);
+  assert.deepEqual(routesCalled(calls), ["GET /api/social/schedules", "DELETE /api/social/schedules/sch%201"]);
   assert.deepEqual(charges, []);
   assert.deepEqual(result.structuredContent, { removed: "sch 1" });
 });

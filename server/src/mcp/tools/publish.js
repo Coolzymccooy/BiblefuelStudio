@@ -287,8 +287,15 @@ async function listSchedules(ctx) {
   return ok({ schedules: (Array.isArray(body?.schedules) ? body.schedules : []).map(scheduleRow) });
 }
 
+/** R41: an agent may remove only a schedule an agent created; the user's own are theirs to manage in Settings. */
 async function removeSchedule(ctx, { id }) {
   if (!id) return fail("BAD_INPUT", "remove needs the schedule id from action list.");
+  const body = await ctx.api.call("GET", "/api/social/schedules");
+  const found = (Array.isArray(body?.schedules) ? body.schedules : []).find((s) => String(s?.id) === id);
+  if (!found) return fail("SCHEDULE_NOT_FOUND", `No schedule with id "${id}". Use action list for the ids.`);
+  if (!found.createdByAgentKeyId) {
+    return fail("NOT_AGENT_SCHEDULE", `Schedule "${id}" was made in the app, not by an agent. Only the user can remove it, in Settings.`);
+  }
   await ctx.api.call("DELETE", `/api/social/schedules/${encodeURIComponent(id)}`);
   return ok({ removed: id });
 }
@@ -301,7 +308,7 @@ const schedules = {
     "action create: a new schedule that posts by itself on a cron time (five fields, at most once an hour, for example 0 9 * * * for 9:00 daily, in timezone, default UTC). " +
     "type replay posts the same video each time (needs caption and videoPath); type auto_generate makes and posts a fresh short each run (niche, tone, aspect, durationSec, voiceId, backgroundQuery, kineticCaptions). " +
     "destination is webhook (webhookId), buffer (profileId) or youtube (privacyStatus). create needs the key's publish switch and costs one daily publish now; the runs themselves happen on the server later and are not charged to the key (each auto_generate run spends one unit of the user's plan render quota, and is skipped when none is left). Agents may create at most 5 schedules per account (SCHEDULE_LIMIT after that); the user sees and removes them in Settings. " +
-    "action remove { id } deletes a schedule (needs the publish switch; free).",
+    "action remove { id } deletes a schedule, but only schedules an agent created (any of the user's keys); one made in the app is refused with NOT_AGENT_SCHEDULE (needs the publish switch; free).",
   inputSchema: {
     action: z.enum(SCHEDULE_ACTIONS).describe("list, create or remove."),
     id: z.string().max(100).optional().describe("remove: the schedule id from action list."),

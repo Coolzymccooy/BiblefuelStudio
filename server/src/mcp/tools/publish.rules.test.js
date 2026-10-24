@@ -43,3 +43,43 @@ for (const joined of [true, false]) {
     assert.deepEqual(refunds, joined ? [{ bucket: "publishes", amount: 1 }] : []);
   });
 }
+
+// ---- R41: agents remove only schedules agents made ----
+
+const SCHEDULE_LIST = {
+  ok: true,
+  schedules: [
+    { id: "sch_agent", name: "Agent made", createdByAgentKeyId: "ak_other" },
+    { id: "sch_web", name: "Made in the app" },
+  ],
+};
+
+test("schedules remove deletes a schedule an agent made (any of the user's keys)", async () => {
+  const { ctx, calls, charges } = ctxWith({
+    "GET /api/social/schedules": SCHEDULE_LIST,
+    "DELETE /api/social/schedules/sch_agent": { ok: true },
+  });
+  const result = await byName.schedules.handler(ctx, { action: "remove", id: "sch_agent" });
+  assert.deepEqual(result.structuredContent, { removed: "sch_agent" });
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["GET /api/social/schedules", "DELETE /api/social/schedules/sch_agent"]);
+  assert.deepEqual(charges, []);
+});
+
+test("schedules remove refuses a schedule made in the app with NOT_AGENT_SCHEDULE and deletes nothing", async () => {
+  const { ctx, calls } = ctxWith({ "GET /api/social/schedules": SCHEDULE_LIST });
+  const result = await byName.schedules.handler(ctx, { action: "remove", id: "sch_web" });
+  assert.equal(result.structuredContent.error, "NOT_AGENT_SCHEDULE");
+  assert.equal(calls.some((c) => c.method === "DELETE"), false);
+});
+
+test("schedules remove of an unknown id is SCHEDULE_NOT_FOUND and deletes nothing", async () => {
+  const { ctx, calls } = ctxWith({ "GET /api/social/schedules": SCHEDULE_LIST });
+  const result = await byName.schedules.handler(ctx, { action: "remove", id: "sch_gone" });
+  assert.equal(result.structuredContent.error, "SCHEDULE_NOT_FOUND");
+  assert.equal(calls.some((c) => c.method === "DELETE"), false);
+});
+
+test("the schedules description says agents remove only schedules agents made", () => {
+  assert.match(byName.schedules.description, /only schedules an agent created/i);
+  assert.match(byName.schedules.description, /NOT_AGENT_SCHEDULE/);
+});
