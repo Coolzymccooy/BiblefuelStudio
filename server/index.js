@@ -263,12 +263,16 @@ function backupTarget() {
   if (!backupsEnabled()) return null;
   const dir = String(process.env.BACKUP_TARGET || "").match(/^dir:(.+)$/)?.[1];
   if (dir) return folderTarget(dir);
-  if (!isFirebaseAdminEnabled()) return null;
+  // Backups are meant to run here: say so loudly when there is nowhere to put them.
+  const noTarget = (why) => {
+    alert("backup-off", "Nightly backups are not running", `${why} Set up Firebase storage, set BACKUP_TARGET=dir:<folder>, or BACKUP_ENABLED=false.`);
+    return null;
+  };
+  if (!isFirebaseAdminEnabled()) return noTarget("Firebase admin is not configured, so there is no bucket to back up to.");
   try {
     return bucketTarget(getStorageBucket());
   } catch (e) {
-    console.warn("[maintenance] backups off:", e?.message || e);
-    return null;
+    return noTarget(`The storage bucket is not available: ${e?.message || e}.`);
   }
 }
 const maintenance = createMaintenance({ dataDir: DATA_DIR, outputDir: OUTPUT_DIR, alert, backupTarget: backupTarget() });

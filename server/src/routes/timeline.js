@@ -150,6 +150,7 @@ function serializeJob(job) {
 }
 
 async function runTimelineJob(job) {
+  let failureReported = false;
   job.status = 'running';
   job.phase = 'rendering';
   job.progress = 10;
@@ -191,6 +192,7 @@ async function runTimelineJob(job) {
       job.error = presentRenderError(proofResult.error) || 'Timeline proof render failed';
       job.note = 'Timeline proof render failed before producing a playable MP4.';
       reportRenderFailure('timeline', { jobId: job.jobId, userId: job.userId, error: proofResult.error || job.error });
+      failureReported = true;
     }
     persistTimelineJob(job);
   } catch (e) {
@@ -200,7 +202,8 @@ async function runTimelineJob(job) {
     job.completedAt = Date.now();
     job.error = friendlyRenderError('timeline-render', String(e?.message || e));
     job.note = 'Timeline proof render failed before producing a playable MP4.';
-    reportRenderFailure('timeline', { jobId: job.jobId, userId: job.userId, error: e?.message || e });
+    // Already reported when the render itself failed and only saving it threw.
+    if (!failureReported) reportRenderFailure('timeline', { jobId: job.jobId, userId: job.userId, error: e?.message || e });
     persistTimelineJob(job);
   }
 }

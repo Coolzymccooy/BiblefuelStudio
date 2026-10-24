@@ -45,7 +45,7 @@ test("the nightly backup runs once, at the backup hour, and records how it went"
   assert.ok(fs.existsSync(path.join(store, "backups/data/2026-10-24.tar.gz")));
   advance(HOUR);
   assert.equal(await m.backupIfDue(), null, "once a day");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "backup-state.json"), "utf8")).lastAttemptDay, "2026-10-24", "survives a restart");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, "backup-state.json"), "utf8")).lastOkDay, "2026-10-24", "survives a restart");
   advance(24 * HOUR);
   assert.ok((await m.backupIfDue())?.lastOkAt, "and again the next night");
 });
@@ -59,6 +59,29 @@ test("a failed backup raises an alert, and so do 36 hours without a good one", a
   advance(37 * HOUR);
   await m.backupIfDue();
   assert.ok(alerts.some((a) => a.kind === "backup-stale"));
+});
+
+test("a failed night is tried again an hour later, three tries a day, and a later success ends it", async () => {
+  let failing = true;
+  const real = folderTarget(tmp("mt-store-"));
+  const flaky = { ...real, put: async (local, key) => { if (failing) throw new Error("timeout"); return real.put(local, key); } };
+  const { m, alerts, advance } = rig({ target: flaky, start: Date.parse("2026-10-24T03:00:00Z") });
+  const tries = () => alerts.filter((a) => a.kind === "backup-failed").length;
+  await m.backupIfDue();
+  assert.equal(tries(), 1);
+  advance(20 * 60 * 1000);
+  await m.backupIfDue();
+  assert.equal(tries(), 1, "not again within the hour");
+  advance(HOUR);
+  await m.backupIfDue();
+  assert.equal(tries(), 2);
+  assert.match(alerts.at(-1).detail, /Attempt 2 of 3/);
+  advance(HOUR);
+  failing = false;
+  const ok = await m.backupIfDue();
+  assert.ok(ok?.lastOkAt, "the third try works");
+  advance(HOUR);
+  assert.equal(await m.backupIfDue(), null, "done for the day");
 });
 
 test("with no backup target nothing runs and nothing complains", async () => {

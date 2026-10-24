@@ -10,8 +10,8 @@ import { runDataBackup, runOutputsBackup, outputRoots } from "./backup.js";
  * - every 15 minutes, check free disk space; when it is low, clean up and alert;
  * - every 6 hours, delete old throwaway files (disposableCleanup.js);
  * - once a night at BACKUP_HOUR_UTC (default 3), back up the data and the
- *   outputs (backup.js), and alert when a backup fails or none has worked for
- *   36 hours.
+ *   outputs (backup.js). A failed night is tried again hourly, three tries a
+ *   day; a failure, or 36 hours with no good backup, raises an alert.
  * Each job runs one at a time, and none of them can throw into the server.
  */
 
@@ -62,17 +62,16 @@ export function createMaintenance({ dataDir, outputDir, alert, backupTarget = nu
     const dirs = [...new Set([outputDir, dataDir])];
     const readings = dirs.map((d) => ({ dir: d, s: diskStatus(d, { env }) })).filter((x) => x.s);
     if (!readings.length) return null;
-    const worst = readings.reduce((a, b) => (b.s.freeGb < a.s.freeGb ? b : a));
-    status.disk = worst.s;
-    if (worst.s.low) {
-      busy.delete("disk");
-      await cleanup();
-      const after = diskStatus(worst.dir, { env }) || worst.s;
-      status.disk = after;
-      if (after.low) {
-        alert("disk-low", `Disk nearly full: ${after.freeGb} GB free of ${after.totalGb} GB`,
-          `${worst.dir} has ${after.freePercent}% free after cleaning up throwaway files.\nRenders fail when the disk fills. Free space or grow the volume.`);
-      }
+    // Every volume is checked: a big disk low by percentage counts as much as a small one.
+    const worstOf = (list) => list.reduce((a, b) => (b.s.freePercent < a.s.freePercent ? b : a));
+    status.disk = worstOf(readings).s;
+    if (!readings.some((r) => r.s.low)) return status.disk;
+    await cleanup();
+    const after = readings.map((r) => ({ dir: r.dir, s: diskStatus(r.dir, { env }) || r.s }));
+    status.disk = worstOf(after).s;
+    for (const { dir, s: d } of after.filter((r) => r.s.low)) {
+      alert("disk-low", `Disk nearly full: ${d.freeGb} GB free of ${d.totalGb} GB`,
+        `${dir} has ${d.freePercent}% free after cleaning up throwaway files.\nRenders fail when the disk fills. Free space or grow the volume.`);
     }
     return status.disk;
   });
@@ -86,15 +85,17 @@ export function createMaintenance({ dataDir, outputDir, alert, backupTarget = nu
     if (!backupTarget) return null;
     const started = now();
     const day = new Date(started).toISOString().slice(0, 10);
-    const state = { ...status.backup, lastAttemptDay: day, lastAttemptAt: new Date(started).toISOString() };
+    const failedToday = status.backup.failedDay === day ? Number(status.backup.failedCount) || 0 : 0;
+    const state = { ...status.backup, lastAttemptAt: new Date(started).toISOString() };
     try {
       const data = await runDataBackup({ dataDir, target: backupTarget, now: started, env });
       const outputs = await runOutputsBackup({ roots: outputRoots(dataDir, outputDir), target: backupTarget, manifestFile: path.join(dataDir, "backup-manifest.json"), env });
-      Object.assign(state, { lastOkAt: new Date(now()).toISOString(), lastError: null, data, outputs });
+      Object.assign(state, { lastOkAt: new Date(now()).toISOString(), lastOkDay: day, lastError: null, failedDay: null, failedCount: 0, data, outputs });
       log.log?.(`[maintenance] backup done: ${data.files} record file(s) (${(data.bytes / 1024).toFixed(0)} KB), ${outputs.copied} output file(s) copied, ${outputs.pending} waiting`);
+      if (outputs.failed) alert("backup-failed", `${outputs.failed} output file(s) could not be backed up`, "They are tried again next night.");
     } catch (e) {
-      state.lastError = String(e?.message || e);
-      alert("backup-failed", "The nightly backup failed", state.lastError);
+      Object.assign(state, { lastError: String(e?.message || e), failedDay: day, failedCount: failedToday + 1 });
+      alert("backup-failed", "The nightly backup failed", `${state.lastError}\n(Attempt ${failedToday + 1} of 3 today.)`);
     }
     status.backup = state;
     try {
@@ -112,7 +113,14 @@ export function createMaintenance({ dataDir, outputDir, alert, backupTarget = nu
     const d = new Date(t);
     const today = d.toISOString().slice(0, 10);
     let ran = null;
-    if (d.getUTCHours() >= backupHour() && status.backup.lastAttemptDay !== today) ran = await backupNow();
+    // Due once the backup hour has passed and today has no good backup. A failed
+    // night is tried again an hour later, up to three tries a day.
+    const b = status.backup;
+    const failedToday = b.failedDay === today ? Number(b.failedCount) || 0 : 0;
+    const sinceAttempt = t - (Date.parse(b.lastAttemptAt || "") || 0);
+    if (d.getUTCHours() >= backupHour() && b.lastOkDay !== today && failedToday < 3 && (failedToday === 0 || sinceAttempt >= HOUR)) {
+      ran = await backupNow();
+    }
     const lastOk = Date.parse(status.backup.lastOkAt || "");
     const sinceStart = t - startedAt;
     if ((Number.isFinite(lastOk) ? t - lastOk : sinceStart) > 36 * HOUR) {

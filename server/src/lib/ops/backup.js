@@ -14,7 +14,8 @@ import { DISPOSABLE_FILES, DISPOSABLE_DIRS } from "./disposableCleanup.js";
  *   The last BACKUP_KEEP_DAYS (default 14) are kept. Media and caches are
  *   left out; they are covered by the outputs backup or re-made on demand.
  * - Outputs: every finished file in the owner's and each user's outputs
- *   folder, copied once to backups/outputs/<owner|users/id>/<path>. A file
+ *   folder, and every media file kept in DATA_DIR itself (logos, issue
+ *   attachments, uploaded songs), copied once to backups/outputs/<owner|users/id>/<path>. A file
  *   already copied with the same size and time is skipped, and one night
  *   copies at most BACKUP_OUTPUTS_MAX_GB (default 5), so the first copy of a
  *   large disk spreads over several nights instead of starving renders.
@@ -69,13 +70,28 @@ export function dataBackupFiles(dataDir) {
 
 const dayKey = (now) => new Date(now).toISOString().slice(0, 10);
 
+// Pack the files, listing them afresh on each try: a record deleted between
+// listing and packing (a removed project) makes tar fail, and a second try
+// a moment later no longer lists it.
+async function packData(dataDir, archive) {
+  for (let attempt = 1; ; attempt += 1) {
+    const files = dataBackupFiles(dataDir).filter((rel) => fs.existsSync(path.join(dataDir, rel)));
+    if (!files.length) throw new Error(`Nothing to back up in ${dataDir}.`);
+    try {
+      // "./" keeps a name that starts with "@" from being read as an archive to append.
+      await tar.create({ gzip: true, file: archive, cwd: dataDir, portable: true, noDirRecurse: true }, files.map((f) => `./${f}`));
+      return files;
+    } catch (e) {
+      if (attempt >= 3 || e?.code !== "ENOENT") throw e;
+    }
+  }
+}
+
 export async function runDataBackup({ dataDir, target, now = Date.now(), env = process.env, tmpDir = os.tmpdir() }) {
-  const files = dataBackupFiles(dataDir);
   const key = `${DATA_PREFIX}${dayKey(now)}.tar.gz`;
   const archive = path.join(tmpDir, `bf-data-backup-${process.pid}-${now}.tar.gz`);
   try {
-    // A file that vanishes between listing and packing is skipped, not fatal.
-    await tar.create({ gzip: true, file: archive, cwd: dataDir, portable: true, noDirRecurse: true, onWarn: () => {} }, files);
+    const files = await packData(dataDir, archive);
     const bytes = fs.statSync(archive).size;
     await target.put(archive, key);
     const keep = Math.floor(num(env.BACKUP_KEEP_DAYS, 14));
@@ -87,9 +103,13 @@ export async function runDataBackup({ dataDir, target, now = Date.now(), env = p
   }
 }
 
-/** Each outputs folder with the label its files are stored under. */
+/**
+ * Each folder of files to copy, with the label its files are stored under:
+ * the outputs folders, and DATA_DIR itself for the media kept beside the
+ * records (its outputs folders are skipped there, being roots of their own).
+ */
 export function outputRoots(dataDir, outputDir) {
-  const roots = [{ dir: outputDir, label: "owner" }];
+  const roots = [{ dir: outputDir, label: "owner" }, { dir: dataDir, label: "data", mediaOnly: true }];
   try {
     for (const e of fs.readdirSync(path.join(dataDir, "users"), { withFileTypes: true })) {
       if (e.isDirectory()) roots.push({ dir: path.join(dataDir, "users", e.name, "outputs"), label: `users/${e.name}` });
@@ -115,13 +135,16 @@ export async function runOutputsBackup({ roots, target, manifestFile, env = proc
   let copied = 0;
   let bytes = 0;
   let pending = 0;
-  const skipDir = (rel, name) => OUTPUTS_SKIP_DIRS.has(name) || DISPOSABLE_DIRS.some((d) => rel === d || rel.startsWith(d + path.sep));
+  let failed = 0;
+  const skipOutputsDir = (rel, name) => OUTPUTS_SKIP_DIRS.has(name) || DISPOSABLE_DIRS.some((d) => rel === d || rel.startsWith(d + path.sep));
   try {
-    for (const { dir, label } of roots) {
+    for (const { dir, label, mediaOnly } of roots) {
       const todo = [];
+      const skipDir = mediaOnly ? (_rel, name) => DATA_SKIP_DIRS.has(name) : skipOutputsDir;
       walk(dir, "", skipDir, (rel) => {
         const name = path.basename(rel);
         if (name.endsWith(".tmp") || name.endsWith(".part")) return;
+        if (mediaOnly && !MEDIA_EXT.has(path.extname(name).toLowerCase())) return;
         if (!rel.includes(path.sep) && DISPOSABLE_FILES.some((re) => re.test(name))) return;
         todo.push(rel);
       });
@@ -140,7 +163,13 @@ export async function runOutputsBackup({ roots, target, manifestFile, env = proc
           pending += 1;
           continue;
         }
-        await target.put(local, key);
+        try {
+          await target.put(local, key);
+        } catch {
+          // One file that will not copy (deleted mid-copy, say) does not stop the rest.
+          failed += 1;
+          continue;
+        }
         manifest[key] = stamp;
         copied += 1;
         bytes += st.size;
@@ -151,7 +180,7 @@ export async function runOutputsBackup({ roots, target, manifestFile, env = proc
     fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
     writeJsonAtomic(manifestFile, manifest);
   }
-  return { copied, bytes, pending };
+  return { copied, bytes, pending, failed };
 }
 
 /** Unpack the data backup of `date` (YYYY-MM-DD; the newest when omitted) into an empty folder. */

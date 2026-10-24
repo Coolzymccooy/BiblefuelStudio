@@ -84,17 +84,19 @@ test("outputs are copied once, changes are copied again, throwaway files never, 
   put(owner, "cache/remote-bg/x.mp4", "cache");
   put(owner, "stems-work/j1/a.wav", "work");
   put(data, "users/u1/outputs/moment.mp4", "D".repeat(100));
+  put(data, "branding/logo.png", "L");
+  put(data, "users.json", "{}");
   const roots = outputRoots(data, owner);
-  assert.deepEqual(roots.map((r) => r.label), ["owner", "users/u1"]);
+  assert.deepEqual(roots.map((r) => r.label), ["owner", "data", "users/u1"]);
 
   const target = folderTarget(tmp("bk-store-"));
   const manifestFile = path.join(data, "backup-manifest.json");
   // 250 bytes a night: two files fit, the rest wait for the next night.
   const env = { BACKUP_OUTPUTS_MAX_GB: String(250 / 1024 ** 3) };
   const first = await runOutputsBackup({ roots, target, manifestFile, env });
-  assert.deepEqual({ copied: first.copied, pending: first.pending }, { copied: 2, pending: 2 });
+  assert.deepEqual({ copied: first.copied, pending: first.pending }, { copied: 3, pending: 2 }, "two 100-byte files and the 1-byte logo fit");
   const second = await runOutputsBackup({ roots, target, manifestFile, env });
-  assert.equal(second.copied, 2);
+  assert.equal(second.copied, 2, "the rest");
   assert.equal((await runOutputsBackup({ roots, target, manifestFile, env })).copied, 0, "nothing new");
 
   const keys = await target.list("backups/outputs/");
@@ -102,8 +104,9 @@ test("outputs are copied once, changes are copied again, throwaway files never, 
     "backups/outputs/owner/captioned-abc.mp4",
     "backups/outputs/owner/story/p1/video.mp4",
     "backups/outputs/owner/visual-library/v1/clip.mp4",
+    "backups/outputs/data/branding/logo.png",
     "backups/outputs/users/u1/moment.mp4",
-  ]);
+  ].sort(), "media kept in DATA_DIR is copied; its records and user outputs are not copied twice");
 
   const later = new Date(Date.now() + 5000);
   fs.writeFileSync(path.join(owner, "story/p1/video.mp4"), "E".repeat(120));
@@ -111,9 +114,49 @@ test("outputs are copied once, changes are copied again, throwaway files never, 
   assert.equal((await runOutputsBackup({ roots, target, manifestFile, env: {} })).copied, 1, "a changed file is copied again");
 
   const restored = tmp("bk-restore-out-");
-  assert.equal((await restoreOutputs({ target, toDir: restored })).files, 4);
+  assert.equal((await restoreOutputs({ target, toDir: restored })).files, 5);
   assert.equal(fs.readFileSync(path.join(restored, "owner/story/p1/video.mp4"), "utf8"), "E".repeat(120));
   assert.equal(fs.readFileSync(path.join(restored, "users/u1/moment.mp4"), "utf8"), "D".repeat(100));
+});
+
+test("a record that vanishes mid-backup, or a name starting with @, does not fail the night", async () => {
+  const data = fakeDataDir();
+  put(data, "@odd-name.json", "{}");
+  const store = tmp("bk-store-");
+  const real = folderTarget(store);
+  let removed = false;
+  // Delete a record right after the first listing, as a user deleting a project would.
+  const fs2 = await import("node:fs");
+  const origExists = fs2.default.existsSync;
+  fs2.default.existsSync = (p) => {
+    if (!removed && String(p).endsWith("p1.json")) {
+      removed = true;
+      const r = origExists(p);
+      fs2.default.rmSync(path.join(data, "plan.json"));
+      return r;
+    }
+    return origExists(p);
+  };
+  try {
+    const r = await runDataBackup({ dataDir: data, target: real, now: Date.parse("2026-10-24T03:00:00Z"), env: {} });
+    assert.ok(r.files >= 5);
+  } finally {
+    fs2.default.existsSync = origExists;
+  }
+  const back = await restoreDataBackup({ target: real, toDir: path.join(tmp("bk-r-"), "d") });
+  assert.ok(back.files >= 5);
+});
+
+test("one output that will not copy is counted and the rest still go", async () => {
+  const data = tmp("bk-data-");
+  const owner = tmp("bk-out-");
+  put(owner, "a.mp4", "A");
+  put(owner, "b.mp4", "B");
+  const real = folderTarget(tmp("bk-store-"));
+  const flaky = { ...real, put: async (local, key) => { if (key.endsWith("a.mp4")) throw new Error("gone"); return real.put(local, key); } };
+  const r = await runOutputsBackup({ roots: outputRoots(data, owner), target: flaky, manifestFile: path.join(data, "m.json"), env: {} });
+  assert.deepEqual({ copied: r.copied, failed: r.failed }, { copied: 1, failed: 1 });
+  assert.equal((await runOutputsBackup({ roots: outputRoots(data, owner), target: real, manifestFile: path.join(data, "m.json"), env: {} })).copied, 1, "it is tried again next night");
 });
 
 test("a folder target refuses keys that climb out of it", async () => {
