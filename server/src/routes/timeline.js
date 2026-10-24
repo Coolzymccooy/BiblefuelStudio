@@ -14,6 +14,9 @@ import { spawn } from 'child_process';
 import { downsamplePeaks, peaksCacheKey, PEAK_BUCKETS } from '../lib/audioPeaks.js';
 import { quota } from '../middleware/quota.js';
 import { brandLogoFor } from '../lib/branding.js';
+import { confineUserPath, isSharedTtsFile, sendUserPathError, UserPathError } from '../lib/userPathScope.js';
+import { resolveLibraryTrack } from '../lib/musicLibrary.js';
+import { resolveTenantTrack } from '../lib/musicLibraryStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -259,6 +262,17 @@ function extractPeaks(absPath) {
  * every step) and the trace takes its colour from the lane's ink in whichever
  * theme is on.
  */
+/**
+ * A bundled (`library:`) or saved (`mylib:`) music ref, resolved by its own
+ * store. Saved tracks come from the caller's own data dir. Null for anything
+ * that is not a resolvable ref.
+ */
+function resolveMusicRef(raw, dataDir) {
+  if (raw.startsWith('library:')) return resolveLibraryTrack(raw);
+  if (raw.startsWith('mylib:') && dataDir) return resolveTenantTrack(dataDir, raw);
+  return null;
+}
+
 router.get('/peaks', async (req, res) => {
   try {
     const raw = String(req.query?.path || '').trim();
@@ -268,37 +282,23 @@ router.get('/peaks', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'local asset path required' });
     }
 
-    // Multi-tenant is the DEFAULT: a non-admin's uploads live in
-    // DATA_DIR/users/<id>/outputs, not the global OUTPUT_DIR. Resolving the
-    // `/outputs/...` alias against the global dir (which is what
-    // resolveOutputAlias does) pointed every ordinary user's request at a file
-    // that is not theirs — 404 on the alias, 400 on the absolute path — so
-    // waveforms only ever loaded for the super-admin. Both the lookup and the
-    // cache write have to follow req.ctx, the way every sibling route does.
-    const roots = [];
-    if (req.ctx?.outputDir) roots.push(path.resolve(req.ctx.outputDir));
-    // The global dir stays readable: shared library audio and anything a
-    // single-tenant install wrote still lives there.
-    if (!roots.some((r) => r === path.resolve(OUTPUT_DIR))) roots.push(path.resolve(OUTPUT_DIR));
-
-    const aliasMatch = String(raw).replace(/\\/g, '/').match(/^\.?\/?outputs\/(.+)$/i);
-    const candidates = aliasMatch
-      ? roots.map((root) => path.resolve(path.join(root, aliasMatch[1])))
-      : [path.resolve(resolveOutputAlias(raw))];
-
-    // Confine to a root we own. The query string is user input, and without
-    // this a ../.. would read any file the process can reach.
-    const abs = candidates.find((candidate) => roots.some(
-      (root) => candidate === root || candidate.startsWith(root + path.sep),
-    ) && fs.existsSync(candidate));
-
+    // The caller's own output folder only (#112). For the owner that is the
+    // global OUTPUT_DIR; a non-owner's is DATA_DIR/users/<id>/outputs, and the
+    // global dir (the owner's files) is NOT readable to them. Shared tts-*
+    // voice files and bundled or saved music refs (a music bed lane) still
+    // draw. confineUserPath checks lexically, then again after realpath.
+    let abs = resolveMusicRef(raw, req.ctx?.dataDir);
+    if (!abs && /^(library|mylib):/.test(raw)) return res.status(404).json({ ok: false, error: 'asset not found' });
     if (!abs) {
-      const inRoot = candidates.some((candidate) => roots.some(
-        (root) => candidate === root || candidate.startsWith(root + path.sep),
-      ));
-      return inRoot
-        ? res.status(404).json({ ok: false, error: 'asset not found' })
-        : res.status(400).json({ ok: false, error: 'asset outside the output directory' });
+      try {
+        abs = confineUserPath(raw, req.ctx, { allowShared: isSharedTtsFile });
+      } catch (err) {
+        if (err instanceof UserPathError && err.code === 'FILE_NOT_FOUND') {
+          return res.status(404).json({ ok: false, error: 'asset not found' });
+        }
+        if (sendUserPathError(res, err)) return;
+        throw err;
+      }
     }
 
     const stat = fs.statSync(abs);
