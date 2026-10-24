@@ -241,7 +241,7 @@ describe("POST /api/media/import-url — disk, concurrency and content checks", 
     const res = await post({ url: "https://cdn.example.com/talk.wav" });
     assert.equal(res.status, 507);
     assert.equal(res.body.error, "DISK_FULL");
-    assert.deepEqual(asked, [200 * 1024 * 1024, WAV_BYTES.length]);
+    assert.deepEqual(asked, [200 * 1024 * 1024, 1]);
     assert.deepEqual(fs.readdirSync(outDir), [], "the downloaded part is removed");
   });
 

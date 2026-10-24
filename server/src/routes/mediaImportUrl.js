@@ -195,8 +195,10 @@ export function createImportUrlHandler(deps) {
       removeQuietly(files.part);
       return sendUnsupported(res, kind);
     }
-    // Other writes may have landed while this one downloaded.
-    const after = headroomCheck(outDir, download.bytes);
+    // Other writes may have landed while this one downloaded. The file is already
+    // on disk, so ask only whether the reserve still holds (1 byte, because
+    // hasDiskHeadroomForUpload skips the measurement for a size of 0).
+    const after = headroomCheck(outDir, 1);
     if (!after.ok) {
       removeQuietly(files.part);
       return sendDiskFull(res, after);
