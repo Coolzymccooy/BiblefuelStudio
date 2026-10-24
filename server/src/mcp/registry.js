@@ -108,9 +108,13 @@ function allowed(def, ctx) {
  * The refusal text. When some of the cap is left but less than the call needs (four images for
  * autoBackground, one left), "reached" misleads: say what the call needs and what is left.
  */
-function capMessage({ bucket, scope, used, limit, needed }) {
+export function capMessage(refusal) {
+  const { bucket, scope } = refusal;
   const whose = scope === "user" ? "your account across all agents" : "this agent";
-  const left = limit - used;
+  // Rounded for display: aiVideoUsd is fractional, and 2 - 1.7 is 0.30000000000000004.
+  const shown = (n) => Number(Number(n).toFixed(2));
+  const [used, limit, needed] = [refusal.used, refusal.limit, refusal.needed].map(shown);
+  const left = shown(refusal.limit - refusal.used);
   if (left > 0 && needed > left) {
     return `Daily ${bucket} cap: this call needs ${needed} but ${whose} has ${left} left (${used} of ${limit} used).`;
   }

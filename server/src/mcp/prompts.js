@@ -106,7 +106,9 @@ const unquote = (text) => (typeof text === "string" ? text.replace(/^["']+|["']+
 export function joinSplitReference({ reference, voice, publish }) {
   const ref = unquote(reference);
   const second = unquote(voice);
-  if (second && VERSE_PART.test(second)) return { reference: `${ref} ${second}`, voice: undefined, publish };
+  // Only a reference that has no chapter yet takes the verse part ("1 John" + "4:8"); "John 3:16" plus voice "2" stays as it is.
+  const hasChapter = /:|\s\d+$/.test(ref || "");
+  if (second && VERSE_PART.test(second) && !hasChapter) return { reference: `${ref} ${second}`, voice: undefined, publish };
   return { reference: ref, voice: second || undefined, publish };
 }
 

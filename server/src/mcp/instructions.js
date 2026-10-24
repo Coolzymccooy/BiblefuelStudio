@@ -12,6 +12,6 @@ export const SERVER_INSTRUCTIONS = [
   "Slow work returns a job handle at once: call jobs_wait with its kind and id, and again while it is queued or running.",
   "Pass voice_list a locale, such as en, to keep its answer short.",
   "capabilities says what the server has configured, not what this key may use: tools/list and whoami say that.",
-  "Nothing is posted unless the user asks for it and the key may publish.",
+  "Nothing is posted unless the key may publish and the user asks for it or has auto-publish on (then a render posts by itself): check social_status before rendering.",
   "The full guide, with every pipeline and what each step costs, is the resource biblefuel://guide. It is long: read the Pipelines section you need.",
 ].join(" ");

@@ -79,7 +79,7 @@ const voiceList = {
     "Next: voice_synthesize with a voice's voice_id.",
   inputSchema: {
     provider: z.enum(LIST_PROVIDERS).optional().describe("Whose voices to list: edge (default) or elevenlabs (needs a premium plan)."),
-    locale: z.string().max(20).regex(LOCALE_TAG, "locale must be a language tag such as en or en-GB").optional().describe("Only voices of this language, for example en (every English voice) or en-GB. Recommended: the full edge list is over 300 voices."),
+    locale: z.string().max(20).regex(LOCALE_TAG, "locale must be a language tag such as en or en-GB").optional().describe("Edge voices only: just voices of this language, for example en (every English voice) or en-GB. Recommended: the full edge list is over 300 voices. ElevenLabs voices carry no language tag, so they are all listed."),
     probe: z.boolean().optional().describe("Also check that self-hosted providers (Chatterbox) are reachable right now. Adds up to 5 seconds. Default false."),
   },
   routes: ["/api/tts"],
@@ -126,7 +126,7 @@ const voiceSynthesize = {
     "Speak text and save it as an audio file in the server's output folder. Returns path (pass it to audio_process, transcribe or a render tool) and url (playable), " +
     "plus provider and voice for what really ran, and words (start and end times) when withTimestamps was set on azure, fish or piper. " +
     "provider auto (default) uses ElevenLabs on premium plans, falling back to Edge-TTS if it fails. On a free plan auto is Edge-TTS alone, with no fallback: " +
-    "if it fails (HTTP_502), force another provider that voice_list shows as available, such as azure. " +
+    "if it fails (HTTP_502), force another provider that voice_list shows as available, such as azure (not elevenlabs or fish, which a free plan cannot use even when available). " +
     "the other values force one provider: elevenlabs and fish need a premium plan (FEATURE_LOCKED otherwise), chatterbox needs its bridge, piper needs PIPER_URL, azure needs a key. " +
     "A forced provider can still fall back; check fallbackProvider in the result. " +
     "voiceId comes from voice_list. Options, each read only by its own provider and ignored with auto: rate, pitch, volume for edge; exaggeration and cfgWeight for chatterbox; speed for fish; withTimestamps for azure, fish and piper; modelId for elevenlabs and fish. " +
