@@ -37,6 +37,10 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: socialRouter } = await import("../../src/routes/social.js");
   const { default: storyRouter, isQuotaFreeStoryRequest } = await import("../../src/routes/story.js");
   const { default: ambientRouter } = await import("../../src/routes/ambient.js");
+  const { default: lyricVideoRouter } = await import("../../src/routes/lyricVideo.js");
+  const { default: momentsRouter } = await import("../../src/routes/moments.js");
+  const { default: timelineRouter } = await import("../../src/routes/timeline.js");
+  const { featureGate } = await import("../../src/middleware/featureGate.js");
   const { default: agentKeysRouter } = await import("../../src/routes/agentKeys.js");
   const { quota } = await import("../../src/middleware/quota.js");
   const { default: scriptsRouter } = await import("../../src/routes/scripts.js");
@@ -70,6 +74,9 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/story", requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeStoryRequest }), storyRouter);
   // Like index.js: no blanket quota; the route charges its own plan buckets on the expensive POSTs.
   app.use("/api/ambient", requireAuth, withUserScope, requireVerifiedEmail, ambientRouter);
+  app.use("/api/lyric-video", requireAuth, withUserScope, requireVerifiedEmail, featureGate("lyric.video"), lyricVideoRouter);
+  app.use("/api/moments", requireAuth, withUserScope, requireVerifiedEmail, momentsRouter);
+  app.use("/api/timeline", requireAuth, withUserScope, requireVerifiedEmail, timelineRouter);
   app.use("/api/scripts", requireAuth, withUserScope, requireVerifiedEmail, quota("scripts"), scriptsRouter);
   app.use("/api/bible", requireAuth, withUserScope, bibleRouter);
   app.use("/api/tts", requireAuth, withUserScope, requireVerifiedEmail, quota("tts"), ttsRouter);
