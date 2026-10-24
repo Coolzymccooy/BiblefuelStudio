@@ -96,3 +96,9 @@ test("Resources describes the real wire shape of a refused read", () => {
   assert.match(text, /-32603/, "server errors are InternalError");
   assert.match(text, /data\.error/, "agents branch on data.error, not the message");
 });
+
+test("Resources says a captioned job of another user answers 403, while other kinds read as missing", () => {
+  const text = section("## Resources");
+  assert.match(text, /`captioned`[^.]*`HTTP_403`/);
+  assert.match(section("## Troubleshooting"), /`HTTP_403`/);
+});
