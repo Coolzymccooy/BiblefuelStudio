@@ -144,6 +144,10 @@ export function _setJobCtxForTest(ctx) { currentJobCtx = ctx; }
 export function _resetJobCtxForTest() { currentJobCtx = null; }
 // Test-only: run a render the way the worker does, without the queue.
 export function _executeJobForTest(job) { return executeJob(job); }
+// What the worker runs for a job; tests swap in a fake renderer to drive the completion path.
+let executeJobImpl = (job) => executeJob(job);
+/** Test seam: the worker runs `fn(job)` instead of the real renderer. Pass null to restore. */
+export function _setExecuteJobForTests(fn) { executeJobImpl = typeof fn === "function" ? fn : (job) => executeJob(job); }
 export function _renderVideoCoreForTest(payload, jobId) { return renderVideoCore(payload, jobId); }
 
 // Monotonic counter backing the script-type rotation. Persisted per-tenant so
@@ -1968,7 +1972,7 @@ async function workerTick() {
   safeUpdateJob(next.id, { status: "running", startedAt: new Date().toISOString(), progress: 0 });
   currentJobCtx = next.ctx || null;
   try {
-    const result = await executeJob(next);
+    const result = await executeJobImpl(next);
     volatileProgressByJob.set(next.id, 100);
     safeUpdateJob(next.id, { status: "done", progress: 100, finishedAt: new Date().toISOString(), result });
     if (next.type === "render_video" || next.type === "render_waveform") {
