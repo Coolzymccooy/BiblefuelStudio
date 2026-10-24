@@ -19,10 +19,8 @@ const viewOf = (ctx, body) => projectView(body?.project || {}, ctx.publicBase);
 
 // ---- story_scene_update ------------------------------------------------------
 
-/** One new picture for the scene: plan quota pre-check, one daily image, given back when none was made. */
+/** One new picture for the scene (the plan quota already checked): one daily image, given back when none was made. */
 async function regenerate(ctx, id, sceneId) {
-  const outOfQuota = await renderQuotaRefusal(ctx);
-  if (outOfQuota) return { refusal: outOfQuota };
   const refused = await ctx.chargeCap({ images: 1 });
   if (refused) return { refusal: refused };
   const body = await ctx.api.call("POST", `${scenePath(id, sceneId)}/regenerate`);
@@ -48,6 +46,11 @@ const storySceneUpdate = {
   async handler(ctx, { id, sceneId, prompt, text, regenerate: remake }) {
     if (prompt === undefined && text === undefined && !remake) {
       return fail("BAD_INPUT", "Give prompt, text or regenerate: true.");
+    }
+    // Before any change, so a regenerate the plan refuses leaves the scene as it was.
+    if (remake) {
+      const outOfQuota = await renderQuotaRefusal(ctx);
+      if (outOfQuota) return outOfQuota;
     }
     let body = null;
     if (prompt !== undefined || text !== undefined) {

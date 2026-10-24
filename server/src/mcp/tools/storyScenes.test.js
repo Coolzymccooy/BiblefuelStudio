@@ -74,8 +74,9 @@ test("story_scene_update regenerate checks the plan quota and charges one pictur
     "POST /api/story/p1/scenes/scene-001/regenerate": { ok: true, project: PROJECT(), sceneOk: true, sceneError: null },
   });
   const result = await byName.story_scene_update.handler(ctx, { id: "p1", sceneId: "scene-001", prompt: "new", regenerate: true });
+  // The quota is read before anything changes, so a refused regenerate leaves the prompt as it was.
   assert.deepEqual(routesCalled(calls), [
-    "PATCH /api/story/p1/scenes/scene-001", "GET /api/billing/usage", "POST /api/story/p1/scenes/scene-001/regenerate",
+    "GET /api/billing/usage", "PATCH /api/story/p1/scenes/scene-001", "POST /api/story/p1/scenes/scene-001/regenerate",
   ]);
   assert.deepEqual(chargeCalls, [{ images: 1 }]);
   assert.equal(refunds.length, 0);
@@ -94,7 +95,7 @@ test("story_scene_update gives the picture back when the provider made none", as
 
 test("story_scene_update regenerate without plan quota is refused before any charge", async () => {
   const { ctx, calls, chargeCalls } = ctxWith({}, { usage: SPENT_USAGE });
-  const result = await byName.story_scene_update.handler(ctx, { id: "p1", sceneId: "scene-001", regenerate: true });
+  const result = await byName.story_scene_update.handler(ctx, { id: "p1", sceneId: "scene-001", prompt: "new", regenerate: true });
   assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
   assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage"]);
   assert.equal(chargeCalls.length, 0);
