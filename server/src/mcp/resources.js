@@ -93,6 +93,26 @@ export async function readJobHandle(ctx, address) {
   }
 }
 
+/**
+ * readJobHandle plus one [MCP] info line per read (L8), like the line each tool call writes: the key's label,
+ * the kind (only a known one; anything else is "unknown"), the time and the outcome with its HTTP status.
+ * It never logs an id, so another user's job id never reaches the log.
+ */
+export async function readJobResource(ctx, address) {
+  const started = Date.now();
+  const keyLabel = String(ctx.agentKey?.id || "").slice(0, 8);
+  const kind = Object.hasOwn(NORMALISERS, address?.kind) ? address.kind : "unknown";
+  const line = (outcome) => console.info(`[MCP] key=${keyLabel} resource=job kind=${kind} ms=${Date.now() - started} ${outcome}`);
+  try {
+    const handle = await readJobHandle(ctx, address);
+    line("ok status=200");
+    return handle;
+  } catch (err) {
+    line(`error=${err?.data?.error || "INTERNAL"} status=${err?.data?.status ?? "-"}`);
+    throw err;
+  }
+}
+
 /** Registers biblefuel://jobs/{kind}/{id} on one McpServer built for `ctx`. */
 export function registerJobResource(server, ctx) {
   server.registerResource(
@@ -107,7 +127,7 @@ export function registerJobResource(server, ctx) {
       mimeType: MIME,
     },
     async (uri, variables) => {
-      const handle = await readJobHandle(ctx, jobAddress(uri, variables));
+      const handle = await readJobResource(ctx, jobAddress(uri, variables));
       return { contents: [{ uri: uri.href, mimeType: MIME, text: JSON.stringify(handle, null, 2) }] };
     },
   );

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startTestApp, mcpClient } from "../../test/helpers/mcpTestApp.js";
 import { fakeMcpCtx } from "../../test/helpers/fakeMcpCtx.js";
-import { JOB_TEMPLATE_URI, readJobHandle, jobAddress } from "./resources.js";
+import { JOB_TEMPLATE_URI, readJobHandle, readJobResource, jobAddress } from "./resources.js";
 
 // The job resource template answers exactly what jobs_get / jobs_wait answer, through the same
 // normalisers and the caller's own loopback API, so ownership and errors cannot differ.
@@ -203,4 +203,43 @@ test("a normaliser that throws answers INTERNAL with a fixed message", async () 
     assert.deepEqual(err.data, { error: "INTERNAL", message: "Something went wrong" });
     return true;
   });
+});
+
+// L8: one [MCP] info line per read, so ops can see read volume: the key, the kind and the outcome, never an id.
+async function loggedLines(run) {
+  const lines = [];
+  const original = console.info;
+  console.info = (...args) => lines.push(args.join(" "));
+  try {
+    await run();
+  } finally {
+    console.info = original;
+  }
+  return lines.filter((line) => line.startsWith("[MCP]"));
+}
+
+test("readJobResource logs one line per read with the key, kind and status, and no ids", async () => {
+  const { ctx } = fakeMcpCtx({ "GET /api/story/s_secret": { ok: true, project: { projectId: "s_secret", status: "draft" } } });
+  const keyed = { ...ctx, agentKey: { id: "ak_1234567890abcdef" } };
+  const ok = await loggedLines(() => readJobResource(keyed, { kind: "story", id: "s_secret" }));
+  assert.equal(ok.length, 1);
+  assert.match(ok[0], /^\[MCP\] key=ak_12345 resource=job kind=story ms=\d+ ok status=200$/);
+  assert.doesNotMatch(ok[0], /s_secret/);
+
+  const missing = Object.assign(new Error("Not found"), { name: "ApiError", status: 404, code: "HTTP_404", hint: null });
+  const { ctx: ctx404 } = fakeMcpCtx({ "GET /api/story/u_other_story": missing });
+  const refused = await loggedLines(() =>
+    assert.rejects(readJobResource({ ...ctx404, agentKey: { id: "ak_1234567890abcdef" } }, { kind: "story", id: "u_other_story" })),
+  );
+  assert.equal(refused.length, 1);
+  assert.match(refused[0], /kind=story ms=\d+ error=HTTP_404 status=404$/);
+  assert.doesNotMatch(refused[0], /u_other_story/);
+});
+
+test("an unknown kind is logged as unknown, not echoed", async () => {
+  const { ctx } = fakeMcpCtx({});
+  const lines = await loggedLines(() => assert.rejects(readJobResource(ctx, { kind: "evil\nkind", id: "x" })));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /kind=unknown ms=\d+ error=BAD_KIND status=-$/);
+  assert.doesNotMatch(lines[0], /evil/);
 });
