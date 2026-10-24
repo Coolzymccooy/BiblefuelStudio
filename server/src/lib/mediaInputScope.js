@@ -69,6 +69,13 @@ export function isSharedGeneratedImage(absPath, userId) {
  * The folder-name half of isSharedGeneratedImage: may this user read the
  * global OUTPUT_DIR/genImg/<dir>/ folder?
  *
+ * Known exposure (#112), kept on purpose for now: `series_*` folders are open
+ * to every signed-in user. A series folder is named from the series id, not
+ * the account (see generateBibleImage in imageGen/index.js), so a user who
+ * learns or guesses another account's series id can use its pictures through
+ * the render, queue and YouTube thumbnail routes. Closing it needs series
+ * pictures written per account first.
+ *
  * @param {string} dir
  * @param {string} userId
  */

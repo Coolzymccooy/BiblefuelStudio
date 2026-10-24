@@ -116,6 +116,8 @@ export async function generateBibleImage({
   const safeSeriesId = String(seriesId || "").replace(/[^a-z0-9_-]/gi, "_").slice(0, 60) || "anon";
   const part = Math.max(1, Math.floor(Number(partNumber) || 1));
 
+  // One global folder per series id, shared by every account: see the
+  // series_* note on isSharedGeneratedImageDir (lib/mediaInputScope.js, #112).
   const dir = path.join(OUTPUT_DIR, SUBDIR, safeSeriesId);
   const file = path.join(dir, `part-${part}.png`);
   const publicUrl = `/outputs/${SUBDIR}/${safeSeriesId}/part-${part}.png`;
