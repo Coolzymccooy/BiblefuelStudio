@@ -165,6 +165,7 @@ const renderJob = (extra = {}) => ({
 const { resolveScopeDirs } = await import("../../lib/paths.js");
 const { writeLibrary } = await import("../../lib/library.js");
 const { incrementUsage, readUsage } = await import("../../lib/usageStore.js");
+const { writeSocialStore } = await import("../../lib/socialStore.js");
 const keyStore = await import("../../lib/agentKeys/store.js");
 
 function userDir(userId) {
@@ -223,7 +224,21 @@ test("a render retried without the publish switch is queued with auto-publish su
   assert.equal(used.publishes, 0);
 });
 
-test("a render retried with the publish switch is not suppressed and also charges a publish", async () => {
+test("a render retried with the publish switch and auto-publish off charges only a render", async () => {
+  writeSocialStore(userDir("u_pub"), { postiz: { autoPublish: false, autoPublishPlatforms: [] } });
+  seedJobs([renderJob()]);
+  const client = await keyClient("u_pub", true);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  const row = readJobRows().find((j) => j.id === result.structuredContent.id);
+  assert.equal(row.suppressAutoPublish, undefined);
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 1);
+  assert.equal(used.publishes, 0);
+});
+
+test("a render retried with the publish switch and auto-publish on also charges a publish", async () => {
+  writeSocialStore(userDir("u_pub"), { postiz: { autoPublish: true, autoPublishPlatforms: ["tiktok"] } });
   seedJobs([renderJob()]);
   const client = await keyClient("u_pub", true);
   const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
@@ -233,6 +248,7 @@ test("a render retried with the publish switch is not suppressed and also charge
   const used = await capsUsed(client);
   assert.equal(used.renders, 1);
   assert.equal(used.publishes, 1);
+  writeSocialStore(userDir("u_pub"), { postiz: { autoPublish: false, autoPublishPlatforms: [] } });
 });
 
 test("jobs_retry for a free user at the render limit returns QUOTA_EXCEEDED", async () => {

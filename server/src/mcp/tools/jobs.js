@@ -56,17 +56,34 @@ async function retryPostingJob(ctx, path) {
 }
 
 /**
+ * True when the user's Postiz auto-publish would post a finished render.
+ * If the setting cannot be read, assume it would (a retry that may post counts as one).
+ */
+async function autoPublishIsOn(ctx) {
+  try {
+    const setting = await ctx.api.call("GET", "/api/postiz/auto-publish");
+    return Boolean(setting?.enabled) && Array.isArray(setting?.platforms) && setting.platforms.length > 0;
+  } catch (err) {
+    // Matched by name: importing ApiError from ../api.js would load auth.js
+    // (and its env-at-import paths) whenever this tool module is imported.
+    if (err?.name === "ApiError") return true;
+    throw err;
+  }
+}
+
+/**
  * Retrying a render spends a render. Without consent the retry is queued with
- * autoPublish off, so it can never post. With consent, /api/social/config does
- * not expose the Postiz auto-publish switch, so a render retry is charged a
- * publish too (conservative: a retry that may post counts as one).
+ * autoPublish off, so it can never post. With consent it posts only if the
+ * user's own Postiz auto-publish is on, and then it also spends a publish.
  */
 async function retryRender(ctx, path) {
   const refused = await ctx.chargeCap("renders", 1);
   if (refused) return refused;
   if (lacksPublishConsent(ctx)) return ok(await queueRetry(ctx, path, { autoPublish: false }));
-  const publishRefused = await ctx.chargeCap("publishes", 1);
-  if (publishRefused) return publishRefused;
+  if (await autoPublishIsOn(ctx)) {
+    const publishRefused = await ctx.chargeCap("publishes", 1);
+    if (publishRefused) return publishRefused;
+  }
   return ok(await queueRetry(ctx, path));
 }
 

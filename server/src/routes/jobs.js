@@ -1985,8 +1985,8 @@ router.post("/:id/retry", (req, res) => {
   finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
 
-  // A retry renders again, so it spends the same plan quota a fresh enqueue
-  // does; without this a free user could keep rendering by retrying.
+  // A retry renders again, so it spends the plan's render quota; without this
+  // a free user could keep rendering by retrying (app button and agents alike).
   if (RETRY_COUNTED_TYPES.has(type)) {
     const spent = consumeQuota(req.ctx, "render");
     if (!spent.ok) return res.status(spent.status).json(spent.body);

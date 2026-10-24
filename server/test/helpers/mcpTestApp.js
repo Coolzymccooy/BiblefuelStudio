@@ -32,6 +32,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: musicRouter } = await import("../../src/routes/music.js");
   const { default: mediaRouter } = await import("../../src/routes/media.js");
   const { default: videogenRouter } = await import("../../src/routes/videogen.js");
+  const { default: postizRouter } = await import("../../src/routes/postiz.js");
   const { default: agentKeysRouter } = await import("../../src/routes/agentKeys.js");
   const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
   const { createMcpRouter } = await import("../../src/mcp/transport.js");
@@ -45,6 +46,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/music", requireAuth, withUserScope, musicRouter);
   app.use("/api/media", requireAuth, withUserScope, mediaRouter);
   app.use("/api/video-gen", requireAuth, withUserScope, requireVerifiedEmail, videogenRouter);
+  app.use("/api/postiz", requireAuth, withUserScope, requireVerifiedEmail, postizRouter);
   // STUB: index.js's real /api/health shells out to ffmpeg; tools only need its shape.
   app.get("/api/health", (_req, res) => {
     res.json({
