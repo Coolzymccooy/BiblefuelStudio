@@ -45,7 +45,7 @@ function mediaWith(...names) {
 
 const CONSENT = { agentKey: { publishAllowed: true } };
 function ctxWith(responses, extra = {}) {
-  const fake = fakeMcpCtx(responses);
+  const fake = fakeMcpCtx({ "GET /api/social/schedules": { ok: true, schedules: [] }, ...responses });
   return { ...fake, ctx: { ...fake.ctx, ...extra } };
 }
 
@@ -509,4 +509,31 @@ test("a youtube replay schedule stores the relative /outputs/ link, not an absol
   });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   assert.equal(calls.at(-1).opts.body.schedule.videoUrl, "/outputs/clip.mp4");
+});
+
+// ---- R35: at most 5 agent-created schedules per user ----
+
+const agentSchedules = (n) => Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: "a", createdByAgentKeyId: `ak_${i % 2}` }));
+const AGENT_CONSENT = { agentKey: { id: "ak_me", publishAllowed: true } };
+
+test("schedules create refuses with SCHEDULE_LIMIT at 5 agent-created schedules, charging nothing", async () => {
+  const { ctx, calls, charges } = ctxWith({
+    "GET /api/social/schedules": { ok: true, schedules: [...agentSchedules(5), { id: "web", name: "made in the app" }] },
+  }, AGENT_CONSENT);
+  const result = await byName.schedules.handler(ctx, { action: "create", type: "auto_generate", cron: "0 9 * * *", destination: "buffer" });
+  assert.equal(result.structuredContent.error, "SCHEDULE_LIMIT");
+  assert.deepEqual(charges, []);
+  assert.deepEqual(routesCalled(calls), ["GET /api/social/schedules"]);
+});
+
+test("schedules create below the limit marks the schedule with the creating key", async () => {
+  const { ctx, calls, charges } = ctxWith({
+    "GET /api/social/schedules": { ok: true, schedules: [...agentSchedules(4), { id: "w1" }, { id: "w2" }, { id: "w3" }] },
+    "POST /api/social/schedules": (_m, _p, opts) => ({ ok: true, schedule: { ...opts.body.schedule, id: "s_new" } }),
+  }, AGENT_CONSENT);
+  const result = await byName.schedules.handler(ctx, { action: "create", type: "auto_generate", cron: "0 9 * * *", destination: "buffer" });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.equal(calls.at(-1).opts.body.schedule.createdByAgentKeyId, "ak_me");
+  assert.deepEqual(charges, [{ bucket: "publishes", amount: 1 }]);
+  assert.equal(Object.hasOwn(result.structuredContent.schedule, "createdByAgentKeyId"), false);
 });

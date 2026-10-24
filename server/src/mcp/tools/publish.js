@@ -23,6 +23,8 @@ const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const STYLE_WORD = /^[\w-]{1,40}$/;
 // At most once an hour: five fields, the minute one a single number.
 const HOURLY_AT_MOST = /^\d{1,2}$/;
+// R35: schedules agents may create per user (their later runs are not charged to any key).
+const MAX_AGENT_SCHEDULES = 5;
 
 /** A copy of `fields` without undefined values, so the route's own defaults apply. */
 function defined(fields) {
@@ -243,10 +245,24 @@ function scheduleProblem(input) {
   return null;
 }
 
+/** SCHEDULE_LIMIT when the user already has MAX_AGENT_SCHEDULES schedules made through agent keys (R35), else null. */
+async function scheduleLimitRefusal(ctx) {
+  const body = await ctx.api.call("GET", "/api/social/schedules");
+  const made = (Array.isArray(body?.schedules) ? body.schedules : []).filter((s) => s?.createdByAgentKeyId).length;
+  if (made < MAX_AGENT_SCHEDULES) return null;
+  return fail(
+    "SCHEDULE_LIMIT",
+    `Agents have already created ${made} schedules for this account (the limit is ${MAX_AGENT_SCHEDULES}). Remove one with action remove, or ask the user to remove one in Settings.`,
+    { limit: MAX_AGENT_SCHEDULES, used: made },
+  );
+}
+
 /** Everything that refuses a new schedule before anything is charged, or null. */
 async function scheduleRefusal(ctx, input) {
   const problem = scheduleProblem(input);
   if (problem) return fail("BAD_INPUT", problem);
+  const limited = await scheduleLimitRefusal(ctx);
+  if (limited) return limited;
   return input.destination === "webhook" ? webhookRefusal(ctx, input.webhookId) : null;
 }
 
@@ -268,6 +284,7 @@ async function createSchedule(ctx, input) {
     : {};
   const schedule = defined({
     name: title, type, cron, timezone, destination, enabled: true, webhookId, profileId, privacyStatus, caption, videoUrl, ...generate,
+    createdByAgentKeyId: ctx.agentKey?.id,
   });
   const response = await ctx.api.call("POST", "/api/social/schedules", { body: { schedule } });
   return ok({ schedule: scheduleRow(response?.schedule) });
@@ -291,7 +308,7 @@ const schedules = {
     "The user's recurring posts. action list: each schedule's id, title, cron, timezone, destination and enabled (free, no consent needed). " +
     "action create: a new schedule that posts by itself on a cron time (five fields, at most once an hour, for example 0 9 * * * for 9:00 daily, in timezone, default UTC). " +
     "type replay posts the same video each time (needs caption and videoPath); type auto_generate makes and posts a fresh short each run (niche, tone, aspect, durationSec, voiceId, backgroundQuery, kineticCaptions). " +
-    "destination is webhook (webhookId), buffer (profileId) or youtube (privacyStatus). create needs the key's publish switch and costs one daily publish now; the runs themselves happen on the server later. " +
+    "destination is webhook (webhookId), buffer (profileId) or youtube (privacyStatus). create needs the key's publish switch and costs one daily publish now; the runs themselves happen on the server later and are not charged to the key. Agents may create at most 5 schedules per account (SCHEDULE_LIMIT after that); the user sees and removes them in Settings. " +
     "action remove { id } deletes a schedule (needs the publish switch; free).",
   inputSchema: {
     action: z.enum(SCHEDULE_ACTIONS).describe("list, create or remove."),

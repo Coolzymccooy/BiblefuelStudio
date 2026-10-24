@@ -1209,6 +1209,12 @@ router.post("/schedules", (req, res) => {
     // true, so pausing a schedule turned its captions back on.
     if (incoming.kineticCaptions !== undefined) schedule.kineticCaptions = Boolean(incoming.kineticCaptions);
     else if (index >= 0 && list[index]?.kineticCaptions !== undefined) schedule.kineticCaptions = list[index].kineticCaptions;
+    // Which agent key created it (sent by the MCP schedules tool), so agent
+    // schedules can be counted (R35). Kept when the app re-saves the schedule.
+    const agentKeyId = typeof incoming.createdByAgentKeyId === "string" && /^[\w-]{1,100}$/.test(incoming.createdByAgentKeyId)
+      ? incoming.createdByAgentKeyId
+      : (index >= 0 ? list[index]?.createdByAgentKeyId : undefined);
+    if (agentKeyId) schedule.createdByAgentKeyId = agentKeyId;
     if (index >= 0) list[index] = schedule;
     else list.unshift(schedule);
 
