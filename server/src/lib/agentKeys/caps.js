@@ -210,6 +210,34 @@ export async function chargeAll(subjectId, key, amounts) {
   return run;
 }
 
+function doRefundAll(subjectId, key, entries) {
+  const day = clock();
+  const store = readStore();
+  const refunded = countersFor(subjectId, key).map(({ subjectId: id }) => {
+    const usage = usageFor(store, id, day);
+    const lowered = entries.map(([bucket, amount]) => [bucket, Math.max(0, roundCount(usage.counts[bucket] - amount))]);
+    return [id, { day, counts: { ...usage.counts, ...Object.fromEntries(lowered) } }];
+  });
+  writeStore({ ...store, subjects: { ...store.subjects, ...Object.fromEntries(refunded) } });
+}
+
+/**
+ * Give back what `chargeAll` spent, e.g. `{ renders: 1 }`, on this key and on its owner's account
+ * (R37: the app refused the call). A counter never goes below zero. Same queue as `chargeAll`, so a
+ * refund never interleaves with a charge. An empty `amounts` does nothing.
+ */
+export async function refundAll(subjectId, key, amounts) {
+  const entries = Object.entries(amounts || {});
+  for (const [bucket, amount] of entries) {
+    assertBucket(bucket);
+    assertAmount(amount);
+  }
+  if (entries.length === 0) return;
+  const run = queue.then(() => doRefundAll(subjectId, key, entries));
+  queue = run.catch(() => {});
+  return run;
+}
+
 /**
  * Reserve `amount` of one `bucket` for this key and for its owner's account.
  * Refuses without writing either counter when either would exceed its cap;

@@ -410,6 +410,10 @@ test("publish_youtube through MCP with consent reaches the real route, which ref
   const result = await client.callTool({ name: "publish_youtube", arguments: { videoPath: "/outputs/agent-clip.mp4", title: "Psalm 23" } });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /YouTube is not connected/);
+  // R37: the route refused (4xx), so the publish charged before it is given back.
+  assert.equal(result.structuredContent.status, 400);
+  const who = await client.callTool({ name: "whoami", arguments: {} });
+  assert.equal(who.structuredContent.caps.publishes.used, 0);
 });
 
 test("autopublish_run refuses with QUOTA_EXCEEDED before charging when the plan's renders are used up (R34)", async () => {

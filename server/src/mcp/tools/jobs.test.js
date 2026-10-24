@@ -309,14 +309,54 @@ test("jobs_retry with no agentKey refuses a posting job and never queues it", as
   assert.deepEqual(charges, []);
 });
 
+const UNLIMITED_USAGE = { ok: true, usage: { plan: "premium", buckets: { render: { used: 0, limit: -1, unlimited: true, remaining: null } } } };
+const SPENT_USAGE = { ok: true, usage: { plan: "free", buckets: { render: { used: 5, limit: 5, unlimited: false, remaining: 0 } } } };
+
 test("jobs_retry with no agentKey queues a render with auto-publish off", async () => {
   const { ctx, calls, charges } = fakeMcpCtx({
+    "GET /api/billing/usage": UNLIMITED_USAGE,
     "GET /api/jobs/job_render": { ok: true, job: renderJob() },
     "POST /api/jobs/job_render/retry": { ok: true, job: renderJob({ id: "job_new", status: "queued" }) },
   });
   const result = await jobsRetryDef.handler(ctx, { id: "job_render" });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
-  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["GET /api/jobs/job_render", "POST /api/jobs/job_render/retry"]);
-  assert.deepEqual(calls[1].opts, { body: { autoPublish: false } });
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["GET /api/jobs/job_render", "GET /api/billing/usage", "POST /api/jobs/job_render/retry"]);
+  assert.deepEqual(calls[2].opts, { body: { autoPublish: false } });
   assert.deepEqual(charges, [{ bucket: "renders", amount: 1 }]);
+});
+
+// ---- Plan render quota is read before any cap is charged (the retry route spends one) ----
+
+for (const [label, job] of [["a render", renderJob()], ["a posting job", campaignJob()]]) {
+  test(`jobs_retry of ${label} with the plan's renders used up returns QUOTA_EXCEEDED before any charge`, async () => {
+    const { ctx, calls, charges } = fakeMcpCtx({
+      "GET /api/billing/usage": SPENT_USAGE,
+      [`GET /api/jobs/${job.id}`]: { ok: true, job },
+    });
+    const result = await jobsRetryDef.handler({ ...ctx, agentKey: { publishAllowed: true } }, { id: job.id });
+    assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
+    assert.deepEqual(charges, []);
+    assert.equal(calls.some((c) => c.path.endsWith("/retry")), false);
+  });
+}
+
+test("jobs_retry of a job type that spends no render quota does not read it", async () => {
+  const other = { id: "job_other", type: "transcode", ownerId: "u_pub", status: "done" };
+  const { ctx, calls, charges } = fakeMcpCtx({
+    "GET /api/jobs/job_other": { ok: true, job: other },
+    "POST /api/jobs/job_other/retry": { ok: true, job: { ...other, id: "job_other2", status: "queued" } },
+  });
+  const result = await jobsRetryDef.handler(ctx, { id: "job_other" });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.equal(calls.some((c) => c.path === "/api/billing/usage"), false);
+  assert.deepEqual(charges, [{ bucket: "renders", amount: 1 }]);
+});
+
+test("jobs_retry for a free user at the render limit spends no daily render (pre-check, nothing to refund)", async () => {
+  seedJobs([renderJob({ ownerId: "u_cap" })]);
+  const client = await keyClient("u_cap", false);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
+  assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 0);
 });

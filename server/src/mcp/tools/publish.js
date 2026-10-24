@@ -128,7 +128,7 @@ const publishYoutube = {
     "Upload a finished video from your media folder (for example the output path jobs_wait gave for render_short) to the user's connected YouTube channel. " +
     "Needs the key's publish switch and a connected channel (see social_status). title is required (up to 100 characters). privacyStatus defaults to private; publishAt (ISO time) schedules it and keeps it private until then. " +
     "Optional: a thumbnail (a picture in your media folder or a path images_generate returned; thumbnailTitle draws the title on it), a playlist (playlistId from social_status, or newPlaylistTitle). " +
-    "Returns a handle of kind publish: call jobs_wait with kind publish and the id; the finished handle carries the video link. Costs one daily publish. An upload takes from seconds to several minutes; two may run at once.",
+    "Returns a handle of kind publish: call jobs_wait with kind publish and the id; the finished handle carries the video link. Costs one daily publish; joined true means that video was already uploading, so you joined that upload and no publish was spent. An upload takes from seconds to several minutes; two may run at once.",
   inputSchema: {
     videoPath: z.string().min(1).max(1000).describe("The video in your media folder (a path or /outputs/ link from a render). URLs are refused."),
     title: z.string().trim().min(1).max(100).describe("The video title."),
@@ -160,6 +160,8 @@ const publishYoutube = {
     const refused = await ctx.chargeCap({ publishes: 1 });
     if (refused) return refused;
     const response = await ctx.api.call("POST", "/api/social/youtube/publish", { body });
+    // joined: the same video is already uploading for this account, so this call started no second upload.
+    if (response?.joined) await ctx.refundCap({ publishes: 1 });
     return ok({ kind: "publish", id: String(response?.jobId ?? ""), status: "running", joined: Boolean(response?.joined) });
   },
 };

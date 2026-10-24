@@ -138,12 +138,23 @@ test("remove vocals, wait on the job, keep it, then discard a second one (separa
   assert.ok(!after2.structuredContent.tracks.some((t) => t.id === kept.structuredContent.track.id));
 });
 
-test("music_remove_vocals spends one render from the agent's daily cap", async () => {
+const rendersUsed = async () => (await client.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders.used;
+
+test("music_remove_vocals spends one render from the agent's daily cap when it starts", async () => {
+  _setSeparatorImpl({ available: async () => ({ ok: true }), remove: async () => new Promise(() => {}) });
+  const before = await rendersUsed();
+  const started = await client.callTool({ name: "music_remove_vocals", arguments: { id: "prayer-piano" } });
+  assert.notEqual(started.isError, true, started.content?.[0]?.text);
+  assert.equal(await rendersUsed(), before + 1);
+  await client.callTool({ name: "music_instrumental_decide", arguments: { jobId: started.structuredContent.id, decision: "discard" } });
+});
+
+test("music_remove_vocals refused by the app (409, no separator) gives the render back (R37)", async () => {
   _setSeparatorImpl({ available: async () => ({ ok: false }) });
-  const before = await client.callTool({ name: "whoami", arguments: {} });
-  await client.callTool({ name: "music_remove_vocals", arguments: { id: "prayer-piano" } });
-  const after2 = await client.callTool({ name: "whoami", arguments: {} });
-  assert.equal(after2.structuredContent.caps.renders.used, before.structuredContent.caps.renders.used + 1);
+  const before = await rendersUsed();
+  const refused = await client.callTool({ name: "music_remove_vocals", arguments: { id: "prayer-piano" } });
+  assert.equal(refused.structuredContent.status, 409);
+  assert.equal(await rendersUsed(), before);
 });
 
 test("music_instrumental_decide keep on an unknown job is a tool error", async () => {

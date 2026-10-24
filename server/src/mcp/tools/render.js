@@ -205,7 +205,7 @@ const renderCaptioned = {
     "Burn word-by-word captions onto a video (Timeline render). Two modes: videoPath (a video in your media folder) OR audioPath plus backgrounds (library ids or media files, up to 30, shown in turn). " +
     "words are the timed words transcribe returns ({ text, startMs, endMs }); required unless captions is false. Paths outside your media folder and URLs are refused. " +
     "Optional: musicPaths (music_library refs or media files), musicVolume, autoDuck, startSec and durationSec (a trim window), typographyPreset, layout, depth, kenBurns, syncBackgrounds. " +
-    "Returns a handle of kind captioned: call jobs_wait with kind captioned and the id; render_cancel stops it. Costs one daily render and one unit of the plan's render quota. Takes a few seconds to start and about real time to finish. It never posts anywhere.",
+    "Returns a handle of kind captioned: call jobs_wait with kind captioned and the id; render_cancel stops it. Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up, before any cap is spent). Takes a few seconds to start and about real time to finish. It never posts anywhere.",
   inputSchema: {
     videoPath: z.string().max(1000).optional().describe("Video mode: a video in your media folder."),
     audioPath: z.string().max(1000).optional().describe("Audio mode: a voice or audio file in your media folder."),
@@ -224,12 +224,16 @@ const renderCaptioned = {
     syncBackgrounds: z.boolean().optional().describe("Cut between several backgrounds at spoken phrases instead of equal slots."),
   },
   routes: ["/api/render", "/api/library"],
-  caps: { renders: 1 },
   async handler(ctx, input) {
     const problem = captionedProblem(input);
     if (problem) return fail("BAD_INPUT", problem);
     const checked = await captionedFiles(ctx, input);
     if (checked.refusal) return checked.refusal;
+    // Charged only once the input is accepted and the plan has a render left (the route spends one).
+    const outOfQuota = await renderQuotaRefusal(ctx);
+    if (outOfQuota) return outOfQuota;
+    const refused = await ctx.chargeCap("renders", 1);
+    if (refused) return refused;
     const { words, captions, musicVolume, autoDuck, startSec, durationSec, typographyPreset, layout, depth, kenBurns, syncBackgrounds } = input;
     const body = defined({
       ...checked.files,

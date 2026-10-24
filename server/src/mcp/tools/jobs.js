@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ok, fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "../toolResult.js";
 import { JOB_KINDS, NORMALISERS, clampTimeoutSec, outputUrl, waitForJob } from "../jobs.js";
 import { lacksPublishConsent, renderPublishPlan } from "../autoPublish.js";
+import { renderQuotaRefusal } from "../planQuota.js";
 
 const DEFAULT_LIST_LIMIT = 20;
 
@@ -49,6 +50,9 @@ const AUTO_PUBLISH_JOB_TYPES = new Set(["render_video", "render_waveform"]);
 /** Retrying a posting job renders and posts: it needs the publish switch and spends renders and publishes. */
 async function retryPostingJob(ctx, path) {
   if (lacksPublishConsent(ctx)) return fail("PUBLISH_NOT_ALLOWED", PUBLISH_NOT_ALLOWED_MESSAGE);
+  // The retry route spends the plan's render quota; read it first so a refused retry spends no caps.
+  const outOfQuota = await renderQuotaRefusal(ctx);
+  if (outOfQuota) return outOfQuota;
   // One atomic charge: a refused publish must not leave a render spent.
   const refused = await ctx.chargeCap({ renders: 1, publishes: 1 });
   if (refused) return refused;
@@ -62,6 +66,8 @@ async function retryPostingJob(ctx, path) {
  * charged with the render in one atomic call.
  */
 async function retryRender(ctx, path) {
+  const outOfQuota = await renderQuotaRefusal(ctx);
+  if (outOfQuota) return outOfQuota;
   const plan = await renderPublishPlan(ctx);
   const refused = await ctx.chargeCap({ renders: 1, ...plan.charge });
   if (refused) return refused;
@@ -80,7 +86,9 @@ const jobsRetry = {
     "Re-queue a finished or failed job with the same settings. Returns the NEW job (a different id). " +
     "A job that is still queued or running cannot be retried. Retrying a posting job (campaign_auto_post) " +
     "needs the key's publish switch and spends a render and a publish; a render retried without the " +
-    "publish switch never auto-posts.",
+    "publish switch never auto-posts; with it, and the user's auto-publish on, it also spends a publish. " +
+    "Every retry spends one daily render. Retrying a render_video, render_waveform or campaign_auto_post job also " +
+    "spends one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up, before any cap is spent).",
   inputSchema: { id: z.string().min(1).describe("The id of the job to retry.") },
   routes: ["/api/jobs"],
   async handler(ctx, { id }) {

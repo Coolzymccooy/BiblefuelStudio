@@ -284,3 +284,43 @@ test("chargeAll validates every bucket and amount before charging", async () => 
   await assert.rejects(() => caps.chargeAll("k_1", key, {}), /caps: nothing to charge/);
   assert.equal(caps.readKeyUsage("k_1").counts.renders, 0);
 });
+
+test("refundAll gives back every bucket on the key and the account counters", async () => {
+  const key = keyWith({});
+  await caps.chargeAll("k_1", key, { renders: 2, publishes: 1 });
+  await caps.refundAll("k_1", key, { renders: 1, publishes: 1 });
+  assert.equal(caps.readKeyUsage("k_1").counts.renders, 1);
+  assert.equal(caps.readKeyUsage("k_1").counts.publishes, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 1);
+  assert.equal(caps.readUserUsage("u_1").counts.publishes, 0);
+});
+
+test("refundAll never takes a counter below zero", async () => {
+  const key = keyWith({});
+  await caps.chargeAll("k_1", key, { aiVideoUsd: 0.3 });
+  await caps.refundAll("k_1", key, { aiVideoUsd: 1, renders: 2 });
+  assert.equal(caps.readKeyUsage("k_1").counts.aiVideoUsd, 0);
+  assert.equal(caps.readKeyUsage("k_1").counts.renders, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.aiVideoUsd, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 0);
+});
+
+test("refundAll runs on the same queue as chargeAll (concurrent charges and refunds net out)", async () => {
+  const key = keyWith({});
+  const calls = [];
+  for (let i = 0; i < 5; i += 1) {
+    calls.push(caps.chargeAll("k_1", key, { renders: 1 }));
+    calls.push(caps.refundAll("k_1", key, { renders: 1 }));
+  }
+  await Promise.all(calls);
+  assert.equal(caps.readKeyUsage("k_1").counts.renders, 0);
+  assert.equal(caps.readUserUsage("u_1").counts.renders, 0);
+});
+
+test("refundAll validates buckets and amounts; an empty refund is a no-op", async () => {
+  const key = keyWith({});
+  await assert.rejects(() => caps.refundAll("k_1", key, { nope: 1 }), /caps: unknown bucket nope/);
+  await assert.rejects(() => caps.refundAll("k_1", key, { renders: -1 }), /caps: invalid amount -1/);
+  await caps.refundAll("k_1", key, {});
+  assert.equal(fs.existsSync(usageFile), false);
+});

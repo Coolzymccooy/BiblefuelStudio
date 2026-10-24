@@ -94,7 +94,7 @@ Branch on the `CODE`, not on the message. Errors that come from the app's own ro
 Every call passes the same checks, in this order:
 
 1. Publish consent, for publishing tools only.
-2. Daily caps. A refused call costs nothing.
+2. Daily caps. A call a cap refuses costs nothing. When the app then refuses the call itself (an HTTP 4xx answer: a used-up plan quota, an input it rejects, an account that is not connected), the caps that call spent are given back, except `imports` (an import attempt always counts). A server error (5xx) or a dropped connection keeps the charge, because the work may have started.
 3. The tool itself, which calls the app as you, so your plan quotas and permissions apply.
 4. The activity log entry.
 

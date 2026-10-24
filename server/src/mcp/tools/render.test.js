@@ -56,7 +56,8 @@ test("the render file declares render_short, render_captioned and render_cancel"
   assert.deepEqual(byName.render_short.routes, ["/api/jobs", "/api/library"]);
   assert.deepEqual(byName.render_captioned.routes, ["/api/render", "/api/library"]);
   assert.deepEqual(byName.render_cancel.routes, ["/api/render"]);
-  assert.deepEqual(byName.render_captioned.caps, { renders: 1 });
+  // Charged in the handler, after its own checks and the plan quota pre-check.
+  assert.equal(byName.render_captioned.caps, undefined);
   // render_short charges its render together with any publish in one atomic call (R31), so it declares none.
   assert.equal(byName.render_short.caps, undefined);
   for (const def of renderTools) assert.notEqual(def.publish, true, `${def.name} is not registry-publish`);
@@ -217,7 +218,7 @@ test("render_captioned in video mode sends the real video path and the words", a
   const { ctx, calls } = ctxWith({ "POST /api/render/captioned-video": { ok: true, jobId: "cap_1", durationSec: 12, backgroundIds: [] } });
   const result = await byName.render_captioned.handler(ctx, { videoPath: path.join(dir, "clip.mp4"), words, typographyPreset: "bold" });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
-  assert.deepEqual(calls[0].opts.body, { videoPath: fs.realpathSync(path.join(dir, "clip.mp4")), words, typographyPreset: "bold" });
+  assert.deepEqual(calls.at(-1).opts.body, { videoPath: fs.realpathSync(path.join(dir, "clip.mp4")), words, typographyPreset: "bold" });
   assert.equal(result.structuredContent.kind, "captioned");
   assert.equal(result.structuredContent.id, "cap_1");
   assert.equal(result.structuredContent.durationSec, 12);
@@ -245,9 +246,40 @@ test("render_captioned in audio mode sends audio, backgrounds and music, and nev
   });
 });
 
+test("render_captioned charges one render after its checks and before the route", async () => {
+  const dir = mediaWith("clip.mp4");
+  const order = [];
+  const { ctx, chargeCalls } = ctxWith({
+    "POST /api/render/captioned-video": () => {
+      order.push(`route after ${chargeCalls.length} charge(s)`);
+      return { ok: true, jobId: "cap_3" };
+    },
+  });
+  await byName.render_captioned.handler(ctx, { videoPath: path.join(dir, "clip.mp4"), captions: false });
+  assert.deepEqual(chargeCalls, [{ renders: 1 }]);
+  assert.deepEqual(order, ["route after 1 charge(s)"]);
+});
+
+test("render_captioned refuses with QUOTA_EXCEEDED before charging when the plan's renders are used up", async () => {
+  const dir = mediaWith("clip.mp4");
+  const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/billing/usage": SPENT_USAGE });
+  const result = await byName.render_captioned.handler(ctx, { videoPath: path.join(dir, "clip.mp4"), captions: false });
+  assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
+  assert.deepEqual(chargeCalls, []);
+  assert.equal(routesCalled(calls).includes("POST /api/render/captioned-video"), false);
+});
+
+test("render_captioned refused by a cap never calls the route", async () => {
+  const dir = mediaWith("clip.mp4");
+  const { ctx, calls } = ctxWith({}, { refuse: "renders" });
+  const result = await byName.render_captioned.handler(ctx, { videoPath: path.join(dir, "clip.mp4"), captions: false });
+  assert.equal(result.structuredContent.error, "MCP_CAP_REACHED");
+  assert.equal(routesCalled(calls).includes("POST /api/render/captioned-video"), false);
+});
+
 test("render_captioned needs a video, or audio with backgrounds, and words unless captions are off", async () => {
   mediaWith("voice.mp3");
-  const { ctx, calls } = ctxWith({});
+  const { ctx, calls, chargeCalls } = ctxWith({});
   const none = await byName.render_captioned.handler(ctx, { words: [{ text: "a", startMs: 0, endMs: 1 }] });
   assert.equal(none.structuredContent.error, "BAD_INPUT");
   const both = await byName.render_captioned.handler(ctx, { videoPath: "a.mp4", audioPath: "b.mp3", backgrounds: ["pexels_123"] });
@@ -255,14 +287,16 @@ test("render_captioned needs a video, or audio with backgrounds, and words unles
   const noWords = await byName.render_captioned.handler(ctx, { videoPath: "a.mp4" });
   assert.equal(noWords.structuredContent.error, "BAD_INPUT");
   assert.deepEqual(calls, []);
+  assert.deepEqual(chargeCalls, []);
 });
 
 test("render_captioned refuses a URL video", async () => {
   mediaWith();
-  const { ctx, calls } = ctxWith({});
+  const { ctx, calls, chargeCalls } = ctxWith({});
   const result = await byName.render_captioned.handler(ctx, { videoPath: "http://169.254.169.254/latest", captions: false });
   assert.equal(result.structuredContent.error, "PATH_OUTSIDE_MEDIA");
   assert.deepEqual(calls, []);
+  assert.deepEqual(chargeCalls, []);
 });
 
 // ---- render_cancel ----

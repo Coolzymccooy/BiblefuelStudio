@@ -4,11 +4,14 @@
  * A response may be a body, a function (method, path, opts) => body, or an Error to throw.
  *
  * @param {Record<string, unknown>} [responses]
+ * `refundCap` records each refund in `refunds` the same way `chargeCap` records `charges`.
+ *
  * @param {{ user?: object, publicBase?: string, chargeCap?: Function }} [options]
  */
 export function fakeMcpCtx(responses = {}, options = {}) {
   const calls = [];
   const charges = [];
+  const refunds = [];
   const api = {
     async call(method, path, opts = {}) {
       calls.push({ method, path, opts });
@@ -29,6 +32,10 @@ export function fakeMcpCtx(responses = {}, options = {}) {
       for (const [bucket, value] of Object.entries(amounts || {})) charges.push({ bucket, amount: value });
       return null;
     }),
+    refundCap: async (bucketOrAmounts, amount) => {
+      const amounts = typeof bucketOrAmounts === "string" ? { [bucketOrAmounts]: amount ?? 1 } : bucketOrAmounts;
+      for (const [bucket, value] of Object.entries(amounts || {})) refunds.push({ bucket, amount: value });
+    },
   };
-  return { ctx, calls, charges };
+  return { ctx, calls, charges, refunds };
 }
