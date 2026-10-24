@@ -353,7 +353,9 @@ test("story_render without plan quota is refused before any charge", async () =>
 // ---- story_cancel ----
 
 test("story_cancel stops the render or the AI motion orders, for free", async () => {
+  const project = PROJECT({ status: "rendering", scenes: [scene("s1", { aiVideoStatus: "generating" })] });
   const { ctx, calls, chargeCalls } = ctxWith({
+    "GET /api/story/p1": { ok: true, project },
     "POST /api/story/p1/cancel": { ok: true, project: PROJECT({ status: "error", error: "Cancelled." }) },
     "POST /api/story/p1/animate/cancel": { ok: true, project: PROJECT() },
   });
@@ -361,8 +363,30 @@ test("story_cancel stops the render or the AI motion orders, for free", async ()
   assert.deepEqual(render.structuredContent, { kind: "story", id: "p1", cancelled: "render" });
   const animate = await byName.story_cancel.handler(ctx, { id: "p1", what: "animate" });
   assert.deepEqual(animate.structuredContent, { kind: "story", id: "p1", cancelled: "animate" });
-  assert.deepEqual(routesCalled(calls), ["POST /api/story/p1/cancel", "POST /api/story/p1/animate/cancel"]);
+  assert.deepEqual(routesCalled(calls), [
+    "GET /api/story/p1", "POST /api/story/p1/cancel", "GET /api/story/p1", "POST /api/story/p1/animate/cancel",
+  ]);
   assert.equal(chargeCalls.length, 0);
+});
+
+test("story_cancel stops the pictures being made too", async () => {
+  const { ctx, calls } = ctxWith({
+    "GET /api/story/p1": { ok: true, project: PROJECT({ status: "generating_images" }) },
+    "POST /api/story/p1/cancel": { ok: true, project: PROJECT({ status: "error", error: "Cancelled." }) },
+  });
+  const result = await byName.story_cancel.handler(ctx, { id: "p1" });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(routesCalled(calls), ["GET /api/story/p1", "POST /api/story/p1/cancel"]);
+});
+
+test("story_cancel refuses a project with nothing running, and leaves a finished one alone", async () => {
+  const done = PROJECT({ status: "done", render: { outputPath: "/srv/outputs/story/p1/video.mp4" }, scenes: [scene("s1", { aiVideoStatus: "done" })] });
+  const { ctx, calls } = ctxWith({ "GET /api/story/p1": { ok: true, project: done } });
+  for (const what of ["render", "animate"]) {
+    const result = await byName.story_cancel.handler(ctx, { id: "p1", what });
+    assert.equal(result.structuredContent.error, "NOTHING_RUNNING", what);
+  }
+  assert.deepEqual(routesCalled(calls), ["GET /api/story/p1", "GET /api/story/p1"]);
 });
 
 // ---- through the real MCP client ----
@@ -376,7 +400,7 @@ test("tools/list shows the story tools, but not story_animate to a normal user",
   assert.ok(!names.includes("story_animate"));
 });
 
-test("a real story project is created, read, listed, cancelled and deleted", async () => {
+test("a real story project is created, read, listed, left alone by cancel and deleted", async () => {
   const made = await client.callTool({ name: "story_project", arguments: { action: "create", title: "Real one" } });
   assert.ok(!made.isError, JSON.stringify(made.structuredContent));
   const id = made.structuredContent.project.id;
@@ -387,9 +411,7 @@ test("a real story project is created, read, listed, cancelled and deleted", asy
   const cast = await client.callTool({ name: "story_project", arguments: { action: "characters" } });
   assert.ok(cast.structuredContent.characters.some((c) => c.key === "moses"));
   const cancelled = await client.callTool({ name: "story_cancel", arguments: { id, what: "render" } });
-  assert.ok(!cancelled.isError, JSON.stringify(cancelled.structuredContent));
-  const waited = await client.callTool({ name: "jobs_wait", arguments: { kind: "story", id, timeoutSec: 1 } });
-  assert.equal(waited.structuredContent.status, "cancelled");
+  assert.equal(cancelled.structuredContent.error, "NOTHING_RUNNING");
   const gone = await client.callTool({ name: "story_project", arguments: { action: "delete", id } });
   assert.deepEqual(gone.structuredContent, { id, deleted: true });
 });

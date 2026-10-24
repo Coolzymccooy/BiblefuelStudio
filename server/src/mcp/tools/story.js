@@ -4,7 +4,7 @@ import { resolveMediaInput } from "../mediaPath.js";
 import { renderQuotaRefusal } from "../planQuota.js";
 import {
   STORY_STYLES, STORY_ASPECTS, CAPTION_MODES, estimateSceneCount, missingImageCount, knownDurationMs,
-  aiMotionRefusal, projectView, startedHandle, STORY_ID,
+  aiMotionRefusal, projectView, startedHandle, runningWork, STORY_ID,
 } from "../storyView.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -281,14 +281,22 @@ const storyCancel = {
   name: "story_cancel",
   title: "Stop a story",
   description:
-    "what render (default): stop whatever the project is doing (pictures being made or a render); it ends with status cancelled. " +
-    "what animate: stop ordering AI motion clips (super-admin keys; clips already ordered still arrive and are still paid for). Free and instant.",
+    "what render (default): stop whatever the project is doing (transcribing, pictures being made or a render); it ends with status cancelled. " +
+    "what animate: stop ordering AI motion clips (super-admin keys; clips already ordered still arrive and are still paid for). " +
+    "NOTHING_RUNNING when there is nothing of that kind to stop; a finished project is left as it is. Free and instant.",
   inputSchema: {
     id: STORY_ID.describe("The project id."),
     what: z.enum(["render", "animate"]).optional().describe("render (default) or animate."),
   },
   routes: ["/api/story"],
   async handler(ctx, { id, what = "render" }) {
+    const running = runningWork(await readProject(ctx, id));
+    if (what === "animate" ? !running.animating : !running.steps) {
+      // Cancelling marks the project failed, so a finished or idle one is left alone.
+      return fail("NOTHING_RUNNING", what === "animate"
+        ? "No AI motion clips are being made for this project."
+        : "Nothing is running on this project (no transcribing, pictures or render).");
+    }
     const suffix = what === "animate" ? "/animate/cancel" : "/cancel";
     await ctx.api.call("POST", `${projectPath(id)}${suffix}`);
     return ok({ kind: "story", id, cancelled: what });

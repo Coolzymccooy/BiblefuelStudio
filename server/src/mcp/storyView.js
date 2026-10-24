@@ -123,6 +123,19 @@ export function projectView(project, publicBase) {
   };
 }
 
+// Project statuses with a step of the project's own under way (routes/story.js POST /:id/cancel stops them).
+const STEP_RUNNING = new Set(["transcribing", "segmenting", "generating_images", "rendering", "narrating"]);
+const CLIP_IN_FLIGHT = new Set(["queued", "generating"]);
+
+/** What story_cancel can stop: `steps` (pictures, segmenting, a render) and `animating` (AI clips in flight). */
+export function runningWork(project) {
+  const scenes = Array.isArray(project?.scenes) ? project.scenes : [];
+  return {
+    steps: STEP_RUNNING.has(String(project?.status || "")),
+    animating: scenes.some((s) => CLIP_IN_FLIGHT.has(s?.aiVideoStatus)),
+  };
+}
+
 /** The handle a tool returns when it has just started story work in the background. */
 export function startedHandle(id, phase) {
   return { kind: "story", id: String(id), status: "running", percent: null, phase, output: null, error: null };
