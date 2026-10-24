@@ -143,7 +143,13 @@ async function voice(ctx, id) {
   }
   const refused = await ctx.chargeCap({ tts: 1 });
   if (refused) return refused;
-  await ctx.api.call("POST", `${projectPath(id)}/voice`);
+  try {
+    await ctx.api.call("POST", `${projectPath(id)}/voice`);
+  } catch (err) {
+    // 503 NOT_CONFIGURED (no Azure Speech): nothing was voiced. The registry gives back only 4xx refusals.
+    if (err?.name === "ApiError" && err.status === 503 && err.code === "NOT_CONFIGURED") await ctx.refundCap({ tts: 1 });
+    throw err;
+  }
   return ok({ ...startedHandle(id, "voicing"), ttsCharged: 1 });
 }
 
@@ -157,7 +163,7 @@ const sceneScriptStep = {
   title: "Voice a scene script or suggest its shots",
   description:
     "voice: speak every line that needs it (new, edited or marked retake), word for word, with Azure voices, in the background; returns a handle of kind scene: call jobs_wait with kind scene and the project id (done when voicing ends; failed names lines that could not be voiced). " +
-    "Costs one daily tts per call. A project whose lines are all voiced starts nothing and costs nothing. Refused while it renders or voices. " +
+    "Costs one daily tts per call (given back when the server has no Azure Speech: NOT_CONFIGURED). A project whose lines are all voiced starts nothing and costs nothing. Refused while it renders or voices. " +
     "suggest_shots: an AI writes a video prompt for every shot without a clip (shotIds narrows it), marked suggested; waits for the answer, up to about a minute and a half. " + FREE_NOTE + " " +
     "Read the prompts with scene_script_project get and change them with update shots before ordering clips. Next: scene_script_shots.",
   inputSchema: {
@@ -181,8 +187,11 @@ function overBenchmark(estimate) {
 }
 
 async function orderShots(ctx, { id, only, estimateOnly, confirmOverBenchmark }) {
+  // The project read says whether this server has AI video at all; without it an order is refused uncharged.
+  const seedance = Boolean((await ctx.api.call("GET", projectPath(id)))?.seedance);
+  if (!estimateOnly && !seedance) return fail("NOT_CONFIGURED", "AI video is not set up on this server, so no clip can be ordered.");
   const priced = withoutOk(await ctx.api.call("POST", `${projectPath(id)}/shots/estimate`, { body: defined({ only }) }));
-  if (estimateOnly) return ok(priced);
+  if (estimateOnly) return ok({ ...priced, seedance });
   const estimate = priced.estimate || {};
   if (!(estimate.clips > 0) && !(estimate.refetch > 0)) return fail("NOTHING_TO_ORDER", "Every shot already has a clip (name shots in only to make them again).");
   if (estimate.overBenchmark && confirmOverBenchmark !== true) return overBenchmark(estimate);
@@ -198,7 +207,7 @@ const sceneScriptShots = {
   title: "Make a scene script's shots as AI clips",
   description:
     "Order an AI video clip (BytePlus Seedance) for every shot without one, or just the shots in only (naming a shot that has a clip makes it again), paid in dollars from the server's shared AI video balance. " +
-    "Call it first with estimateOnly: true: the price (clips, seconds, usd, the video's total so far against its benchmark) and the month's spend; nothing is ordered. " +
+    "Call it first with estimateOnly: true: the price (clips, seconds, usd, the video's total so far against its benchmark), the month's spend and seedance (false: this server cannot make clips, and an order is refused NOT_CONFIGURED, uncharged); nothing is ordered. " +
     "Otherwise the estimate's dollars, rounded up to the cent, are charged to the daily aiVideoUsd cap before any clip is ordered (MCP_CAP_REACHED if it does not fit; BUDGET when the month's cap is reached). Clips already made and only waiting to be fetched cost nothing. " +
     "The real cost can differ a little from the estimate and the difference is neither charged nor given back. Over the video's benchmark it is refused (OVER_BENCHMARK, uncharged) unless confirmOverBenchmark is true, which only the user may decide. " +
     "Returns a handle of kind scene: jobs_wait with kind scene shows phase making_shots, a few minutes per clip. scene_script_cancel with what shots stops further orders. Next: scene_script_render.",

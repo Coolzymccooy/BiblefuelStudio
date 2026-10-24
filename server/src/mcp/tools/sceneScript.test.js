@@ -163,6 +163,18 @@ test("step voice charges one tts and starts voicing; a project already voiced st
   assert.deepEqual(routesCalled(voiced.calls), [`GET ${BASE_PATH}`]);
 });
 
+test("M2: step voice gives its tts back when the server has no Azure Speech (503 NOT_CONFIGURED)", async () => {
+  const notSet = Object.assign(new Error("Azure Speech is not set up on this server."), { name: "ApiError", status: 503, code: "NOT_CONFIGURED" });
+  const { ctx, chargeCalls, refunds } = ctxWith({ [`GET ${BASE_PATH}`]: answer(PROJECT({ needsVoice: true })), [`POST ${BASE_PATH}/voice`]: notSet });
+  await assert.rejects(() => byName.scene_script_step.handler(ctx, { id: ID, step: "voice" }), (err) => err.status === 503);
+  assert.deepEqual(chargeCalls, [{ tts: 1 }]);
+  assert.deepEqual(refunds, [{ bucket: "tts", amount: 1 }]);
+  const broken = Object.assign(new Error("boom"), { name: "ApiError", status: 500, code: "HTTP_500" });
+  const other = ctxWith({ [`GET ${BASE_PATH}`]: answer(PROJECT({ needsVoice: true })), [`POST ${BASE_PATH}/voice`]: broken });
+  await assert.rejects(() => byName.scene_script_step.handler(other.ctx, { id: ID, step: "voice" }));
+  assert.deepEqual(other.refunds, []);
+});
+
 test("step voice is refused while the project renders or voices, before any charge", async () => {
   for (const running of [{ render: true }, { voice: true }]) {
     const { ctx, calls, chargeCalls } = ctxWith({ [`GET ${BASE_PATH}`]: answer(PROJECT({ needsVoice: true, running })) });
@@ -184,26 +196,30 @@ test("step suggest_shots asks for prompts (free) and passes shotIds", async () =
 // ---- scene_script_shots ----
 
 const ESTIMATE = (fields = {}) => ({ ok: true, estimate: { clips: 2, refetch: 0, seconds: 12, usd: 0.833, shotIds: ["s1", "s2"], totalUsd: 0.833, benchmarkUsd: 5, overBenchmark: false, ...fields }, month: { spentUsd: 3 } });
+const PROJECT_READ = (seedance = true) => ({ [`GET ${BASE_PATH}`]: { ok: true, project: PROJECT(), seedance } });
+/** A fake ctx for scene_script_shots: the project read first (AI video configured unless said), then `responses`. */
+const shotsCtx = (responses, { seedance = true } = {}) => ctxWith({ ...PROJECT_READ(seedance), ...responses });
 
 test("shots estimateOnly prices it and orders nothing", async () => {
-  const { ctx, calls, chargeCalls } = ctxWith({ [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE() });
+  const { ctx, calls, chargeCalls } = shotsCtx({ [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE() });
   const result = await byName.scene_script_shots.handler(ctx, { id: ID, estimateOnly: true, only: ["s1"] });
   assert.equal(result.structuredContent.estimate.usd, 0.833);
   assert.deepEqual(result.structuredContent.month, { spentUsd: 3 });
-  assert.deepEqual(calls[0].opts.body, { only: ["s1"] });
+  assert.deepEqual(calls[1].opts.body, { only: ["s1"] });
+  assert.equal(result.structuredContent.seedance, true);
   assert.equal(chargeCalls.length, 0);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
 });
 
 test("shots charges the estimate's dollars rounded up to the cent, then orders", async () => {
-  const { ctx, calls, chargeCalls } = ctxWith({
+  const { ctx, calls, chargeCalls } = shotsCtx({
     [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE(),
     [`POST ${BASE_PATH}/shots`]: answer(PROJECT()),
   });
   const result = await byName.scene_script_shots.handler(ctx, { id: ID });
   assert.deepEqual(chargeCalls, [{ aiVideoUsd: 0.84 }]);
-  assert.deepEqual(routesCalled(calls), [`POST ${BASE_PATH}/shots/estimate`, `POST ${BASE_PATH}/shots`]);
-  assert.deepEqual(calls[1].opts.body, {});
+  assert.deepEqual(routesCalled(calls), [`GET ${BASE_PATH}`, `POST ${BASE_PATH}/shots/estimate`, `POST ${BASE_PATH}/shots`]);
+  assert.deepEqual(calls[2].opts.body, {});
   assert.equal(result.structuredContent.kind, "scene");
   assert.equal(result.structuredContent.phase, "making_shots");
   assert.equal(result.structuredContent.usdCharged, 0.84);
@@ -211,32 +227,43 @@ test("shots charges the estimate's dollars rounded up to the cent, then orders",
 });
 
 test("shots sends only and the benchmark confirmation when given", async () => {
-  const { ctx, calls } = ctxWith({
+  const { ctx, calls } = shotsCtx({
     [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE({ overBenchmark: true }),
     [`POST ${BASE_PATH}/shots`]: answer(PROJECT()),
   });
   await byName.scene_script_shots.handler(ctx, { id: ID, only: ["s2"], confirmOverBenchmark: true });
-  assert.deepEqual(calls[1].opts.body, { only: ["s2"], confirmOverBenchmark: true });
+  assert.deepEqual(calls[2].opts.body, { only: ["s2"], confirmOverBenchmark: true });
 });
 
 test("shots over the benchmark without confirmation is refused before any charge", async () => {
-  const { ctx, calls, chargeCalls } = ctxWith({ [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE({ overBenchmark: true, totalUsd: 6.5 }) });
+  const { ctx, calls, chargeCalls } = shotsCtx({ [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE({ overBenchmark: true, totalUsd: 6.5 }) });
   const result = await byName.scene_script_shots.handler(ctx, { id: ID });
   assert.equal(result.structuredContent.error, "OVER_BENCHMARK");
   assert.match(result.content[0].text, /6\.50/);
   assert.equal(chargeCalls.length, 0);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
 });
 
 test("shots with nothing to order, or only free refetches, charges nothing", async () => {
-  const none = ctxWith({ [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE({ clips: 0, refetch: 0, usd: 0, shotIds: [] }) });
+  const none = shotsCtx({ [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE({ clips: 0, refetch: 0, usd: 0, shotIds: [] }) });
   const nothing = await byName.scene_script_shots.handler(none.ctx, { id: ID });
   assert.equal(nothing.structuredContent.error, "NOTHING_TO_ORDER");
   assert.equal(none.chargeCalls.length, 0);
-  const free = ctxWith({ [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE({ clips: 0, refetch: 1, usd: 0 }), [`POST ${BASE_PATH}/shots`]: answer(PROJECT()) });
+  const free = shotsCtx({ [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE({ clips: 0, refetch: 1, usd: 0 }), [`POST ${BASE_PATH}/shots`]: answer(PROJECT()) });
   const refetched = await byName.scene_script_shots.handler(free.ctx, { id: ID });
   assert.equal(free.chargeCalls.length, 0);
   assert.equal(refetched.structuredContent.usdCharged, 0);
+});
+
+test("M2: shots on a server without AI video is refused NOT_CONFIGURED, uncharged; the estimate still answers", async () => {
+  const { ctx, calls, chargeCalls } = shotsCtx({ [`POST ${BASE_PATH}/shots/estimate`]: ESTIMATE() }, { seedance: false });
+  const result = await byName.scene_script_shots.handler(ctx, { id: ID });
+  assert.equal(result.structuredContent.error, "NOT_CONFIGURED");
+  assert.equal(chargeCalls.length, 0);
+  assert.deepEqual(routesCalled(calls), [`GET ${BASE_PATH}`]);
+  const priced = await byName.scene_script_shots.handler(ctx, { id: ID, estimateOnly: true });
+  assert.equal(priced.structuredContent.seedance, false);
+  assert.equal(priced.structuredContent.estimate.usd, 0.833);
 });
 
 // ---- scene_script_render ----
