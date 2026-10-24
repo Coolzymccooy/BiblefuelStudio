@@ -27,6 +27,7 @@ import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { scopeMediaInput, resolveOutputAliasForCtx } from "../lib/mediaInputScope.js";
 import { sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 import { isOwnerCtx } from "../lib/paths.js";
+import { signUrlToken } from "../auth.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -1365,6 +1366,8 @@ router.post("/captioned-video", async (req, res) => {
     return res.json({
       ok: true,
       jobId: job.jobId,
+      // Lasts as long as a long render, and opens only this job's feed.
+      progressToken: req.user ? signUrlToken(req.user, `${req.baseUrl}/captioned-video-progress/${job.jobId}`, "6h") : undefined,
       durationSec,
       autoBackground: autoBackgroundSource,
       backgroundIds: hasVideoMode ? [] : rawBackgroundPaths,
@@ -1384,7 +1387,8 @@ router.post("/captioned-video", async (req, res) => {
  * track an explicit disconnect.
  *
  * Auth note: EventSource can't set Authorization headers, so the client passes
- * the token via `?token=...`; auth.js's requireAuth already accepts that.
+ * `?token=<progressToken>`: the URL token POST /captioned-video returned, which
+ * opens this one feed and nothing else (signUrlToken in auth.js).
  */
 router.get("/captioned-video-progress/:jobId", (req, res) => {
   gcJobs();

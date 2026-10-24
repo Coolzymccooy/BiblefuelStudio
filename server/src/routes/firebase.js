@@ -1,48 +1,67 @@
 import { Router } from "express";
-import { buildUserOutputPrefix, isFirebaseAdminEnabled, uploadLocalFileToFirebase } from "../lib/firebaseAdmin.js";
-import { confineUserPath, sendUserPathError } from "../lib/userPathScope.js";
+import fs from "fs";
+import path from "path";
+import { resolveOutputAlias } from "../lib/mediaThumb.js";
+import { isFirebaseAdminEnabled, uploadLocalFileToFirebase } from "../lib/firebaseAdmin.js";
 
-const router = Router();
+// Only finished media may be copied to the bucket.
+const MEDIA_EXT = new Set([".mp4", ".mov", ".webm", ".m4v", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".jpg", ".jpeg", ".png", ".webp", ".gif"]);
 
-const DEFAULT_FIREBASE = { enabled: isFirebaseAdminEnabled, upload: uploadLocalFileToFirebase };
-let firebase = DEFAULT_FIREBASE;
-
-/** Test seam: replace the storage calls ({ enabled, upload }). Pass null to restore. */
-export function _setFirebaseForTests(impl) {
-  firebase = impl && typeof impl === "object" ? { ...DEFAULT_FIREBASE, ...impl } : DEFAULT_FIREBASE;
+/**
+ * The real path of `input` when it is a media file inside `outputDir` (the
+ * caller's own outputs folder); otherwise null. Links are followed before the
+ * check, so neither "../" nor a symlink can reach the server's files.
+ */
+export function ownOutputFile(input, outputDir) {
+  if (!outputDir) return null;
+  const raw = String(input || "").trim();
+  if (!raw || raw.startsWith("http")) return null;
+  let candidate = resolveOutputAlias(raw);
+  // "/outputs/x" resolves against the owner's folder; a user's files live in their own.
+  if (/^\.?\/?outputs\//.test(raw.replace(/\\/g, "/"))) {
+    candidate = path.join(outputDir, raw.replace(/\\/g, "/").replace(/^\.?\/?outputs\//, ""));
+  }
+  try {
+    const real = fs.realpathSync(path.resolve(candidate));
+    const root = fs.realpathSync(path.resolve(outputDir));
+    if (!real.startsWith(root + path.sep)) return null;
+    if (!fs.statSync(real).isFile() || !MEDIA_EXT.has(path.extname(real).toLowerCase())) return null;
+    return real;
+  } catch {
+    return null;
+  }
 }
 
-router.get("/status", (req, res) => {
-  const enabled = firebase.enabled();
-  res.json({ ok: true, enabled });
-});
+export function createFirebaseRouter({ enabled = isFirebaseAdminEnabled, upload = uploadLocalFileToFirebase } = {}) {
+  const router = Router();
 
-router.post("/upload-output", async (req, res) => {
-  try {
-    if (!firebase.enabled()) {
-      return res.status(400).json({ ok: false, error: "Firebase Storage not configured" });
-    }
-    const inputPath = String(req.body?.path || req.body?.filePath || "").trim();
-    if (!inputPath) return res.status(400).json({ ok: false, error: "path required" });
+  router.get("/status", (req, res) => {
+    res.json({ ok: true, enabled: enabled() });
+  });
 
-    // This publishes the file behind a signed URL: only the caller's own
-    // output folder, never a shared or other tenant's file (#112).
-    let localPath;
+  router.post("/upload-output", async (req, res) => {
     try {
-      localPath = confineUserPath(inputPath, req.ctx);
-    } catch (err) {
-      if (sendUserPathError(res, err)) return;
-      throw err;
+      if (!enabled()) {
+        return res.status(400).json({ ok: false, error: "Firebase Storage not configured" });
+      }
+      const inputPath = String(req.body?.path || req.body?.filePath || "").trim();
+      if (!inputPath) return res.status(400).json({ ok: false, error: "path required" });
+
+      const localPath = ownOutputFile(inputPath, req.ctx?.outputDir);
+      if (!localPath) {
+        return res.status(400).json({ ok: false, error: "Only a video, audio or image file from your own outputs can be uploaded." });
+      }
+
+      // Each user's copies go in their own folder; the caller does not choose it.
+      const userSegment = String(req.ctx?.userId || "anon").replace(/[^A-Za-z0-9_-]/g, "_");
+      const uploaded = await upload(localPath, { prefix: `outputs/${userSegment}` });
+      res.json({ ok: true, uploaded });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: String(e?.message || e) });
     }
+  });
 
-    // The bucket folder is the caller's own, derived here: a client-sent
-    // prefix could have written into another account's uploads/<id>/ folder.
-    const prefix = buildUserOutputPrefix(req.ctx?.userId);
-    const uploaded = await firebase.upload(localPath, { prefix });
-    res.json({ ok: true, uploaded });
-  } catch (e) {
-    res.status(400).json({ ok: false, error: String(e?.message || e) });
-  }
-});
+  return router;
+}
 
-export default router;
+export default createFirebaseRouter();

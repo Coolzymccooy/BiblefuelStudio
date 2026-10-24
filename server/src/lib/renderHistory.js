@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { writeJsonAtomic } from "./atomicFile.js";
 
 // Per-user log of completed captioned-video renders. Backed by a JSON file
 // inside the user's dataDir so it shares the tenant scoping conventions used
@@ -44,7 +45,7 @@ export function appendRender(dataDir, entry) {
   const filtered = list.filter((x) => x.jobId !== entry.jobId);
   const next = [entry, ...filtered].slice(0, MAX_ENTRIES);
   try {
-    fs.writeFileSync(file, JSON.stringify(next, null, 2));
+    writeJsonAtomic(file, next);
   } catch {
     // Best-effort: history is not load-bearing for the render itself.
   }

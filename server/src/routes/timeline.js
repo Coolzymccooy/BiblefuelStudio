@@ -18,6 +18,8 @@ import { resolveTenantTrack } from '../lib/musicLibraryStore.js';
 import { readLibrary } from '../lib/library.js';
 import { isUrlLike } from '../lib/inputUrl.js';
 import { isSharedGeneratedImage } from '../lib/mediaInputScope.js';
+import { writeFileAtomic } from "../lib/atomicFile.js";
+import { reportRenderFailure } from "../lib/ops/renderFailures.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -164,6 +166,7 @@ function timelineOutputPath(outputDir, jobId) {
 }
 
 async function runTimelineJob(job) {
+  let failureReported = false;
   job.status = 'running';
   job.phase = 'rendering';
   job.progress = 10;
@@ -207,6 +210,8 @@ async function runTimelineJob(job) {
       job.phase = 'failed';
       job.error = presentRenderError(proofResult.error) || 'Timeline proof render failed';
       job.note = 'Timeline proof render failed before producing a playable MP4.';
+      reportRenderFailure('timeline', { jobId: job.jobId, userId: job.userId, error: proofResult.error || job.error });
+      failureReported = true;
     }
     persistTimelineJob(job);
   } catch (e) {
@@ -216,6 +221,8 @@ async function runTimelineJob(job) {
     job.completedAt = Date.now();
     job.error = friendlyRenderError('timeline-render', String(e?.message || e));
     job.note = 'Timeline proof render failed before producing a playable MP4.';
+    // Already reported when the render itself failed and only saving it threw.
+    if (!failureReported) reportRenderFailure('timeline', { jobId: job.jobId, userId: job.userId, error: e?.message || e });
     persistTimelineJob(job);
   }
 }
@@ -370,7 +377,7 @@ router.get('/peaks', async (req, res) => {
     const peaks = await extractPeaks(abs);
     // Cache write failure must not fail the request — the trace still draws.
     try {
-      fs.writeFileSync(cacheFile, JSON.stringify({ peaks }));
+      writeFileAtomic(cacheFile, JSON.stringify({ peaks }));
     } catch { /* read-only volume, or full disk */ }
 
     return res.json({ ok: true, peaks, buckets: peaks.length, cached: false });

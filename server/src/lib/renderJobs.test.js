@@ -5,9 +5,10 @@ import os from "os";
 import path from "path";
 import {
   createJob, markRunning, markDone, markError, getJob, _resetJobs,
-  persistJob, reconcilePersistedJobs, readPersistedJob,
+  persistJob, reconcilePersistedJobs, reconcileAllPersistedJobs, readPersistedJob,
   attachProc, cancelJob, gcJobs,
 } from "./renderJobs.js";
+import { onRenderFailure } from "./ops/renderFailures.js";
 
 let baseDir;
 beforeEach(() => {
@@ -72,6 +73,24 @@ describe("durable render jobs", () => {
     assert.ok(changed.some((c) => c.jobId === a.jobId));
   });
 
+  test("reconcileAllPersistedJobs covers the owner and every user's renders", () => {
+    const owner = createJob("owner", { durationSec: 5 });
+    persistJob(baseDir, { ...owner, projectId: "o", status: "running" });
+    const userDir = path.join(baseDir, "users", "u-2");
+    const theirs = createJob("u-2", { durationSec: 5 });
+    persistJob(userDir, { ...theirs, projectId: "t", status: "queued" });
+    const finished = createJob("u-2", { durationSec: 5 });
+    persistJob(userDir, { ...finished, projectId: "f", status: "done" });
+    fs.writeFileSync(path.join(baseDir, "users", "stray.txt"), "not a user folder");
+
+    const changed = reconcileAllPersistedJobs(baseDir);
+    assert.equal(readPersistedJob(baseDir, owner.jobId).status, "interrupted");
+    assert.equal(readPersistedJob(userDir, theirs.jobId).status, "interrupted", "another user's render is no longer stuck as running");
+    assert.equal(readPersistedJob(userDir, finished.jobId).status, "done");
+    assert.deepEqual(changed.map((c) => c.jobId).sort(), [owner.jobId, theirs.jobId].sort());
+    assert.deepEqual(reconcileAllPersistedJobs(path.join(baseDir, "nowhere")), [], "a missing data folder is fine");
+  });
+
   test("in-memory job API still works (back-compat)", () => {
     const job = createJob("user-1", { durationSec: 10 });
     markRunning(job.jobId);
@@ -98,5 +117,27 @@ describe("gcJobs", () => {
     assert.equal(getJob(failed.jobId), null, "an error record 2 h old is removed");
     assert.equal(getJob(running.jobId), null, "a running record 13 h old is removed");
     assert.ok(getJob(fresh.jobId));
+  });
+});
+
+describe("failure reports", () => {
+  afterEach(() => onRenderFailure(null));
+
+  test("a failed render is reported once; a cancelled one never", () => {
+    const reports = [];
+    onRenderFailure((r) => reports.push(r));
+    const failed = createJob("user-9", { durationSec: 5 });
+    markError(failed.jobId, "ffmpeg exited 1");
+    markError(failed.jobId, "ffmpeg exited 1 again");
+    const cancelled = createJob("user-9", { durationSec: 5 });
+    cancelJob(cancelled.jobId);
+    markError(cancelled.jobId, "killed");
+    assert.deepEqual(reports, [{ kind: "render", jobId: failed.jobId, userId: "user-9", projectId: null, error: "ffmpeg exited 1" }]);
+  });
+
+  test("a reporter that throws does not break the render", () => {
+    onRenderFailure(() => { throw new Error("mail down"); });
+    const job = createJob("u", { durationSec: 1 });
+    assert.equal(markError(job.jobId, "x").status, "error");
   });
 });

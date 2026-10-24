@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR } from './paths.js';
+import { writeFileAtomic, writeFileAtomicAsync } from './atomicFile.js';
 
 const FILE = 'access-requests.json';
 const VALID_STATUSES = new Set(['pending', 'approved', 'denied']);
@@ -33,7 +34,7 @@ export function createAccessRequestsStore({ dir }) {
 
   const ensure = () => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    if (!fs.existsSync(filePath())) fs.writeFileSync(filePath(), '[]', 'utf8');
+    if (!fs.existsSync(filePath())) writeFileAtomic(filePath(), '[]');
   };
 
   const normalize = (rec) => ({
@@ -51,7 +52,7 @@ export function createAccessRequestsStore({ dir }) {
   };
 
   const writeAll = async (arr) => {
-    await fs.promises.writeFile(filePath(), JSON.stringify(arr, null, 2), 'utf8');
+    await writeFileAtomicAsync(filePath(), JSON.stringify(arr, null, 2));
   };
 
   const append = async (record) => {

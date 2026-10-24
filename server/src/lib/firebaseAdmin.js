@@ -116,7 +116,7 @@ export async function mirrorOutputToFirebaseIfEnabled(localPath, options = {}) {
 
 const UPLOAD_PREFIX = "uploads";
 
-function getStorageBucket() {
+export function getStorageBucket() {
   const app = getFirebaseApp();
   if (!app) throw new Error("Firebase Storage not configured");
   const bucket = getStorage(app).bucket();

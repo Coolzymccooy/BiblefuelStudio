@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { writeJsonAtomic } from "./atomicFile.js";
 
 /**
  * Per-user plan record store.
@@ -59,6 +60,6 @@ export function writeUserPlan(dataDir, patch) {
     ...patch,
     updatedAt: new Date().toISOString(),
   };
-  fs.writeFileSync(planFilePath(dataDir), JSON.stringify(next, null, 2));
+  writeJsonAtomic(planFilePath(dataDir), next);
   return next;
 }

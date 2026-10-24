@@ -1,7 +1,7 @@
 /**
  * POST /api/firebase/upload-output publishes a local file to storage and
  * answers a signed URL (#112). It may only publish a file in the caller's own
- * output folder; anything else is 403 PATH_OUTSIDE_MEDIA and nothing is
+ * output folder; anything else is a 400 and nothing is
  * uploaded.
  */
 import { test, describe, before, after, beforeEach } from "node:test";
@@ -18,9 +18,7 @@ fs.mkdirSync(process.env.OUTPUT_DIR, { recursive: true });
 
 const { default: express } = await import("express");
 const { default: request } = await import("supertest");
-const firebaseModule = await import("../../src/routes/firebase.js");
-const firebaseRouter = firebaseModule.default;
-const { _setFirebaseForTests } = firebaseModule;
+const { createFirebaseRouter } = await import("../../src/routes/firebase.js");
 
 const mine = path.join(process.env.DATA_DIR, "users", "me", "outputs");
 const theirs = path.join(process.env.DATA_DIR, "users", "them", "outputs");
@@ -44,17 +42,17 @@ before(() => {
   } catch {
     junction = null;
   }
-  _setFirebaseForTests({
-    enabled: () => true,
-    upload: async (localPath, options) => {
-      uploads.push({ localPath, options });
-      return { bucket: "b", objectPath: `outputs/${path.basename(localPath)}`, signedUrl: "https://signed.example/x" };
-    },
-  });
+});
+
+const firebaseRouter = createFirebaseRouter({
+  enabled: () => true,
+  upload: async (localPath, options) => {
+    uploads.push({ localPath, options });
+    return { bucket: "b", objectPath: `outputs/${path.basename(localPath)}`, signedUrl: "https://signed.example/x" };
+  },
 });
 
 after(() => {
-  _setFirebaseForTests(null);
   if (junction) fs.unlinkSync(junction);
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
 });
@@ -90,8 +88,8 @@ describe("/api/firebase/upload-output path scope", () => {
     for (const p of bad) {
       for (const body of [{ path: p }, { filePath: p }]) {
         const res = await upload(ctx, body);
-        assert.equal(res.status, 403, `${p}: ${JSON.stringify(res.body)}`);
-        assert.equal(res.body.error, "PATH_OUTSIDE_MEDIA", p);
+        assert.equal(res.status, 400, `${p}: ${JSON.stringify(res.body)}`);
+        assert.match(res.body.error, /your own outputs/, p);
       }
     }
     assert.deepEqual(uploads, []);
@@ -116,7 +114,7 @@ describe("/api/firebase/upload-output path scope", () => {
       uploads = [];
       const res = await upload(ctx, { path: f.own, ...(prefix === undefined ? {} : { prefix }) });
       assert.equal(res.status, 200, JSON.stringify(res.body));
-      assert.equal(uploads[0].options.prefix, "uploads/me/outputs", String(prefix));
+      assert.equal(uploads[0].options.prefix, "outputs/me", String(prefix));
     }
   });
 

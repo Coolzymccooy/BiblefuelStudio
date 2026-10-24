@@ -1,6 +1,7 @@
 import { v4 as uuid } from "uuid";
 import fs from "fs";
 import path from "path";
+import { reportRenderFailure } from "./ops/renderFailures.js";
 
 // In-memory job registry for async render endpoints. The /captioned-video
 // route hands ffmpeg a long-running spawn (a 1-min sermon at 4K takes 40s+)
@@ -110,7 +111,11 @@ export function markError(jobId, error) {
   // Keep the "Render cancelled" message rather than the SIGKILL'd ffmpeg's
   // non-zero-exit error that arrives right after a cancel.
   if (record?.cancelled) return record;
-  return updateJob(jobId, { status: "error", error: String(error || "render failed") });
+  // Read before the update, which changes the record in place.
+  const firstFailure = Boolean(record) && record.status !== "error";
+  const failed = updateJob(jobId, { status: "error", error: String(error || "render failed") });
+  if (firstFailure) reportRenderFailure("render", { jobId, userId: record.userId, error });
+  return failed;
 }
 
 /** Register the live ffmpeg process for a job so it can be cancelled. */
@@ -188,6 +193,30 @@ export function readPersistedJob(baseDir, jobId) {
   } catch {
     return null;
   }
+}
+
+/**
+ * reconcilePersistedJobs for the owner's data folder and every user's
+ * (DATA_DIR/users/<id>), so no one's render stays "running" after a restart.
+ */
+export function reconcileAllPersistedJobs(dataDir) {
+  const changed = reconcilePersistedJobs(dataDir);
+  const usersDir = path.join(dataDir, "users");
+  let entries = [];
+  try {
+    entries = fs.readdirSync(usersDir, { withFileTypes: true });
+  } catch {
+    return changed;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    try {
+      changed.push(...reconcilePersistedJobs(path.join(usersDir, e.name)));
+    } catch (err) {
+      console.warn(`[jobs] could not reconcile renders for user ${e.name}:`, err?.message || err);
+    }
+  }
+  return changed;
 }
 
 /**

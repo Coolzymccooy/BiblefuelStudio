@@ -851,12 +851,9 @@ function ErrorBanner({ message }: { message: string }) {
 
 function DonePanel({ project }: { project: StoryProject }) {
   // Render output is deterministic: outputs/story/<projectId>/video.mp4.
-  // projectId is a uuid (untouched by the server's path sanitiser). Token is
-  // appended because <video> can't send an Authorization header and the
-  // server's requireAuth accepts ?token= (see api.ts). Harmless if public.
-  const token = api.getToken();
-  const base = `${api.mediaBaseUrl}/outputs/story/${project.projectId}/video.mp4`;
-  const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  // projectId is a uuid (untouched by the server's path sanitiser). /outputs
+  // is served without sign-in, so the link carries no token.
+  const url = `${api.mediaBaseUrl}/outputs/story/${project.projectId}/video.mp4`;
   const thumbnailOptions = (project.scenes || [])
     .filter((s) => s.imageStatus === 'done' && s.imageUrl)
     .map((s, i) => ({ label: `Scene ${i + 1}`, path: s.imageUrl as string }));
@@ -873,7 +870,7 @@ function DonePanel({ project }: { project: StoryProject }) {
       <div className="min-w-0 space-y-3 lg:self-start">
       <video src={url} controls className="w-full rounded-2xl border border-[rgba(216,184,120,0.22)] shadow-lg" />
       <button
-        onClick={() => api.downloadMedia(base, 'story-video.mp4')}
+        onClick={() => api.downloadMedia(url, 'story-video.mp4')}
         className={primaryBtnCls}
       >
         <Download size={16} /> Download MP4

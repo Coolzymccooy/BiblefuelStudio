@@ -117,9 +117,8 @@ class ApiClient {
         return `${this.mediaBaseUrl}/outputs/${name}`;
     }
 
-    // Exposed (not private) because EventSource can't send custom headers, so
-    // SSE consumers need to append the token as a query string. Server's
-    // requireAuth accepts both `Authorization: Bearer` and `?token=`.
+    // The sign-in token. It goes only in an Authorization header: the server
+    // refuses it in a URL, where it would land in logs and browser history.
     getToken(): string | null {
         const token = localStorage.getItem(TOKEN_KEY);
         if (!token || token === 'null' || token === 'undefined') return null;
@@ -354,7 +353,6 @@ class ApiClient {
     }
 
     async download(url: string): Promise<void> {
-        const token = this.getToken();
         try {
             const response = await axios.get(url, {
                 headers: this.getHeaders(),
@@ -371,8 +369,8 @@ class ApiClient {
             link.remove();
             URL.revokeObjectURL(objectUrl);
         } catch (error) {
-            const fullUrl = token ? `${url}?token=${token}` : url;
-            window.open(fullUrl, '_blank');
+            // Media links need no sign-in; never put the token in a URL.
+            window.open(url, '_blank');
         }
     }
 

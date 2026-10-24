@@ -28,7 +28,8 @@ import seriesRouter from "./src/routes/series.js";
 import transcribeRouter from "./src/routes/transcribe.js";
 import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
-import videogenRouter from "./src/routes/videogen.js";
+import videogenRouter, { VEO_LEDGER_PREFIX } from "./src/routes/videogen.js";
+import { settleStaleReservations } from "./src/lib/videoGen/spend.js";
 import storyRouter, { isQuotaFreeStoryRequest } from "./src/routes/story.js";
 import lyricVideoRouter from "./src/routes/lyricVideo.js";
 import { FONT_DIR } from "./src/lib/videoFilters.js";
@@ -41,7 +42,7 @@ import musicRouter from "./src/routes/music.js";
 import brandingRouter from "./src/routes/branding.js";
 import stemsWorkerRouter from "./src/routes/stemsWorker.js";
 import { configureLaptopQueue, loadLaptopQueue } from "./src/lib/stems/laptopQueue.js";
-import { requireAuth } from "./src/auth.js";
+import { requireAuth, assertJwtSecret } from "./src/auth.js";
 import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
 import { getAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
 import { safeDownloadName } from "./src/lib/downloadName.js";
@@ -64,12 +65,18 @@ import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 import { ownershipWarning } from "./src/lib/userPlan.js";
 import { cacheControlForOutput, publicAssetHeaders, setOutputSafetyHeaders } from "./src/lib/mediaCache.js";
-import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
+import { reconcileAllPersistedJobs } from "./src/lib/renderJobs.js";
 import { resumeAnimations } from "./src/lib/story/animateStage.js";
 import { createSceneScriptRouter, resumeSceneScriptShots } from "./src/routes/sceneScript.js";
 import { createVisualLibraryRouter, resumeLibraryRerolls } from "./src/routes/visualLibrary.js";
 import { isSeedanceConfigured } from "./src/lib/videoGen/providers/seedance.js";
 import { hasLibass } from "./src/lib/kinetic/capability.js";
+import { initErrorTracking, captureError, captureMessage } from "./src/lib/ops/errorTracking.js";
+import { configureAlerts, alert } from "./src/lib/ops/alerts.js";
+import { onRenderFailure } from "./src/lib/ops/renderFailures.js";
+import { createMaintenance, backupsEnabled } from "./src/lib/ops/maintenance.js";
+import { bucketTarget, folderTarget } from "./src/lib/ops/backup.js";
+import { isFirebaseAdminEnabled, getStorageBucket } from "./src/lib/firebaseAdmin.js";
 
 // Load env from CURRENT server directory
 const __filename = fileURLToPath(import.meta.url);
@@ -82,6 +89,17 @@ console.log(`[PATHS] DATA_DIR=${dataDir}`);
 console.log(`[PATHS] OUTPUT_DIR=${outputDir}`);
 console.log(`[PATHS] JOBS_FILE=${jobsFile}`);
 console.log(`📂 Loaded environment from: ${path.join(__dirname, '.env')}`);
+
+// A production server never starts with a guessable login secret.
+try {
+  assertJwtSecret();
+} catch (e) {
+  console.error(`❌ ${e.message}`);
+  process.exit(1);
+}
+
+// Error tracking (Sentry) is on when SENTRY_DSN is set.
+if (await initErrorTracking()) console.log("🛰️  Error tracking on (Sentry)");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -223,6 +241,50 @@ const emailTransport = createEmailTransport({
   replyTo: process.env.MAIL_REPLY_TO || '',
 });
 const sendEmail = (req) => sendEmailViaTransport(emailTransport, req);
+
+// Alerts go to OPS_ALERT_EMAIL, else the owner. Every render failure is one.
+const firstEmail = (v) => String(v || "").split(",").map((x) => x.trim()).find(Boolean) || "";
+configureAlerts({
+  sendEmail: process.env.RESEND_API_KEY ? sendEmail : null,
+  to: firstEmail(process.env.OPS_ALERT_EMAIL) || firstEmail(process.env.OWNER_EMAIL) || firstEmail(process.env.SUPER_ADMIN_EMAIL),
+  captureMessage,
+});
+onRenderFailure(({ kind, jobId, userId, projectId, error }) => {
+  alert("render-failed", `A ${kind} render failed`, [
+    jobId && `Job: ${jobId}`,
+    projectId && `Project: ${projectId}`,
+    userId && `User: ${userId}`,
+    `Error: ${error}`,
+  ].filter(Boolean).join("\n"));
+});
+
+// Housekeeping: disk alarm, throwaway-file cleanup, nightly backups.
+function backupTarget() {
+  if (!backupsEnabled()) return null;
+  const dir = String(process.env.BACKUP_TARGET || "").match(/^dir:(.+)$/)?.[1];
+  if (dir) return folderTarget(dir);
+  // Backups are meant to run here: say so loudly when there is nowhere to put them.
+  const noTarget = (why) => {
+    alert("backup-off", "Nightly backups are not running", `${why} Set up Firebase storage, set BACKUP_TARGET=dir:<folder>, or BACKUP_ENABLED=false.`);
+    return null;
+  };
+  if (!isFirebaseAdminEnabled()) return noTarget("Firebase admin is not configured, so there is no bucket to back up to.");
+  try {
+    return bucketTarget(getStorageBucket());
+  } catch (e) {
+    return noTarget(`The storage bucket is not available: ${e?.message || e}.`);
+  }
+}
+const maintenance = createMaintenance({ dataDir: DATA_DIR, outputDir: OUTPUT_DIR, alert, backupTarget: backupTarget() });
+function opsHealth() {
+  const st = maintenance.status();
+  const lastOk = Date.parse(st.backup?.lastOkAt || "");
+  return {
+    diskLow: st.disk ? st.disk.low : null,
+    backupsOn: st.backupsOn,
+    backupFresh: st.backupsOn ? Number.isFinite(lastOk) && Date.now() - lastOk < 36 * 3600_000 : null,
+  };
+}
 const accessRequestsStore = getAccessRequestsStore();
 // refuseAgentCalls here is belt-and-braces: the router is a public POST with no
 // requireAuth, so req.user is normally unset and it passes everyone through.
@@ -284,7 +346,9 @@ app.get('/api/health', async (req, res) => {
       // Studio caption looks draw with ffmpeg's ass filter (libass); false
       // means they fall back to drawtext presets on this box.
       libass: hasLibass(),
-    }
+    },
+    // Booleans only: this endpoint is public.
+    ops: opsHealth(),
   });
 });
 
@@ -452,6 +516,7 @@ app.get('*', spaFallback(publicDir));
 app.use((err, req, res, next) => {
   console.error("Unhandled Error:", err);
   const status = Number(err?.status || err?.statusCode || 500);
+  if (!(status < 500)) captureError(err, { tags: { route: req.path, method: req.method } });
   res.status(Number.isFinite(status) ? status : 500).json({
     ok: false,
     error: err.message || "Internal Server Error",
@@ -462,10 +527,19 @@ app.use((err, req, res, next) => {
 const PORT = Number(process.env.PORT || 5051);
 
 try {
-  const interrupted = reconcilePersistedJobs(DATA_DIR);
+  const interrupted = reconcileAllPersistedJobs(DATA_DIR);
   if (interrupted.length) console.warn(`[story] reconciled ${interrupted.length} interrupted render job(s)`);
 } catch (e) {
   console.warn("[story] job reconciliation skipped:", e?.message || e);
+}
+
+// A Veo order a restart cut off may have been placed: count it on the AI
+// video ledger rather than leave it reserved for ever.
+try {
+  const stale = settleStaleReservations(DATA_DIR, VEO_LEDGER_PREFIX);
+  if (stale.count) console.warn(`[video-gen] counted ${stale.count} Veo order(s) cut off by the restart ($${stale.usd.toFixed(2)})`);
+} catch (e) {
+  console.warn("[video-gen] stale Veo reservations not settled:", e?.message || e);
 }
 
 // AI scene clips ordered before a restart are collected, not bought again.
@@ -491,6 +565,9 @@ try {
 
 app.listen(PORT, () => {
   console.log(`✅ Biblefuel Studio v2 running at http://localhost:${PORT}`);
+  maintenance.start();
+  const { backupsOn } = maintenance.status();
+  console.log(`🧹 Housekeeping on: disk alarm, cleanup, backups ${backupsOn ? "on" : "off"}`);
 
   // Multi-tenancy posture diagnostics — surface the data-isolation mode
   // so operators don't accidentally ship in single-tenant where every

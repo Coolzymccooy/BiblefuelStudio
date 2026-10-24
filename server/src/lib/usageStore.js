@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { writeJsonAtomic } from "./atomicFile.js";
 
 /**
  * Per-user daily usage counters.
@@ -65,7 +66,7 @@ export function incrementUsage(dataDir, bucket, by = 1) {
   const valid = ["scripts", "tts", "render", "imageGen"];
   if (!valid.includes(bucket)) throw new Error(`usage: unknown bucket ${bucket}`);
   current.counts[bucket] = (current.counts[bucket] || 0) + Number(by || 1);
-  fs.writeFileSync(usageFilePath(dataDir), JSON.stringify(current, null, 2));
+  writeJsonAtomic(usageFilePath(dataDir), current);
   return current.counts[bucket];
 }
 
@@ -79,6 +80,6 @@ export function incrementUsage(dataDir, bucket, by = 1) {
 export function resetUsage(dataDir) {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   const fresh = { day: todayUtc(), counts: emptyCounts() };
-  fs.writeFileSync(usageFilePath(dataDir), JSON.stringify(fresh, null, 2));
+  writeJsonAtomic(usageFilePath(dataDir), fresh);
   return fresh;
 }
