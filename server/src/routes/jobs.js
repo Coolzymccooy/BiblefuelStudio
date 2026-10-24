@@ -349,6 +349,8 @@ function updateJob(id, patch) {
   store = loadJobs(); // Reload to ensure freshness
   const j = store.jobs.find(x => x.id === id);
   if (!j) return null;
+  // A cancelled job stays cancelled (#121): the worker's late writes for it (progress, done, failed) are dropped.
+  if (j.status === "cancelled") return j;
   Object.assign(j, patch);
   saveJobs(store);
   return j;
@@ -381,6 +383,19 @@ function safeUpdateJob(id, patch) {
  * Set when a job starts, cleared when the worker finishes it.
  */
 let currentJobRun = null;
+
+const JOB_CANCELLED = "Job cancelled";
+
+/**
+ * Stops the job this process is running, when it is `jobId` (#121): its ffmpeg is killed and no
+ * further ffmpeg starts for it, so the render fails at once (the job already reads cancelled).
+ */
+function stopRunningJob(jobId) {
+  const run = currentJobRun;
+  if (!run || run.jobId !== jobId) return;
+  run.cancelled = true;
+  try { run.ffmpeg?.kill("SIGTERM"); } catch {}
+}
 
 /** Did the running job, under this very ctx, download `file` itself? */
 function isOwnJobDownload(file) {
@@ -567,8 +582,12 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
   // so the progress parser (matching `time=HH:MM:SS.xx`) can read the
   // running encoder stats — so we don't touch -loglevel.
   const fullArgs = args.includes("-hide_banner") ? args : ["-hide_banner", ...args];
+  // The job's cancel kills this ffmpeg (stopRunningJob), and a cancelled job starts no more.
+  const run = currentJobRun;
+  if (run?.cancelled) return Promise.reject(new Error(JOB_CANCELLED));
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpeg, fullArgs);
+    if (run) run.ffmpeg = proc;
     let stderr = "";
     let settled = false;
     let timedOut = false;
@@ -622,6 +641,7 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
     });
 
     proc.on("close", (code) => {
+      if (run?.ffmpeg === proc) run.ffmpeg = null;
       if (timedOut) {
         return done(new Error(`ffmpeg timed out after ${JOB_EXEC_TIMEOUT_SEC}s\n${summarizeFfmpegError(stderr)}`));
       }
@@ -673,7 +693,7 @@ function assertJobPathsInScope(payload, ctx) {
 }
 
 async function executeJob(job) {
-  currentJobRun = { ctx: currentJobCtx, made: new Set() };
+  currentJobRun = { ctx: currentJobCtx, made: new Set(), jobId: job?.id };
   assertJobPathsInScope(job?.payload, currentJobCtx);
   if (!ensureFfmpegAvailable()) {
     throw new Error("FFmpeg not available on server");
@@ -1946,6 +1966,8 @@ function buildAutoPublishCaption(job) {
 export async function maybeAutoPublish(job, result) {
   try {
     if (job?.suppressAutoPublish === true) return;
+    // A render cancelled while it was finishing is not posted (#121).
+    if (loadJobs().jobs.find((j) => j.id === job?.id)?.status === "cancelled") return;
     if (!isPostizConfigured()) return;
     const outFile = result?.outFile || result?.file;
     if (!outFile) return;
@@ -2176,6 +2198,28 @@ router.post("/:id/retry", (req, res) => {
   });
   res.json({ ok: true, job });
 });
+
+/**
+ * Cancel a queued or running job (#121), for its owner only (anyone else gets the same 404 a
+ * missing job gets). A queued job is never started; a running one has its ffmpeg killed. Either
+ * way it reads `cancelled` at once and stays so. A job that has ended answers 409 NOTHING_RUNNING.
+ * A post that a finishing campaign_auto_post has already handed to its destination still goes out.
+ */
+router.post("/:id/cancel", (req, res) => {
+  store = loadJobs();
+  const job = store.jobs.find((j) => j.id === req.params.id);
+  if (!job || !isJobVisibleTo(job, req.ctx)) return res.status(404).json({ ok: false, error: "Not found" });
+  if (job.status !== "queued" && job.status !== "running") {
+    return res.status(409).json({ ok: false, error: "NOTHING_RUNNING", hint: `Job is already ${job.status}; nothing to cancel.` });
+  }
+  const cancelled = safeUpdateJob(job.id, { status: "cancelled", finishedAt: new Date().toISOString(), error: JOB_CANCELLED });
+  if (!cancelled) return res.status(500).json({ ok: false, error: "The cancel could not be saved. Try again." });
+  stopRunningJob(job.id);
+  res.json({ ok: true, job: cancelled });
+});
+
+/** Test seam: true while the worker is running a job. */
+export function _workerBusyForTests() { return running; }
 
 // Pure constructor for a campaign_auto_post job row. Extracted so the
 // ownership/isolation contract is unit-testable without touching the jobs
