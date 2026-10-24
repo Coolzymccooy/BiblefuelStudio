@@ -104,6 +104,61 @@ test("voice_synthesize with a provider uses that provider's route and its own op
   assert.deepEqual(bodies.elevenlabs, { text: "Peace be with you", voiceId: "e", modelId: "eleven_v2" });
 });
 
+const PATHLIKE_VOICE_IDS = [
+  "C:\\Windows\\x.wav", "C:x.wav", "/etc/passwd", "../x", "..\\x", "\\\\host\\share\\a.wav",
+  "//host/share/a.wav", "ref.wav", "a/b", "cb:../x", "cb:", "x y",
+];
+
+test("voice_synthesize with chatterbox accepts only an empty voiceId or a cb: alias", async () => {
+  const { ctx, calls } = fakeMcpCtx({ "POST /api/tts/chatterbox": { ok: true, file: "/o/tts-c.wav", provider: "chatterbox", voice: "v" } });
+  for (const voiceId of PATHLIKE_VOICE_IDS.concat(["en-US-AriaNeural"])) {
+    const result = await byName.voice_synthesize.handler(ctx, { text: "Peace be with you", provider: "chatterbox", voiceId });
+    assert.equal(result.structuredContent?.error, "BAD_INPUT", voiceId);
+  }
+  assert.equal(calls.length, 0);
+  for (const voiceId of [undefined, "cb:abc-123", "cb:550e8400_e29b"]) {
+    const result = await byName.voice_synthesize.handler(ctx, { text: "Peace be with you", provider: "chatterbox", voiceId });
+    assert.notEqual(result.isError, true, String(voiceId));
+  }
+  assert.equal(calls.length, 3);
+});
+
+test("voice_synthesize on any other provider accepts a plain voice name and nothing path-like", async () => {
+  const providers = ["auto", "elevenlabs", "edge", "azure", "fish", "piper"];
+  const answer = { ok: true, file: "/o/tts-x.mp3", provider: "x", voice: "v" };
+  const { ctx, calls } = fakeMcpCtx(Object.fromEntries(providers.map((p) => [`POST /api/tts/${p}`, answer])));
+  for (const provider of providers) {
+    for (const voiceId of PATHLIKE_VOICE_IDS) {
+      const result = await byName.voice_synthesize.handler(ctx, { text: "Peace be with you", provider, voiceId });
+      assert.equal(result.structuredContent?.error, "BAD_INPUT", `${provider} ${voiceId}`);
+    }
+  }
+  assert.equal(calls.length, 0);
+  for (const provider of providers) {
+    for (const voiceId of ["en-US-AriaNeural", "21m00Tcm4TlvDq8ikWAM", "en_US-lessac-medium"]) {
+      const result = await byName.voice_synthesize.handler(ctx, { text: "Peace be with you", provider, voiceId });
+      assert.notEqual(result.isError, true, `${provider} ${voiceId}`);
+    }
+  }
+});
+
+test("a cb: alias with auto says to use provider chatterbox", async () => {
+  const { ctx } = fakeMcpCtx({});
+  const result = await byName.voice_synthesize.handler(ctx, { text: "Peace be with you", voiceId: "cb:abc" });
+  assert.match(result.structuredContent.message, /provider chatterbox/);
+});
+
+test("voice_synthesize refuses a path-like voiceId for real, before the route", async () => {
+  const before = await client.callTool({ name: "whoami", arguments: {} });
+  const result = await client.callTool({ name: "voice_synthesize", arguments: { text: "Peace be with you", provider: "chatterbox", voiceId: "/etc/passwd" } });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /voiceId/);
+  const after2 = await client.callTool({ name: "whoami", arguments: {} });
+  assert.equal(after2.structuredContent.caps.tts.used, before.structuredContent.caps.tts.used, "a refused voiceId spends no cap");
+  const wrongProvider = await client.callTool({ name: "voice_synthesize", arguments: { text: "Peace be with you", provider: "chatterbox", voiceId: "en-US-AriaNeural" } });
+  assert.equal(wrongProvider.structuredContent.error, "BAD_INPUT");
+});
+
 test("voice_synthesize passes word timings through and keeps fallback notes", async () => {
   const words = [{ text: "Hi", startMs: 0, endMs: 200 }];
   const { ctx } = fakeMcpCtx({

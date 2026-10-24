@@ -9,6 +9,24 @@ const CLONE_PROVIDERS = ["elevenlabs", "chatterbox"];
 const TRANSCRIPT_ACTIONS = ["list", "add", "remove"];
 const TRANSCRIPT_LIST_LIMIT = 50;
 
+// A voiceId must never become a file path. Chatterbox reads its voiceId as a
+// reference-audio path on the bridge, and "auto" can fall through to
+// Chatterbox, so a voice id is either a saved-clone alias (cb:<id>) or a plain
+// voice name: letters, digits, - and _, no dots, slashes, colons or spaces.
+const CLONE_ALIAS = /^cb:[\w-]+$/;
+const VOICE_NAME = /^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*$/;
+const VOICE_ID_PATTERN = new RegExp(`${CLONE_ALIAS.source}|${VOICE_NAME.source}`);
+
+/** An error message when voiceId is not acceptable for this provider, else null. */
+function voiceIdProblem(provider, voiceId) {
+  if (voiceId === undefined || voiceId === "") return null;
+  if (provider === "chatterbox") {
+    return CLONE_ALIAS.test(voiceId) ? null : "With provider chatterbox, voiceId must be a cloned voice id from voice_list (cb:...), or left out.";
+  }
+  if (CLONE_ALIAS.test(voiceId)) return "A cloned voice (cb:...) only works with provider chatterbox. Set provider chatterbox.";
+  return VOICE_NAME.test(voiceId) ? null : "voiceId must be a voice name from voice_list (letters, digits, - and _), never a file path.";
+}
+
 /** A copy of `fields` without undefined values, so the route's own defaults apply. */
 function defined(fields) {
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
@@ -91,7 +109,7 @@ const voiceSynthesize = {
     "Each call spends one of the agent's daily tts calls and one of the plan's daily tts quota, and takes a few seconds.",
   inputSchema: {
     text: z.string().min(3).max(5000).describe("What to say, 3 to 5000 characters. Plain text; markup and emoji are stripped."),
-    voiceId: z.string().max(200).optional().describe("A voice id from voice_list (voice_id, or cb:... for a cloned voice). Omit for the provider's default."),
+    voiceId: z.string().max(100).regex(VOICE_ID_PATTERN, "voiceId must be a voice name or a cb:... cloned voice id, never a file path").optional().describe("A voice id from voice_list (voice_id; a cb:... cloned voice only with provider chatterbox). Never a file path. Omit for the provider's default."),
     provider: z.enum(SYNTH_PROVIDERS).optional().describe("auto (default), elevenlabs, edge, azure, chatterbox, fish or piper."),
     rate: z.string().max(20).optional().describe("Edge only: speaking rate, for example +10% or -20%."),
     pitch: z.string().max(20).optional().describe("Edge only: pitch, for example +2Hz or -5Hz."),
@@ -106,6 +124,8 @@ const voiceSynthesize = {
   caps: { tts: 1 },
   async handler(ctx, input) {
     const provider = input.provider || "auto";
+    const problem = voiceIdProblem(provider, input.voiceId);
+    if (problem) return fail("BAD_INPUT", problem);
     const body = await ctx.api.call("POST", `/api/tts/${provider}`, { body: defined(SYNTH_BODY[provider](input)) });
     const { file, ...rest } = withoutOk(body);
     if (!file) return fail("NO_AUDIO", "The voice provider answered without an audio file. Try again or choose another provider.");
