@@ -500,3 +500,13 @@ for (const [name, args] of [
     assert.ok(calls.some((c) => c.method === "POST"));
   });
 }
+
+test("a youtube replay schedule stores the relative /outputs/ link, not an absolute one", async () => {
+  const dir = mediaWith("clip.mp4");
+  const { ctx, calls } = ctxWith({ "POST /api/social/schedules": (_m, _p, opts) => ({ ok: true, schedule: { ...opts.body.schedule, id: "s_yt" } }) }, CONSENT);
+  const result = await byName.schedules.handler(ctx, {
+    action: "create", type: "replay", cron: "0 9 * * *", destination: "youtube", caption: "c", videoPath: path.join(dir, "clip.mp4"),
+  });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.equal(calls.at(-1).opts.body.schedule.videoUrl, "/outputs/clip.mp4");
+});

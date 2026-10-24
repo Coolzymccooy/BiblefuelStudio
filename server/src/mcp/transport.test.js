@@ -405,3 +405,15 @@ test("publish consent is strict: a stored publishAllowed that is truthy but not 
   assert.equal(refused.structuredContent.error, "PUBLISH_NOT_ALLOWED");
   store.revokeKey("u_other", key.id);
 });
+
+// ---- public links come from PUBLIC_BASE_URL when it is set, not from the request's Host ----
+
+test("publicBaseFor prefers PUBLIC_BASE_URL (with the production media host) over the request Host", async () => {
+  const { publicBaseFor } = await import("./transport.js");
+  const req = (host, protocol = "http") => ({ hostname: host.split(":")[0], protocol, get: () => host });
+  assert.equal(publicBaseFor(req("evil.test"), { PUBLIC_BASE_URL: "https://biblefuel.tiwaton.co.uk/" }), "https://media.tiwaton.co.uk");
+  assert.equal(publicBaseFor(req("evil.test"), { PUBLIC_BASE_URL: "https://studio.example.test/" }), "https://studio.example.test");
+  assert.equal(publicBaseFor(req("127.0.0.1:5051"), { PUBLIC_BASE_URL: "not a url" }), "http://127.0.0.1:5051");
+  assert.equal(publicBaseFor(req("127.0.0.1:5051"), {}), "http://127.0.0.1:5051");
+  assert.equal(publicBaseFor(req("biblefuel.tiwaton.co.uk", "https"), {}), "https://media.tiwaton.co.uk");
+});

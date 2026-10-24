@@ -255,7 +255,8 @@ async function createSchedule(ctx, input) {
   if (refusal) return refusal;
   let videoUrl;
   if (input.videoPath !== undefined) {
-    const video = await videoLink(ctx, input.videoPath, { absolute: true });
+    // YouTube uploads resolve the relative link to the local file; webhook and Buffer need a public URL.
+    const video = await videoLink(ctx, input.videoPath, { absolute: input.destination !== "youtube" });
     if (video.refusal) return video.refusal;
     videoUrl = video.link;
   }

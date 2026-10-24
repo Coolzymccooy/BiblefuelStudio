@@ -47,7 +47,26 @@ export function allowedHosts(env = process.env) {
   return [...new Set([...DEFAULT_HOSTS, ...fromCors])];
 }
 
-function publicBaseFor(req) {
+/** The configured public origin (PUBLIC_BASE_URL), or null when unset or not an http(s) URL. */
+function configuredPublicUrl(env) {
+  const raw = String(env?.PUBLIC_BASE_URL || "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return /^https?:$/.test(url.protocol) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The origin tools build media links from (webhook posts, output urls).
+ * PUBLIC_BASE_URL wins when set, so the links never follow the request's Host
+ * header; either way the production site maps to its media host.
+ */
+export function publicBaseFor(req, env = process.env) {
+  const configured = configuredPublicUrl(env);
+  if (configured) return MEDIA_BASES[configured.hostname.toLowerCase()] || configured.origin;
   const hostname = String(req.hostname || "").toLowerCase();
   return MEDIA_BASES[hostname] || `${req.protocol}://${req.get("host")}`;
 }
