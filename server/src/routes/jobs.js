@@ -2061,7 +2061,11 @@ router.post("/enqueue", (req, res) => {
     // when no per-user webhook is configured).
     ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) },
     status: "queued",
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    // `{ "autoPublish": false }` next to type and payload keeps this render
+    // from posting through Postiz when it finishes (agents without publish
+    // consent), the same switch the retry route takes.
+    ...(req.body?.autoPublish === false ? { suppressAutoPublish: true } : {}),
   };
   store = loadJobs();
   store.jobs.push(job);
