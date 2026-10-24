@@ -158,7 +158,7 @@ router.put("/auto-publish", refuseAgentCalls, async (req, res) => {
   res.json({ ok: true, enabled: Boolean(updated.autoPublish), platforms: updated.autoPublishPlatforms || [] });
 });
 
-router.post("/post", async (req, res) => {
+router.post("/post", refuseAgentCalls, async (req, res) => {
   if (!isPostizConfigured()) {
     return res.status(503).json({ ok: false, error: "POSTIZ_NOT_CONFIGURED" });
   }

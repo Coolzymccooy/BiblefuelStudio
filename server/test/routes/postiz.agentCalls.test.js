@@ -25,6 +25,7 @@ const ACCOUNT_ROUTES = [
   ["POST", "/connect/tiktok", {}],
   ["DELETE", "/disconnect/int_1", undefined],
   ["PUT", "/auto-publish", { enabled: true, platforms: ["tiktok"] }],
+  ["POST", "/post", { videoUrl: "https://example.com/v.mp4" }],
 ];
 
 for (const [method, path, body] of ACCOUNT_ROUTES) {
