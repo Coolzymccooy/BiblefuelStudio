@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import {
   SEEDANCE_MODELS, seedanceRatio, submitSeedanceTask, waitForSeedanceTask, downloadSeedanceVideo,
 } from "../videoGen/providers/seedance.js";
-import { estimateTokens, usdForTokens, reserveSpend, releaseSpend } from "../videoGen/spend.js";
+import { estimateTokens, usdForTokens, holdSpend, drawSpend, releaseSpend, releaseReservations } from "../videoGen/spend.js";
 import { chargeTaskOnce } from "../videoGen/chargeOnce.js";
 import { runFfmpeg } from "../motion/render.js";
 import { probeAudioDurationSec } from "../story/storyRender.js";
@@ -39,7 +39,14 @@ export { lastFrameOf } from "./shotPictures.js";
  *  - a re-make that ends without a new clip (refused, failed, stopped, cut off
  *    by a restart) puts the earlier paid clip back, with `remakeError` saying
  *    why, so the film never has to be paid for twice. A paid re-make that could
- *    not be downloaded is kept on `remake` and is fetched later at no cost.
+ *    not be downloaded is kept on `remake` and is fetched later at no cost;
+ *  - the whole run is paid for up front (spec section 7.6: never half-made):
+ *    startFilm holds every clip's estimate in one ledger write, checked
+ *    against the cap in that same write, so a second film (or any other AI
+ *    video order) started a moment later already counts it. Each clip then
+ *    draws its own reservation out of the hold, which the cap never refuses,
+ *    and whatever is left of the hold is released when the run ends. A hold
+ *    left by a run a restart cut off is released on resume.
  *
  * Clip states: queued, generating, waiting, done, error, refused.
  */
@@ -78,6 +85,9 @@ const runs = new Set();
 const cancels = new Set();
 export const isFilming = (id) => runs.has(id);
 export const filmLedgerKey = (projectId, shotId) => `cartoon:${projectId}:${shotId}`;
+/** The ledger key of a run's hold; its own prefix, so no clip key ever matches it. */
+export const FILM_HOLD_PREFIX = "cartoon-film:";
+export const filmHoldKey = (projectId) => `${FILM_HOLD_PREFIX}${projectId}`;
 
 /** Stop a running film: shots not yet ordered fail; ordered ones are still collected. False when nothing runs. */
 export function cancelFilm(id) {
@@ -167,6 +177,11 @@ function chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens }) {
 /** What a clip of this length is expected to cost in tokens, for a task whose real count is unknown. */
 function estimatedTokens(project, seconds) {
   return estimateTokens({ durationSec: seconds, ratio: seedanceRatio(project?.meta?.aspect), resolution: FILM_RESOLUTION });
+}
+
+/** What one clip of this length is reserved at: the hold and each clip's draw use this same figure. */
+function clipUsd(project, seconds) {
+  return usdForTokens({ model: FILM_MODEL, resolution: FILM_RESOLUTION, tokens: estimatedTokens(project, seconds) });
 }
 
 /** Speech windows for every clip and, for a line, the speech check. Never throws and never blocks the clip. */
@@ -277,9 +292,9 @@ async function orderOne(ctx, id, shotId, { ledgerDir, deps }) {
   if (!pictures.ok) return endShot(ctx.dataDir, id, shotId, null, { status: pictures.status || "error", error: pictures.error });
   if (cancels.has(id)) return endShot(ctx.dataDir, id, shotId, null, { status: "error", error: STOPPED });
   const seconds = shot.clip.seconds;
-  const tokens = estimatedTokens(project, seconds);
   const key = filmLedgerKey(id, shotId);
-  const reserved = reserveSpend(ledgerDir, key, usdForTokens({ model: FILM_MODEL, resolution: FILM_RESOLUTION, tokens }));
+  // Out of the run's hold: what startFilm held for this clip is never refused by the cap.
+  const reserved = drawSpend(ledgerDir, filmHoldKey(id), key, clipUsd(project, seconds));
   if (!reserved.ok) return endShot(ctx.dataDir, id, shotId, null, { status: "error", error: reserved.error });
   const submitted = await deps.submit({
     prompt: shot.clip.prompt, aspect: project.meta?.aspect, durationSec: seconds, model: FILM_MODEL, resolution: FILM_RESOLUTION,
@@ -336,23 +351,46 @@ function refetchClip(shot) {
  * Queue the chosen shots (every shot without a done clip when `only` is
  * absent; `only` may name done shots, which is a paid re-make) and order them
  * in the background. A shot whose paid clip can still be fetched is fetched
- * again instead, at no cost. Returns the project as written, or null when a
- * run is going, the project is missing, or nothing needs ordering.
+ * again instead, at no cost.
+ *
+ * Every paid clip of the run is held on the ledger first, in the same
+ * synchronous step as the cap check (see the module comment). `budgetUsd` is
+ * what must fit under the cap, when that is more than the run's own price (the
+ * route counts the whole remaining film for a Retry); only the run's own price
+ * is held. Free re-fetches hold nothing.
+ *
+ * Returns the project as written; null when a run is going, the project is
+ * missing, or nothing needs ordering; or `{ ok: false, code: "BUDGET", error }`
+ * when the cap refuses, in which case nothing is held or queued.
  */
-export function startFilm(ctx, id, { only, ledgerDir, deps } = {}) {
+export function startFilm(ctx, id, { only, ledgerDir, deps, budgetUsd = 0 } = {}) {
   if (runs.has(id)) return null;
   const project = readProject(ctx.dataDir, id);
   if (!project) return null;
-  const picked = new Set(pickShots(project, only).map((s) => s.id));
-  if (!picked.size) return null;
-  const written = updateProject(ctx.dataDir, id, (p) => ({
-    ...p,
-    shots: p.shots.map((s, i) => {
-      if (!picked.has(s.id)) return s;
-      if (fetchesAgain(s)) return { ...s, clip: refetchClip(s) };
-      return { ...s, clip: queuedClip(p, s, i) };
-    }),
-  }));
+  const pickedShots = pickShots(project, only);
+  if (!pickedShots.length) return null;
+  const picked = new Set(pickedShots.map((s) => s.id));
+  // Decided once, so the hold covers exactly the shots queued as paid orders.
+  const refetch = new Set(pickedShots.filter((s) => fetchesAgain(s)).map((s) => s.id));
+  const holdUsd = pickedShots.filter((s) => !refetch.has(s.id)).reduce((sum, s) => sum + clipUsd(project, s.seconds), 0);
+  const holdKey = filmHoldKey(id);
+  if (holdUsd > 0) {
+    const held = holdSpend(ledgerDir, holdKey, holdUsd, { checkUsd: Math.max(holdUsd, Number(budgetUsd) || 0) });
+    if (!held.ok) return { ok: false, code: "BUDGET", error: held.error };
+  }
+  let written = null;
+  try {
+    written = updateProject(ctx.dataDir, id, (p) => ({
+      ...p,
+      shots: p.shots.map((s, i) => {
+        if (!picked.has(s.id)) return s;
+        if (refetch.has(s.id)) return { ...s, clip: refetchClip(s) };
+        return { ...s, clip: queuedClip(p, s, i) };
+      }),
+    }));
+  } finally {
+    if (!written) releaseSpend(ledgerDir, holdKey);
+  }
   if (!written) return null;
   runs.add(id);
   cancels.delete(id);
@@ -361,8 +399,21 @@ export function startFilm(ctx, id, { only, ledgerDir, deps } = {}) {
   Promise.resolve()
     .then(() => runFilm(ctx, id, ids, { ledgerDir, deps: { ...defaultDeps, ...deps } }))
     .catch((e) => console.warn(`[cartoon] film ${id} failed: ${e?.message || e}`))
-    .finally(() => { runs.delete(id); cancels.delete(id); });
+    .finally(() => endRun(id, ledgerDir));
   return written;
+}
+
+/** A run is over: release what is left of its hold, then let the cartoon be filmed, edited or deleted again. */
+function endRun(id, ledgerDir) {
+  try {
+    releaseSpend(ledgerDir, filmHoldKey(id));
+  } catch (e) {
+    // Left for the next resume to release; the run must still end.
+    console.warn(`[cartoon] film ${id} hold not released: ${e?.message || e}`);
+  } finally {
+    runs.delete(id);
+    cancels.delete(id);
+  }
 }
 
 /**
@@ -370,9 +421,14 @@ export function startFilm(ctx, id, { only, ledgerDir, deps } = {}) {
  * end shots that were queued but never ordered. A chained shot whose parent
  * will not be done stays waiting rather than ordering from a missing frame.
  * Resolves with the number of clips collected.
+ *
+ * Every hold not owned by a run in this process is released first, including
+ * one whose cartoon is gone: a hold stands only for clips not yet ordered, and
+ * nothing is ordered on resume, so none may outlive the run that made it.
  */
 export async function resumeFilm(ctx, projects, { ledgerDir, deps } = {}) {
   const d = { ...defaultDeps, ...deps };
+  releaseReservations(ledgerDir, FILM_HOLD_PREFIX, (key) => runs.has(key.slice(FILM_HOLD_PREFIX.length)));
   let count = 0;
   const pending = [];
   for (const listed of projects || []) {

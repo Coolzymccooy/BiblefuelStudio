@@ -9,10 +9,10 @@ import { createCartoonRouter, resumeCartoonFilms, isMakingPortraits } from "./ca
 import { requireSuperAdmin } from "../middleware/requireSuperAdmin.js";
 import { createProject, readProject, updateProject } from "../lib/cartoon/store.js";
 import { cartoonFromScript, estimateFilm } from "../lib/cartoon/model.js";
-import { isFilming } from "../lib/cartoon/filmStage.js";
+import { isFilming, filmHoldKey } from "../lib/cartoon/filmStage.js";
 import { isRenderingCartoon } from "../lib/cartoon/renderStage.js";
 import { EXAMPLES } from "../lib/cartoon/examples.js";
-import { ledgerSummary } from "../lib/videoGen/spend.js";
+import { ledgerSummary, holdSpend, readLedger } from "../lib/videoGen/spend.js";
 
 const SCRIPT = `# The Lost Lamb
 Verse: Luke 15:4
@@ -264,6 +264,39 @@ describe("/api/cartoon", () => {
     assert.match(r.body.error, /AI video spend/);
     assert.equal(isFilming(id), false);
     assert.ok(readProject(ctx().dataDir, id).shots.every((s) => s.clip === null));
+  });
+
+  test("two films ordered at once near the cap: exactly one starts, the other is BUDGET, and neither is half-made", async () => {
+    const a = await readyCartoon();
+    const b = await readyCartoon();
+    const whole = estimateFilm(readProject(ctx().dataDir, a)).usd;
+    capAbove(whole * 1.6);
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    waitImpl = async (taskId) => { await gate; return { ok: true, videoUrl: `https://example.com/${taskId}.mp4`, tokens: 100000 }; };
+    const answers = await Promise.all([a, b].map((id) => request(app).post(`/api/cartoon/${id}/film`).send({ confirmOverBenchmark: true })));
+    const statuses = answers.map((r) => r.status).sort();
+    assert.deepEqual(statuses, [200, 409], JSON.stringify(answers.map((r) => r.body.code)));
+    const refused = answers.find((r) => r.status === 409);
+    assert.equal(refused.body.code, "BUDGET");
+    assert.match(refused.body.error, /AI video spend/);
+    const [startedId, refusedId] = answers[0].status === 200 ? [a, b] : [b, a];
+    assert.equal(isFilming(refusedId), false);
+    assert.ok(readProject(ctx().dataDir, refusedId).shots.every((s) => s.clip === null), "nothing of the refused film was queued");
+    const month = ledgerSummary(path.join(root, "ledger"));
+    assert.ok(Math.abs(month.reservedUsd - whole) < 1e-9, "the started film's whole estimate is reserved");
+    release();
+    await until(() => isFilming(startedId));
+    assert.ok(readProject(ctx().dataDir, startedId).shots.every((s) => s.clip?.status === "done"), "the started film is whole");
+    assert.equal(ledgerSummary(path.join(root, "ledger")).reservedUsd, 0, "its hold is released");
+  });
+
+  test("deleting a cartoon releases a hold left on the ledger", async () => {
+    const id = (await create()).body.project.id;
+    const ledgerDir = path.join(root, "ledger");
+    holdSpend(ledgerDir, filmHoldKey(id), 0.75);
+    assert.equal((await request(app).delete(`/api/cartoon/${id}`)).status, 200);
+    assert.equal(readLedger(ledgerDir).reservations[filmHoldKey(id)], undefined);
   });
 
   test("a paid re-make of a done shot counts toward the cap", async () => {

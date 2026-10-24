@@ -5,9 +5,9 @@ import os from "os";
 import path from "path";
 import { createProject, readProject, updateProject } from "./projectStore.js";
 import { projectFromMarkdown } from "./model.js";
-import { startShots, isOrderingShots, estimateShots, useLibraryClip, resumeShots, shotPrompt, ledgerKey } from "./shotStage.js";
+import { startShots, isOrderingShots, estimateShots, useLibraryClip, resumeShots, shotPrompt, ledgerKey, shotsHoldKey } from "./shotStage.js";
 import { readLibrary, addClip } from "../visualLibrary/store.js";
-import { readLedger, reserveSpend } from "../videoGen/spend.js";
+import { readLedger, reserveSpend, holdSpend } from "../videoGen/spend.js";
 
 const SCRIPT = [
   "### Scene 1 — Opening (0:00–0:06)",
@@ -74,6 +74,49 @@ describe("shot stage", () => {
     assert.equal(ledger.clips, done.shots.length);
     assert.deepEqual(ledger.reservations, {});
     assert.ok(done.spentUsd > 0);
+  });
+
+  test("two runs started at once near the cap: exactly one starts and the other changes nothing", async () => {
+    const a = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    const b = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    const whole = estimateShots(a).usd;
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = String(whole * 1.5);
+    const { deps, calls } = fakeDeps();
+    assert.ok(startShots(ctx, a.id, { ledgerDir, deps }).shots, "the first run starts");
+    const second = startShots(ctx, b.id, { ledgerDir, deps });
+    assert.equal(second.ok, false);
+    assert.equal(second.code, "BUDGET");
+    assert.equal(isOrderingShots(b.id), false);
+    assert.deepEqual(readProject(ctx.dataDir, b.id).shots, b.shots, "nothing of the second run was queued");
+    await settle(a.id);
+    assert.ok(readProject(ctx.dataDir, a.id).shots.every((s) => s.clip.status === "done"), "the first run is whole");
+    assert.equal(calls.submit.length, a.shots.length);
+    assert.deepEqual(readLedger(ledgerDir).reservations, {}, "the hold is released when the run ends");
+  });
+
+  test("the whole run is held at once and each clip draws from the hold", () => {
+    const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    const whole = estimateShots(project).usd;
+    let open;
+    const gate = new Promise((r) => { open = r; });
+    const { deps } = fakeDeps();
+    startShots(ctx, project.id, { ledgerDir, deps: { ...deps, submit: async (args) => { await gate; return deps.submit(args); } } });
+    const reservations = readLedger(ledgerDir).reservations;
+    const total = Object.values(reservations).reduce((sum, v) => sum + v, 0);
+    assert.ok(Math.abs(total - whole) < 1e-9, "the hold plus the clips is the run's estimate");
+    assert.ok(Object.keys(reservations).some((k) => k.startsWith(`ss:${project.id}:`)), "clips reserve their own estimate");
+    open();
+    return settle(project.id);
+  });
+
+  test("resume releases a run's hold that a restart left behind", async () => {
+    const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    holdSpend(ledgerDir, shotsHoldKey(project.id), 1);
+    holdSpend(ledgerDir, shotsHoldKey("gone"), 1);
+    reserveSpend(ledgerDir, "cartoon:x:sh1", 0.2);
+    await resumeShots(ctx, [project], { ledgerDir, deps: fakeDeps().deps });
+    assert.deepEqual(readLedger(ledgerDir).reservations, { "cartoon:x:sh1": 0.2 });
+    assert.equal(readLedger(ledgerDir).settledUsd, 0);
   });
 
   test("a refused prompt costs nothing and says how to fix it", async () => {

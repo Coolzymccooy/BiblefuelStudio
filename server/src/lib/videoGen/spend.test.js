@@ -6,7 +6,7 @@ import path from "path";
 import {
   estimateTokens, usdForTokens, usdPerSecond, priceMultiplier, monthlyCapUsd, monthKey, capMessage,
   readLedger, ledgerSummary, wouldExceedCap, reserveSpend, settleSpend, releaseSpend,
-  settleSpendUsd, settleStaleReservations,
+  settleSpendUsd, settleStaleReservations, holdSpend, drawSpend, releaseReservations,
 } from "./spend.js";
 
 const MINI = "dreamina-seedance-2-0-mini-260615";
@@ -149,5 +149,70 @@ describe("ledger", () => {
     assert.equal(l.settledUsd, 9);
     assert.deepEqual(Object.keys(l.reservations), ["story:x"], "other kinds still resume their own way");
     assert.deepEqual(settleStaleReservations(dir, "veo:", OCT), { count: 0, usd: 0 });
+  });
+});
+
+describe("holds", () => {
+  test("a hold is checked and written in one step, so a second batch sees the first", () => {
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "3";
+    assert.deepEqual(holdSpend(dir, "film:a", 2, { now: OCT }), { ok: true });
+    const second = holdSpend(dir, "film:b", 2, { now: OCT });
+    assert.equal(second.ok, false);
+    assert.equal(second.error, "This would take October's AI video spend to $4.00 of $3.");
+    assert.equal(ledgerSummary(dir, OCT).reservedUsd, 2);
+  });
+  test("a hold can be checked against more than it holds", () => {
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "3";
+    assert.equal(holdSpend(dir, "film:a", 1, { checkUsd: 4, now: OCT }).ok, false);
+    assert.equal(ledgerSummary(dir, OCT).reservedUsd, 0, "nothing held when refused");
+    assert.deepEqual(holdSpend(dir, "film:a", 1, { checkUsd: 2.5, now: OCT }), { ok: true });
+    assert.equal(ledgerSummary(dir, OCT).reservedUsd, 1, "only the hold's own amount is reserved");
+  });
+  test("a hold refuses an amount that is not real", () => {
+    assert.deepEqual(holdSpend(dir, "film:a", NaN, { now: OCT }), { ok: false, error: "Invalid cost estimate." });
+    assert.equal(fs.existsSync(path.join(dir, "videogen-spend.json")), false);
+  });
+  test("drawing moves a clip's estimate out of the hold, leaving the total unchanged", () => {
+    holdSpend(dir, "film:a", 1.5, { now: OCT });
+    assert.deepEqual(drawSpend(dir, "film:a", "c:1", 0.5, OCT), { ok: true });
+    assert.deepEqual(readLedger(dir, OCT).reservations, { "film:a": 1, "c:1": 0.5 });
+    assert.equal(ledgerSummary(dir, OCT).reservedUsd, 1.5);
+    drawSpend(dir, "film:a", "c:2", 1, OCT);
+    assert.deepEqual(readLedger(dir, OCT).reservations, { "c:1": 0.5, "c:2": 1 }, "an empty hold is dropped");
+  });
+  test("a draw within the hold is never refused by the cap, even when the cap has since fallen", () => {
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "2";
+    holdSpend(dir, "film:a", 2, { now: OCT });
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "1";
+    assert.deepEqual(drawSpend(dir, "film:a", "c:1", 1.25, OCT), { ok: true });
+    assert.deepEqual(readLedger(dir, OCT).reservations, { "film:a": 0.75, "c:1": 1.25 });
+  });
+  test("only what goes beyond the hold is checked against the cap", () => {
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "1";
+    holdSpend(dir, "film:a", 0.5, { now: OCT });
+    reserveSpend(dir, "other", 0.4, OCT);
+    const over = drawSpend(dir, "film:a", "c:1", 0.7, OCT);
+    assert.equal(over.ok, false);
+    assert.equal(over.error, "This would take October's AI video spend to $1.10 of $1.");
+    assert.deepEqual(readLedger(dir, OCT).reservations, { "film:a": 0.5, other: 0.4 }, "a refused draw leaves the hold");
+    assert.deepEqual(drawSpend(dir, "film:a", "c:1", 0.6, OCT), { ok: true });
+    assert.deepEqual(readLedger(dir, OCT).reservations, { other: 0.4, "c:1": 0.6 });
+  });
+  test("drawing without a hold works as a plain reservation", () => {
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "1";
+    assert.deepEqual(drawSpend(dir, "film:none", "c:1", 0.6, OCT), { ok: true });
+    assert.equal(drawSpend(dir, "film:none", "c:2", 0.6, OCT).ok, false);
+    assert.equal(drawSpend(dir, "film:none", "c:3", -1, OCT).ok, false);
+  });
+  test("releaseReservations drops the prefix's keys except those kept, and charges nothing", () => {
+    holdSpend(dir, "film:a", 1, { now: OCT });
+    holdSpend(dir, "film:b", 2, { now: OCT });
+    reserveSpend(dir, "c:1", 0.5, OCT);
+    assert.equal(releaseReservations(dir, "film:", (key) => key === "film:b", OCT), 1);
+    const l = readLedger(dir, OCT);
+    assert.deepEqual(l.reservations, { "film:b": 2, "c:1": 0.5 });
+    assert.equal(l.settledUsd, 0);
+    assert.equal(releaseReservations(dir, "film:", () => false, OCT), 1);
+    assert.equal(releaseReservations(dir, "film:", () => false, OCT), 0);
   });
 });

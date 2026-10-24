@@ -3,7 +3,7 @@ import path from "path";
 import { Router } from "express";
 import { DATA_DIR, OUTPUT_DIR } from "../lib/paths.js";
 import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
-import { wouldExceedCap, ledgerSummary } from "../lib/videoGen/spend.js";
+import { wouldExceedCap, ledgerSummary, releaseSpend } from "../lib/videoGen/spend.js";
 import { lookupVerses } from "../lib/bible/scriptureApi.js";
 import {
   createProject, readProject, updateProject, listProjects, deleteProject, isProjectId,
@@ -14,7 +14,7 @@ import { STYLES, DEFAULT_STYLE, isStyleName } from "../lib/cartoon/styles.js";
 import { EXAMPLES, PLACEHOLDER } from "../lib/cartoon/examples.js";
 import { writeCartoonScript } from "../lib/cartoon/writer.js";
 import { makePortrait } from "../lib/cartoon/images.js";
-import { startFilm, isFilming, cancelFilm, resumeFilm } from "../lib/cartoon/filmStage.js";
+import { startFilm, isFilming, cancelFilm, resumeFilm, filmHoldKey } from "../lib/cartoon/filmStage.js";
 import {
   startCartoonRender, isRenderingCartoon, cancelCartoonRender, cartoonRenderBlockers, cartoonRenderWarnings,
   recoverInterruptedCartoonRender,
@@ -348,6 +348,8 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     }
     // The visual library keeps its own copies of the clips.
     deleteProject(req.ctx.dataDir, req.ctx.outputDir, project.id);
+    // No run is going, so any hold left for this cartoon covers nothing.
+    releaseSpend(ledgerDir, filmHoldKey(project.id));
     return res.json({ ok: true });
   }));
 
@@ -459,14 +461,17 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     // Fetching clips already paid for costs nothing, so neither the cap nor the benchmark applies.
     const paysNothing = est.clips === 0;
     // The whole remaining film, plus any paid re-make of a done shot, must fit the monthly cap,
-    // so a film is never left half-made (spec section 7.6).
-    const budget = paysNothing ? { exceeded: false } : wouldExceedCap(ledgerDir, budgetUsd(project, only));
+    // so a film is never left half-made (spec section 7.6). Checked here first so a film over the
+    // cap is refused before the benchmark question; startFilm checks again as it holds the money.
+    const mustFit = paysNothing ? 0 : budgetUsd(project, only);
+    const budget = paysNothing ? { exceeded: false } : wouldExceedCap(ledgerDir, mustFit);
     if (budget.exceeded) return fail(res, 409, "BUDGET", budget.error);
     if (!paysNothing && est.overBenchmark && req.body?.confirmOverBenchmark !== true) {
       return fail(res, 409, "OVER_BENCHMARK", `This cartoon would cost about $${est.totalUsd.toFixed(2)}, above the $${est.benchmarkUsd} benchmark. Confirm to go ahead.`, { estimate: est });
     }
-    const started = startFilm(req.ctx, project.id, { only, ledgerDir, deps: deps.film });
+    const started = startFilm(req.ctx, project.id, { only, ledgerDir, deps: deps.film, budgetUsd: mustFit });
     if (!started) return fail(res, 409, "RUNNING", "The film is already being made.");
+    if (started.ok === false) return fail(res, 409, started.code, started.error);
     return res.json({ ok: true, project: view(started, req.ctx) });
   }));
 

@@ -6,9 +6,9 @@ import path from "path";
 import { createProject, readProject, updateProject, projectOutputDir } from "./store.js";
 import { cartoonFromScript, estimateFilm } from "./model.js";
 import { cartoonRenderBlockers } from "./renderStage.js";
-import { startFilm, isFilming, cancelFilm, resumeFilm, filmLedgerKey, lastFrameOf } from "./filmStage.js";
+import { startFilm, isFilming, cancelFilm, resumeFilm, filmLedgerKey, filmHoldKey, lastFrameOf } from "./filmStage.js";
 import { readLibrary } from "../visualLibrary/store.js";
-import { readLedger, reserveSpend, estimateTokens, usdForTokens } from "../videoGen/spend.js";
+import { readLedger, reserveSpend, holdSpend, ledgerSummary, estimateTokens, usdForTokens } from "../videoGen/spend.js";
 import { SEEDANCE_MODELS } from "../videoGen/providers/seedance.js";
 
 const SCRIPT = `# The Lost Lamb
@@ -556,12 +556,17 @@ describe("cartoon film stage", () => {
     assert.equal(ledger.clips, 4, "the failed re-make was not charged");
   });
 
-  test("a re-make refused at the monthly cap keeps the earlier clip", async () => {
+  test("a re-make refused at the monthly cap orders nothing and keeps the earlier clip", async () => {
     const before = await filmed();
     process.env.VIDEO_GEN_MONTHLY_CAP_USD = String(readLedger(ledgerDir).settledUsd + 0.01);
-    startFilm(ctx, before.id, { only: ["sh1"], ledgerDir, deps: fakeDeps().deps });
-    await settle(before.id);
-    assertKeptEarlier(before, "sh1", /./);
+    const { deps, calls } = fakeDeps();
+    const refused = startFilm(ctx, before.id, { only: ["sh1"], ledgerDir, deps });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, "BUDGET");
+    assert.equal(isFilming(before.id), false);
+    assert.equal(calls.submit.length, 0);
+    assert.deepEqual(readProject(ctx.dataDir, before.id).shots, before.shots, "the project is untouched");
+    assert.deepEqual(readLedger(ledgerDir).reservations, {});
   });
 
   test("a stopped re-make keeps the earlier clip", async () => {
@@ -672,5 +677,185 @@ describe("cartoon film stage", () => {
     await settle(project.id);
     const { speech } = readProject(ctx.dataDir, project.id).shots[0].clip;
     assert.deepEqual(speech, { ok: null, error: "The speech check could not run." });
+  });
+
+  describe("the film hold (issue #124)", () => {
+    const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
+    const held = (id) => Number(readLedger(ledgerDir).reservations[filmHoldKey(id)]) || 0;
+    const clipKeys = (id) => Object.keys(readLedger(ledgerDir).reservations).filter((k) => k.startsWith(`cartoon:${id}:`));
+
+    /** Fake deps whose clips wait until `open()` is called. */
+    function gatedDeps() {
+      let open;
+      const gate = new Promise((r) => { open = r; });
+      return { ...fakeDeps({ wait: async () => { await gate; return null; } }), open };
+    }
+
+    async function submitted(calls, n) {
+      for (let i = 0; i < 400 && calls.submit.length < n; i += 1) await new Promise((r) => setTimeout(r, 5));
+      assert.equal(calls.submit.length, n);
+    }
+
+    test("the whole remaining film is held when it starts, and each clip draws from the hold", async () => {
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      const fresh = readProject(ctx.dataDir, project.id);
+      const whole = estimateFilm(fresh).usd;
+      const { deps, calls, open } = gatedDeps();
+      assert.ok(startFilm(ctx, project.id, { ledgerDir, deps }).shots);
+      near(held(project.id), whole, "the whole film is held before any clip is ordered");
+      near(ledgerSummary(ledgerDir).reservedUsd, whole, "reservedUsd counts the hold");
+
+      await submitted(calls, 2);
+      const reservations = readLedger(ledgerDir).reservations;
+      const sh1 = reservations[filmLedgerKey(project.id, "sh1")];
+      const sh3 = reservations[filmLedgerKey(project.id, "sh3")];
+      near(sh1, estimateFilm(fresh, ["sh1"]).usd, "a clip reserves its own estimate");
+      near(sh3, estimateFilm(fresh, ["sh3"]).usd, "a clip reserves its own estimate");
+      near(held(project.id), whole - sh1 - sh3, "the hold shrinks by what the clips took");
+      near(ledgerSummary(ledgerDir).reservedUsd, whole, "mid-film the hold plus the clips is still the film's estimate");
+
+      open();
+      await settle(project.id);
+      assert.ok(readProject(ctx.dataDir, project.id).shots.every((s) => s.clip.status === "done"));
+      assert.deepEqual(readLedger(ledgerDir).reservations, {}, "the hold is gone once the film is done");
+    });
+
+    test("two films started at once near the cap: exactly one starts and neither is half-made", async () => {
+      const a = newProject();
+      approve(a.id, ["Eli", "Pip"]);
+      const b = newProject();
+      approve(b.id, ["Eli", "Pip"]);
+      const whole = estimateFilm(readProject(ctx.dataDir, a.id)).usd;
+      process.env.VIDEO_GEN_MONTHLY_CAP_USD = String(whole * 1.5);
+      const { deps, calls } = fakeDeps();
+      const first = startFilm(ctx, a.id, { ledgerDir, deps });
+      const second = startFilm(ctx, b.id, { ledgerDir, deps });
+      assert.ok(first.shots, "the first film starts");
+      assert.equal(second.ok, false);
+      assert.equal(second.code, "BUDGET");
+      assert.match(second.error, /AI video spend/);
+      assert.equal(isFilming(b.id), false);
+      assert.ok(readProject(ctx.dataDir, b.id).shots.every((s) => s.clip === null), "nothing of the second film was queued");
+      await settle(a.id);
+      assert.ok(readProject(ctx.dataDir, a.id).shots.every((s) => s.clip.status === "done"), "the first film is whole");
+      assert.equal(calls.submit.length, 4);
+      assert.deepEqual(readLedger(ledgerDir).reservations, {});
+    });
+
+    test("an order elsewhere after the film starts sees the hold", async () => {
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      const whole = estimateFilm(readProject(ctx.dataDir, project.id)).usd;
+      process.env.VIDEO_GEN_MONTHLY_CAP_USD = String(whole + 0.1);
+      const { deps, open } = gatedDeps();
+      assert.ok(startFilm(ctx, project.id, { ledgerDir, deps }).shots);
+      assert.equal(reserveSpend(ledgerDir, "scene:other:sh1", 0.2).ok, false, "a Human-mode clip cannot take the film's money");
+      open();
+      await settle(project.id);
+      assert.ok(readProject(ctx.dataDir, project.id).shots.every((s) => s.clip.status === "done"));
+    });
+
+    test("a clip within the hold is never refused by the cap, even if the cap falls mid-film", async () => {
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      const { deps, calls } = fakeDeps();
+      assert.ok(startFilm(ctx, project.id, { ledgerDir, deps }).shots);
+      process.env.VIDEO_GEN_MONTHLY_CAP_USD = "0.01";
+      await settle(project.id);
+      assert.equal(calls.submit.length, 4);
+      assert.ok(readProject(ctx.dataDir, project.id).shots.every((s) => s.clip.status === "done"), "no clip was refused part-way");
+      assert.deepEqual(readLedger(ledgerDir).reservations, {});
+    });
+
+    test("the cap check can count more than is held, and a refusal holds and queues nothing", () => {
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      const fresh = readProject(ctx.dataDir, project.id);
+      const one = estimateFilm(fresh, ["sh1"]).usd;
+      const whole = estimateFilm(fresh).usd;
+      process.env.VIDEO_GEN_MONTHLY_CAP_USD = String((one + whole) / 2);
+      const refused = startFilm(ctx, project.id, { only: ["sh1"], budgetUsd: whole, ledgerDir, deps: fakeDeps().deps });
+      assert.equal(refused.code, "BUDGET");
+      assert.deepEqual(readProject(ctx.dataDir, project.id).shots, fresh.shots);
+      assert.deepEqual(readLedger(ledgerDir).reservations, {});
+    });
+
+    test("a re-make holds only its own price", async () => {
+      const before = await filmed();
+      const one = estimateFilm(before, ["sh1"]).usd;
+      const { deps, calls, open } = gatedDeps();
+      assert.ok(startFilm(ctx, before.id, { only: ["sh1"], ledgerDir, deps }).shots);
+      near(held(before.id), one, "the re-make's own price is held");
+      await submitted(calls, 1);
+      assert.equal(held(before.id), 0, "the clip took the whole hold");
+      near(ledgerSummary(ledgerDir).reservedUsd, one, "reservedUsd is the re-make's price");
+      open();
+      await settle(before.id);
+      assert.deepEqual(readLedger(ledgerDir).reservations, {});
+    });
+
+    test("a free re-fetch holds nothing", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      startFilm(ctx, project.id, { only: ["sh1"], ledgerDir, deps: { ...fakeDeps().deps, download: async () => { throw new Error("socket hang up"); } } });
+      await settle(project.id);
+      const { deps, calls, open } = gatedDeps();
+      assert.ok(startFilm(ctx, project.id, { only: ["sh1"], ledgerDir, deps }).shots);
+      assert.deepEqual(readLedger(ledgerDir).reservations, {}, "no hold for a clip already paid for");
+      open();
+      await settle(project.id);
+      assert.equal(calls.submit.length, 0);
+      assert.equal(readProject(ctx.dataDir, project.id).shots[0].clip.status, "done");
+    });
+
+    test("the hold is released when the film is stopped part-way", async () => {
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      const { deps, calls, open } = gatedDeps();
+      startFilm(ctx, project.id, { ledgerDir, deps });
+      await submitted(calls, 2);
+      assert.ok(held(project.id) > 0);
+      cancelFilm(project.id);
+      open();
+      await settle(project.id);
+      assert.deepEqual(readLedger(ledgerDir).reservations, {});
+      assert.equal(calls.submit.length, 2, "the chained shots were not ordered after the stop");
+    });
+
+    test("the hold is released when every clip fails", async () => {
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      const { deps } = fakeDeps({ submit: async () => ({ ok: false, code: "FAILED", error: "boom" }) });
+      startFilm(ctx, project.id, { ledgerDir, deps });
+      await settle(project.id);
+      assert.deepEqual(readLedger(ledgerDir).reservations, {});
+      assert.equal(readLedger(ledgerDir).settledUsd, 0);
+    });
+
+    test("resume releases a hold a restart left behind, even for a cartoon no longer listed", async () => {
+      const project = newProject();
+      holdSpend(ledgerDir, filmHoldKey(project.id), 1.2);
+      holdSpend(ledgerDir, filmHoldKey("gone"), 0.5);
+      reserveSpend(ledgerDir, "scene:other:sh1", 0.3);
+      await resumeFilm(ctx, [project], { ledgerDir, deps: fakeDeps().deps });
+      assert.deepEqual(readLedger(ledgerDir).reservations, { "scene:other:sh1": 0.3 });
+      assert.equal(readLedger(ledgerDir).settledUsd, 0, "a hold is never charged");
+    });
+
+    test("resume leaves a running film's hold alone", async () => {
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      const { deps, open } = gatedDeps();
+      startFilm(ctx, project.id, { ledgerDir, deps });
+      const before = held(project.id);
+      assert.ok(before > 0);
+      await resumeFilm(ctx, [], { ledgerDir, deps: fakeDeps().deps });
+      assert.equal(held(project.id), before);
+      open();
+      await settle(project.id);
+      assert.deepEqual(clipKeys(project.id), []);
+    });
   });
 });

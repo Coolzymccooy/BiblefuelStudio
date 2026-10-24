@@ -3,7 +3,7 @@ import path from "path";
 import { Router } from "express";
 import { DATA_DIR, OUTPUT_DIR } from "../lib/paths.js";
 import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
-import { wouldExceedCap, ledgerSummary } from "../lib/videoGen/spend.js";
+import { wouldExceedCap, ledgerSummary, releaseSpend } from "../lib/videoGen/spend.js";
 import { similarClips, readLibrary } from "../lib/visualLibrary/store.js";
 import { projectFromMarkdown, MAX_MARKDOWN_CHARS } from "../lib/sceneScript/model.js";
 import {
@@ -12,7 +12,7 @@ import {
 import { VOICES, DEFAULT_ENSEMBLE, ROOM_SIZES, normaliseCast, isVoiceName } from "../lib/sceneScript/cast.js";
 import { startVoicing, isVoicing, lineAudioKey, withTimeline, recoverInterruptedVoicing } from "../lib/sceneScript/voiceStage.js";
 import {
-  startShots, isOrderingShots, cancelShots, estimateShots, useLibraryClip, shotPrompt, resumeShots,
+  startShots, isOrderingShots, cancelShots, estimateShots, useLibraryClip, shotPrompt, resumeShots, shotsHoldKey,
 } from "../lib/sceneScript/shotStage.js";
 import { suggestShotPrompts } from "../lib/sceneScript/shotDirector.js";
 import { startRender, isRendering, cancelRender, renderBlockers, recoverInterruptedRender } from "../lib/sceneScript/renderStage.js";
@@ -214,6 +214,8 @@ export function createSceneScriptRouter({ ledgerDir = DATA_DIR, deps = {} } = {}
     if (!project) return undefined;
     if (busy(project.id)) return fail(res, 409, "BUSY", "Stop the running step before deleting this project.");
     deleteProject(req.ctx.dataDir, req.ctx.outputDir, project.id);
+    // No run is going, so any hold left for this script covers nothing.
+    releaseSpend(ledgerDir, shotsHoldKey(project.id));
     return res.json({ ok: true });
   });
 
@@ -275,6 +277,7 @@ export function createSceneScriptRouter({ ledgerDir = DATA_DIR, deps = {} } = {}
     }
     const started = startShots(req.ctx, project.id, { only: onlyOf(req.body), ledgerDir, deps: deps.shots });
     if (!started) return fail(res, 409, "RUNNING", "Clips are already being made for this script.");
+    if (started.ok === false) return fail(res, 409, started.code, started.error);
     return res.json({ ok: true, project: view(req.ctx, started) });
   });
 
