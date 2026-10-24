@@ -5,6 +5,7 @@ import { resolveMediaOutput } from "../mediaPath.js";
 import { lacksPublishConsent } from "../autoPublish.js";
 import { renderQuotaRefusal } from "../planQuota.js";
 import { VOICE_ID_PATTERN } from "./voice.js";
+import { cronProblem, agentScheduleCount, MAX_AGENT_SCHEDULES } from "../../lib/social/scheduleRules.js";
 
 // Publishing tools (spec "Publishing needs the key owner's consent", rulings
 // R27-R29). Every file an agent names is confined to the key owner's media
@@ -21,10 +22,6 @@ const ASPECTS = ["portrait", "landscape", "square"];
 const SAVED_ID = /^[\w-]{1,100}$/;
 const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const STYLE_WORD = /^[\w-]{1,40}$/;
-// At most once an hour: five fields, the minute one a single number.
-const HOURLY_AT_MOST = /^\d{1,2}$/;
-// R35: schedules agents may create per user (their later runs are not charged to any key).
-const MAX_AGENT_SCHEDULES = 5;
 
 /** A copy of `fields` without undefined values, so the route's own defaults apply. */
 function defined(fields) {
@@ -230,13 +227,6 @@ const youtubeThumbnail = {
 
 // ---- schedules -----------------------------------------------------------------
 
-function cronProblem(cron) {
-  const fields = String(cron || "").trim().split(/\s+/);
-  if (fields.length !== 5) return "cron needs five fields: minute hour day-of-month month day-of-week, for example 0 9 * * *.";
-  if (!HOURLY_AT_MOST.test(fields[0])) return "A schedule may run at most once an hour: the minute field must be a single number, for example 0 9 * * *.";
-  return null;
-}
-
 function scheduleProblem(input) {
   const problem = cronProblem(input.cron);
   if (problem) return problem;
@@ -250,7 +240,7 @@ function scheduleProblem(input) {
 /** SCHEDULE_LIMIT when the user already has MAX_AGENT_SCHEDULES schedules made through agent keys (R35), else null. */
 async function scheduleLimitRefusal(ctx) {
   const body = await ctx.api.call("GET", "/api/social/schedules");
-  const made = (Array.isArray(body?.schedules) ? body.schedules : []).filter((s) => s?.createdByAgentKeyId).length;
+  const made = agentScheduleCount(body?.schedules);
   if (made < MAX_AGENT_SCHEDULES) return null;
   return fail(
     "SCHEDULE_LIMIT",

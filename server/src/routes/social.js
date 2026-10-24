@@ -17,6 +17,7 @@ import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { publicDirectConfig, mergeDirectSecrets } from "../lib/social/directSecrets.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 import { spendScheduleRender } from "../lib/social/scheduleQuota.js";
+import { changedCronProblem } from "../lib/social/scheduleRules.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
 import { uploadToYoutube, setYoutubeThumbnail, listYoutubePlaylists } from "../lib/social/youtubeUpload.js";
 import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
@@ -1138,6 +1139,9 @@ router.post("/config", refuseAgentCalls, answerErrors(async (req, res) => {
   // The page only ever saw has<Secret> flags, so a blank secret means "keep it".
   const direct = mergeDirectSecrets(payload.direct, store.direct);
   const schedules = Array.isArray(payload.schedules) ? payload.schedules : (store.schedules || []);
+  // R39: a new or re-timed schedule runs at most hourly; one saved before the rule keeps its cron.
+  const tooOften = changedCronProblem(schedules, store.schedules);
+  if (tooOften) return res.status(400).json({ ok: false, error: tooOften });
 
   const next = {
     buffer: {
@@ -1214,6 +1218,9 @@ router.post("/schedules", (req, res) => {
     const store = readSocialStore(req.ctx.dataDir);
     const list = Array.isArray(store.schedules) ? store.schedules : [];
     const index = list.findIndex((x) => String(x.id) === schedule.id);
+    // R39, for the app and agents alike: at most hourly (pausing an older schedule keeps its cron).
+    const tooOften = changedCronProblem([schedule], list);
+    if (tooOften) return res.status(400).json({ ok: false, error: tooOften });
     // Word-by-word captions: the value sent, else the one already saved, else
     // the store's default. Leaving it out made the store default it back to
     // true, so pausing a schedule turned its captions back on.
