@@ -45,6 +45,9 @@ function resolveAssetPath(dataDir, pathOrId) {
   // why it is spelled mylib: rather than library:.
   const saved = resolveTenantTrack(dataDir, normalized);
   if (saved) return saved;
+  // An unresolved library ref is a missing track, not a URL: answer null so
+  // callers report "not found" instead of a scheme refusal.
+  if (/^(library|mylib):/i.test(normalized)) return null;
   // Any URL form (`http:/host`, `tcp:` ...), not just "http...": all are
   // localised or refused before ffmpeg sees them.
   if (isRemoteUrl(normalized)) return normalized;

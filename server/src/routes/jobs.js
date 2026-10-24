@@ -368,6 +368,9 @@ export function resolveAssetPath(pathOrId, dataDir) {
   // global DATA_DIR searches the wrong tenant's library).
   const saved = resolveTenantTrack(dataDir || currentDataDir(), normalized);
   if (saved) return saved;
+  // An unresolved library ref is a missing track, not a URL: answer null so
+  // callers report "not found" instead of a scheme refusal.
+  if (/^(library|mylib):/i.test(normalized)) return null;
   const direct = resolveOutputAlias(normalized);
   if (isRemoteUrl(direct)) return direct;
   if (fs.existsSync(direct)) return direct;
