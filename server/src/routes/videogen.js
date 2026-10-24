@@ -30,7 +30,7 @@ export function createVideogenRouter({ ledgerDir = DATA_DIR, generate = generate
     res.json({ ok: true, enabled: Boolean(req.ctx?.isSuperAdmin) && isVideoGenEnabled() });
   });
 
-  router.post('/generate', async (req, res) => {
+  async function generateClip(req, res) {
     if (!isVideoGenEnabled()) {
       return res.status(503).json({ ok: false, error: 'NOT_CONFIGURED' });
     }
@@ -79,6 +79,15 @@ export function createVideogenRouter({ ledgerDir = DATA_DIR, generate = generate
       return res.status(status).json(result);
     }
     return res.json({ ...result, costUsd: estimateUsd });
+  }
+
+  // A ledger that cannot be written (a full disk, say) fails this request,
+  // never the server: Express 4 does not catch a rejected handler.
+  router.post('/generate', (req, res) => {
+    generateClip(req, res).catch((e) => {
+      console.error('[video-gen] generate failed:', e?.message || e);
+      if (!res.headersSent) res.status(500).json({ ok: false, error: String(e?.message || e) });
+    });
   });
 
   return router;

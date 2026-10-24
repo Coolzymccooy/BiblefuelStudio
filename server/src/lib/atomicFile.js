@@ -8,11 +8,12 @@ import fs from "fs";
  *
  * Windows refuses a rename (EPERM, EBUSY, EACCES) while another process or
  * rename has the target open, so a refused rename is retried briefly, as
- * graceful-fs does. Linux never refuses, so on the server it never waits.
+ * graceful-fs does. Only on Windows: elsewhere a refusal is a real error and fails at once.
  */
 let seq = 0;
 const tempFor = (file) => `${file}.${process.pid}.${(seq += 1)}.tmp`;
 const BUSY = new Set(["EPERM", "EBUSY", "EACCES"]);
+const retryable = (e) => process.platform === "win32" && BUSY.has(e?.code);
 const RETRIES = 20;
 const pause = new Int32Array(new SharedArrayBuffer(4));
 
@@ -21,7 +22,7 @@ function renameSyncRetrying(from, to) {
     try {
       return fs.renameSync(from, to);
     } catch (e) {
-      if (!BUSY.has(e?.code) || i >= RETRIES) throw e;
+      if (!retryable(e) || i >= RETRIES) throw e;
       Atomics.wait(pause, 0, 0, 5 * (i + 1));
     }
   }
@@ -32,7 +33,7 @@ async function renameRetrying(from, to) {
     try {
       return await fs.promises.rename(from, to);
     } catch (e) {
-      if (!BUSY.has(e?.code) || i >= RETRIES) throw e;
+      if (!retryable(e) || i >= RETRIES) throw e;
       await new Promise((r) => setTimeout(r, 5 * (i + 1)));
     }
   }

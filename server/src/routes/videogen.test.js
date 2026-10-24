@@ -132,4 +132,15 @@ describe('video-gen route', () => {
     assert.equal(l.settledUsd, 4, 'two 5 s orders at $0.40 a second');
     assert.deepEqual(l.reservations, {});
   });
+
+  test('a ledger that cannot be written fails the request, not the server', async () => {
+    process.env.VEO_API_KEY = 'key';
+    // A file where the ledger folder should be: every ledger write throws.
+    const blocked = path.join(ledgerDir, 'not-a-dir');
+    fs.writeFileSync(blocked, 'x');
+    const router = createVideogenRouter({ ledgerDir: blocked, generate: async () => ({ ok: true }) });
+    const res = await order(app({ router }));
+    assert.equal(res.status, 500);
+    assert.equal(res.body.ok, false);
+  });
 });
