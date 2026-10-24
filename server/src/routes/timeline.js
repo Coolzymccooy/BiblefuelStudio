@@ -17,6 +17,7 @@ import { resolveLibraryTrack } from '../lib/musicLibrary.js';
 import { resolveTenantTrack } from '../lib/musicLibraryStore.js';
 import { readLibrary } from '../lib/library.js';
 import { isUrlLike } from '../lib/inputUrl.js';
+import { isSharedGeneratedImage } from '../lib/mediaInputScope.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -273,8 +274,11 @@ function resolveMusicRef(raw, dataDir) {
   return null;
 }
 
-// Shared voice files and downloaded Pexels/Pixabay stock (#112).
-const TIMELINE_FILE_SCOPE = { allowShared: (abs) => isSharedTtsFile(abs) || isSharedStockFile(abs) };
+// Shared voice files, downloaded Pexels/Pixabay stock and the caller's own
+// generated images, which "Send backgrounds to B-roll" puts on the timeline (#112).
+const timelineFileScope = (ctx) => ({
+  allowShared: (abs) => isSharedTtsFile(abs) || isSharedStockFile(abs) || isSharedGeneratedImage(abs, ctx?.userId),
+});
 
 /** Does the value name a path or URL rather than a saved library item id? */
 function looksLikeAssetPath(value) {
@@ -301,11 +305,11 @@ function scopeTimelineAsset(raw, ctx) {
   const music = resolveMusicRef(raw, ctx?.dataDir);
   if (music) return music;
   if (/^(library|mylib):/.test(raw)) return null;
-  if (looksLikeAssetPath(raw)) return confineUserPath(raw, ctx, TIMELINE_FILE_SCOPE);
+  if (looksLikeAssetPath(raw)) return confineUserPath(raw, ctx, timelineFileScope(ctx));
   const item = ctx?.dataDir ? readLibrary(ctx.dataDir).items.find((x) => String(x.id) === raw) : null;
   const link = item ? libraryItemLink(item) : '';
   if (!link) throw new UserPathError('FILE_NOT_FOUND', 400, `Asset not found: ${raw}`);
-  return /^https?:\/\//i.test(link) ? link : confineUserPath(link, ctx, TIMELINE_FILE_SCOPE);
+  return /^https?:\/\//i.test(link) ? link : confineUserPath(link, ctx, timelineFileScope(ctx));
 }
 
 router.get('/peaks', async (req, res) => {

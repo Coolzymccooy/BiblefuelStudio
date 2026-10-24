@@ -41,7 +41,13 @@ before(() => {
   f.global = path.join(process.env.OUTPUT_DIR, "owner.mp4");
   f.tts = path.join(process.env.OUTPUT_DIR, "tts-edge-abc.mp3");
   f.stock = path.join(process.env.OUTPUT_DIR, "pexels-123.mp4");
-  for (const file of Object.values(f)) fs.writeFileSync(file, "x");
+  // Images Render lab generated for this caller, and for someone else (#112).
+  f.genMine = path.join(process.env.OUTPUT_DIR, "genImg", "genvis-me-1", "bg.png");
+  f.genOther = path.join(process.env.OUTPUT_DIR, "genImg", "genvis-them-1", "bg.png");
+  for (const file of Object.values(f)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "x");
+  }
   try {
     junction = path.join(mine, "escape");
     fs.symlinkSync(theirs, junction, "junction");
@@ -58,7 +64,7 @@ before(() => {
 
 after(() => {
   _resetTimelineRenderJobsForTest();
-  if (junction) fs.rmdirSync(junction);
+  if (junction) fs.unlinkSync(junction);
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
 });
 
@@ -169,6 +175,16 @@ describe("/api/timeline/render asset scope", () => {
       await settle();
       assert.equal(path.resolve(renderedPath()), path.resolve(fs.realpathSync(f.stock)), p);
     }
+  });
+
+  test("the caller's own generated images render; another user's are refused", async () => {
+    const res = await render(ctx, f.genMine);
+    assert.equal(res.status, 202, JSON.stringify(res.body));
+    await settle();
+    assert.equal(path.resolve(renderedPath()), path.resolve(fs.realpathSync(f.genMine)));
+    const other = await render(ctx, f.genOther);
+    assert.equal(other.status, 403, JSON.stringify(other.body));
+    assert.equal(other.body.error, "PATH_OUTSIDE_MEDIA");
   });
 
   test("the owner still renders files in the global output folder", async () => {
