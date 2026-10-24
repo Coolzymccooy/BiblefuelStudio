@@ -24,9 +24,7 @@ const EXCLUDED = [
 // Creation routers no tool covers yet. This shrinks as slices 2-4 land: when a
 // tool maps a router, delete it from here (the second assertion enforces it).
 const PENDING = [
-  "ambient", "branding", "gumroad", "imagegen",
-  "library", "longform", "lyric-video", "moments", "pexels", "pixabay", "queue",
-  "scene-script", "series", "visual-library",
+  "ambient", "gumroad", "longform", "lyric-video", "moments", "queue", "scene-script", "series",
 ];
 
 /** Every `app.use("/api/<name>"` mount in index.js, with either quote style. */

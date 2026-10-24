@@ -41,6 +41,13 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: transcriptsRouter } = await import("../../src/routes/transcripts.js");
   const { default: audioRouter } = await import("../../src/routes/audio.js");
   const { default: audioAdvancedRouter } = await import("../../src/routes/audio_advanced.js");
+  const { default: libraryRouter } = await import("../../src/routes/library.js");
+  const { default: imagegenRouter } = await import("../../src/routes/imagegen.js");
+  const { default: brandingRouter } = await import("../../src/routes/branding.js");
+  const { default: pexelsRouter } = await import("../../src/routes/pexels.js");
+  const { default: pixabayRouter } = await import("../../src/routes/pixabay.js");
+  const { createVisualLibraryRouter } = await import("../../src/routes/visualLibrary.js");
+  const { requireSuperAdmin } = await import("../../src/middleware/requireSuperAdmin.js");
   const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
   const { createMcpRouter } = await import("../../src/mcp/transport.js");
   const { createKey } = await import("../../src/lib/agentKeys/store.js");
@@ -60,6 +67,12 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/transcripts", requireAuth, withUserScope, transcriptsRouter);
   app.use("/api/audio", requireAuth, withUserScope, requireVerifiedEmail, audioRouter);
   app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail, audioAdvancedRouter);
+  app.use("/api/library", requireAuth, withUserScope, libraryRouter);
+  app.use("/api/imagegen", requireAuth, withUserScope, requireVerifiedEmail, imagegenRouter);
+  app.use("/api/branding", requireAuth, withUserScope, brandingRouter);
+  app.use("/api/pexels", requireAuth, withUserScope, requireVerifiedEmail, pexelsRouter);
+  app.use("/api/pixabay", requireAuth, withUserScope, requireVerifiedEmail, pixabayRouter);
+  app.use("/api/visual-library", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createVisualLibraryRouter());
   // STUB: index.js's real /api/health shells out to ffmpeg; tools only need its shape.
   app.get("/api/health", (_req, res) => {
     res.json({
