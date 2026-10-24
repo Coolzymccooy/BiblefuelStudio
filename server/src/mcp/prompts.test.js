@@ -72,12 +72,22 @@ test("make_short_from_verse renders the reference and the steps in order, withou
   assert.match(text, /kind: "job"/);
   for (const tool of PUBLISHING_TOOLS) assert.ok(!toolNamesIn(text).includes(tool), `${tool} is not a step without publish`);
   assert.match(text, /auto-publish/, "says a consented key with auto-publish on posts by itself");
+  assert.match(text, /renderAutoPublish\.enabled/);
+  assertOrder(text, ["social_status", "render_short"]);
 });
 
 test("make_short_from_verse with publish adds the YouTube steps and says consent must be on", async () => {
   const text = await getText("make_short_from_verse", { reference: "John 3:16", voice: "en-US-GuyNeural", publish: "true" });
   assert.match(text, /voiceId: "en-US-GuyNeural"/);
-  assertOrder(text, ["render_short", "jobs_wait", "social_status", "publish_youtube"]);
+  // H1: auto-publish is read before anything is spent, so a render that posts by itself is never uploaded again.
+  assertOrder(text, ["whoami", "social_status", "bible_lookup", "render_short", "jobs_wait"]);
+  assert.ok(text.indexOf("`publish_youtube` with") > text.indexOf("`render_short` with"), "the upload comes after the render");
+  assert.match(text, /renderAutoPublish\.enabled/);
+  assert.match(text, /at least 1 publishes remaining/);
+  assert.match(text, /twice/);
+  assert.match(text, /youtube\.connected/);
+  const publishStep = text.split("\n").find((line) => line.includes("`publish_youtube` with"));
+  assert.match(publishStep, /^\d+\. Only if auto-publish is off/, "the upload step is skipped when the render posts by itself");
   assert.match(text, /kind: "publish"/);
   assert.match(text, /publishAllowed/);
   assert.match(text, /This key may publish/);

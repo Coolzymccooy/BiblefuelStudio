@@ -34,13 +34,24 @@ const asPrompt = (text) => ({ messages: [{ role: "user", content: { type: "text"
 // ---- make_short_from_verse ---------------------------------------------------
 
 const PUBLISH_CHECK =
-  ", that 1 publishes is remaining, and that key.publishAllowed is true. If publishAllowed is false, stop: publishing fails with PUBLISH_NOT_ALLOWED until " +
+  ", that they have at least 1 publishes remaining, and that key.publishAllowed is true. If publishAllowed is false, stop: publishing fails with PUBLISH_NOT_ALLOWED until " +
   "the key's owner switches on This key may publish in Settings, Connected agents";
+
+// H1: read the user's auto-publish before anything is spent. A render it posts must not be uploaded a second time.
+const PUBLISH_STATUS_STEP =
+  "`social_status`, before anything is spent. If renderAutoPublish.enabled is true, the render will post the finished video by itself " +
+  "to renderAutoPublish.platforms and spend the one daily publish: tell the user so, and do NOT call `publish_youtube` afterwards, " +
+  "or the video is posted twice. Otherwise check youtube.connected is true; if it is not, stop and ask the user to connect YouTube in the app's Settings.";
+
+const NO_PUBLISH_STATUS_STEP =
+  "Only if whoami shows key.publishAllowed true: `social_status`. When renderAutoPublish.enabled is true the render will post the finished video " +
+  "by itself and spend one daily publish, though this run is not meant to publish: ask the user before rendering.";
 
 function shortCore({ reference, voice, publish }) {
   const voiceArg = voice ? `, voiceId: ${JSON.stringify(voice)}` : "";
   return [
     `\`whoami\`: check that caps and accountCaps have at least 1 renders, 1 tts and 4 images remaining, that quota.render is not used up${publish ? PUBLISH_CHECK : ""}.`,
+    publish ? PUBLISH_STATUS_STEP : NO_PUBLISH_STATUS_STEP,
     `\`bible_lookup\` with { mode: "verse", reference: ${JSON.stringify(reference)} }. Keep the verse text and its reference. Free.`,
     `\`voice_synthesize\` with { text: <the verse text>${voiceArg} }. Keep the returned path. One daily tts. ` +
       (voice ? "If that voice is refused, call `voice_list` for the voice names." : "The default voice is used; `voice_list` lists others."),
@@ -51,8 +62,7 @@ function shortCore({ reference, voice, publish }) {
 }
 
 const PUBLISH_STEPS = [
-  "`social_status`: check youtube.connected is true. If it is not, stop and ask the user to connect YouTube in the app's Settings.",
-  "`publish_youtube` with { videoPath: <output.path from the render>, title: <up to 100 characters, naming the reference> }. It needs the key's publish consent " +
+  "Only if auto-publish is off (render_short's result said autoPublish \"off\"): `publish_youtube` with { videoPath: <output.path from the render>, title: <up to 100 characters, naming the reference> }. It needs the key's publish consent " +
     "(PUBLISH_NOT_ALLOWED otherwise) and costs one daily publish. privacyStatus defaults to private: tell the user, or ask them before passing \"public\".",
   "`jobs_wait` with { kind: \"publish\", id: <the id publish_youtube returned> } until done. The finished handle carries the video link.",
 ];
