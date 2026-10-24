@@ -1,7 +1,7 @@
 import { api } from './api';
 import { ApiError } from './apiError';
 import type {
-  LibraryClip, SceneScriptProject, ShotRefine, SceneScriptSummary, ShotEstimate, VoiceOption,
+  LibraryClip, LibraryFilters, LibraryLead, MonthSpend, RerollJob, RerollPrice, SceneScriptProject, ShotRefine, SceneScriptSummary, ShotEstimate, VoiceOption,
 } from './sceneScriptTypes';
 
 type Res = { ok: boolean; status?: number; data?: any; error?: string };
@@ -93,13 +93,67 @@ export const sceneScriptApi = {
 export const IMPORT_TIMEOUT_MS = 180_000;
 
 export const visualLibraryApi = {
-  async search(q: string, aspect?: string): Promise<LibraryClip[]> {
+  async search(q: string, aspect?: string, more: Omit<LibraryFilters, 'q' | 'aspect'> = {}): Promise<LibraryClip[]> {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     if (aspect) params.set('aspect', aspect);
+    if (more.lead) params.set('lead', more.lead);
+    if (more.tag) params.set('tag', more.tag);
+    if (more.rating) params.set('rating', String(more.rating));
+    if (more.limit) params.set('limit', String(more.limit));
     const res = await api.get(`/api/visual-library?${params.toString()}`);
     if (!res.ok) throw failure(res, 'Could not load the visual library');
     return res.data.clips as LibraryClip[];
+  },
+  async leads(): Promise<LibraryLead[]> {
+    const res = await api.get('/api/visual-library/leads');
+    if (!res.ok) throw failure(res, 'Could not load the lead characters');
+    return res.data.leads as LibraryLead[];
+  },
+  async update(id: string, patch: { tags?: string[]; rating?: number | null }): Promise<LibraryClip> {
+    const res = await api.patch(`/api/visual-library/${id}`, patch);
+    if (!res.ok) throw failure(res, 'Could not save that clip');
+    return res.data.clip as LibraryClip;
+  },
+  /** force deletes a clip that scene scripts still use; without it the server answers IN_USE. */
+  async remove(id: string, force = false): Promise<void> {
+    const res = await api.delete(`/api/visual-library/${id}${force ? '?force=1' : ''}`);
+    if (!res.ok) throw failure(res, 'Could not delete that clip');
+  },
+  /** Makes a batch of posters; ask again while remaining is above 0 and the last batch did something. */
+  async makePosters(): Promise<{ made: number; failed: number; remaining: number }> {
+    const res = await api.post('/api/visual-library/posters', {}, undefined, { timeout: IMPORT_TIMEOUT_MS });
+    if (!res.ok) throw failure(res, 'Could not make posters');
+    return { made: res.data.made, failed: res.data.failed, remaining: res.data.remaining ?? 0 };
+  },
+  /** Adds a batch of older Story clips; ask again while remaining is above 0. */
+  async backfillStory(): Promise<{ added: number; remaining: number }> {
+    const res = await api.post('/api/visual-library/backfill-story', {}, undefined, { timeout: IMPORT_TIMEOUT_MS });
+    if (!res.ok) throw failure(res, 'Could not add older Story clips');
+    return { added: res.data.added, remaining: res.data.remaining ?? 0 };
+  },
+  /** What re-rolling a clip costs, with this month's spend, before anything is ordered. */
+  async rerollPrice(id: string): Promise<{ price: RerollPrice; month: MonthSpend; seedance: boolean }> {
+    const res = await api.get(`/api/visual-library/${encodeURIComponent(id)}/reroll-price`);
+    if (!res.ok) throw failure(res, 'Could not get the price');
+    return { price: res.data.price, month: res.data.month, seedance: Boolean(res.data.seedance) };
+  },
+  /** Order a new clip from this clip's prompt (or the one given) at the price the user saw. */
+  async reroll(id: string, input: { prompt: string; expectUsd: number }): Promise<RerollJob> {
+    const res = await api.post(`/api/visual-library/${encodeURIComponent(id)}/reroll`, input);
+    if (!res.ok) throw failure(res, 'Could not re-roll this clip');
+    return res.data.job as RerollJob;
+  },
+  /** Fetch a paid clip that could not be saved, at no cost. */
+  async refetchReroll(jobId: string): Promise<RerollJob> {
+    const res = await api.post(`/api/visual-library/rerolls/${encodeURIComponent(jobId)}/refetch`, {});
+    if (!res.ok) throw failure(res, 'Could not fetch the clip again');
+    return res.data.job as RerollJob;
+  },
+  async rerolls(): Promise<{ jobs: RerollJob[]; month: MonthSpend }> {
+    const res = await api.get('/api/visual-library/rerolls');
+    if (!res.ok) throw failure(res, 'Could not load re-rolls');
+    return { jobs: res.data.jobs as RerollJob[], month: res.data.month as MonthSpend };
   },
   /** Add a clip made elsewhere. uploadPath is what uploadMedia(file, name, 'background') returned. */
   async importClip(input: { uploadPath: string; prompt?: string; tags?: string[] }): Promise<LibraryClip> {

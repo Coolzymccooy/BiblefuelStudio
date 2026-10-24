@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { addClip, readLibrary, getClip, updateClip, removeClip, searchClips, similarClips, clipFile, isClipId, aspectOf } from "./store.js";
+import { addClip, readLibrary, getClip, updateClip, removeClip, searchClips, similarClips, clipFile, isClipId, aspectOf, leadsOf, setPoster } from "./store.js";
 
 describe("visual library", () => {
   let ctx;
@@ -59,6 +59,41 @@ describe("visual library", () => {
     assert.equal(readLibrary(ctx.dataDir).length, 0);
     assert.equal(fs.existsSync(path.join(ctx.outputDir, "visual-library", clip.id)), false);
   });
+
+  test("filters by tag, lowest rating and the lead character", () => {
+    const lead = "a Black Nigerian man in his late thirties";
+    const a = addClip(ctx, { file: tmpClip("a.mp4"), prompt: `${lead} kneels in prayer`, lead, tags: ["Grace"] });
+    const b = addClip(ctx, { file: tmpClip("b.mp4"), prompt: `Wide shot: ${lead.toUpperCase()} walks at dawn`, tags: ["grace", "dawn"] });
+    const c = addClip(ctx, { file: tmpClip("c.mp4"), prompt: "A golden sunrise over hills", tags: ["dawn"] });
+    updateClip(ctx.dataDir, a.id, { rating: 5 });
+    updateClip(ctx.dataDir, c.id, { rating: 3 });
+    const ids = (opts) => searchClips(ctx.dataDir, opts).map((x) => x.id).sort();
+    assert.deepEqual(ids({ tag: "grace" }), [a.id, b.id].sort());
+    assert.deepEqual(ids({ minRating: 4 }), [a.id]);
+    assert.deepEqual(ids({ minRating: 3 }), [a.id, c.id].sort());
+    assert.deepEqual(ids({ lead }), [a.id, b.id].sort(), "the descriptor in the prompt counts, in any case");
+    assert.deepEqual(ids({ lead, tag: "dawn" }), [b.id]);
+  });
+
+  test("lists the lead characters it knows, with how many clips show each", () => {
+    const lead = "a young woman in a red headwrap";
+    addClip(ctx, { file: tmpClip("a.mp4"), prompt: `${lead} sings`, lead });
+    addClip(ctx, { file: tmpClip("b.mp4"), prompt: `Close-up of ${lead}` });
+    addClip(ctx, { file: tmpClip("c.mp4"), prompt: "A river", lead: "  " });
+    assert.deepEqual(leadsOf(ctx.dataDir), [{ lead, clips: 2 }]);
+  });
+
+  test("gives a clip without a poster its poster", () => {
+    const clip = addClip(ctx, { file: tmpClip("a.mp4"), prompt: "x" });
+    assert.equal(clip.posterUrl, null);
+    const jpg = path.join(root, "p.jpg");
+    fs.writeFileSync(jpg, "jpg");
+    const updated = setPoster(ctx, clip.id, jpg);
+    assert.equal(updated.posterUrl, `/outputs/visual-library/${clip.id}/poster.jpg`);
+    assert.ok(fs.existsSync(path.join(ctx.outputDir, "visual-library", clip.id, "poster.jpg")));
+    assert.equal(getClip(ctx.dataDir, clip.id).posterUrl, updated.posterUrl);
+    assert.equal(fs.existsSync(jpg), false, "the made poster is moved in");
+  });
 });
 
 describe("aspectOf", () => {
@@ -69,4 +104,5 @@ describe("aspectOf", () => {
     assert.equal(aspectOf(1000, 1050), "square");
     assert.equal(aspectOf(0, 0), "portrait");
   });
+
 });

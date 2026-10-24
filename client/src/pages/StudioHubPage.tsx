@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Mic, Film, Image, Video, Music, List, ChevronRight, ScrollText, type LucideIcon } from 'lucide-react';
+import { Mic, Film, Image, Video, Music, List, ChevronRight, ScrollText, LibraryBig, type LucideIcon } from 'lucide-react';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { useAuth } from '../hooks/useAuth';
 
@@ -19,6 +19,7 @@ const tools: Tool[] = [
     { to: '/app/render', icon: Video, title: 'Render', desc: 'Export and share your MP4.' },
     { to: '/app/lyric-video', icon: Music, title: 'Lyric video', desc: 'Turn your song into a lyric video.' },
     { to: '/app/scene-script', icon: ScrollText, title: 'Scene script', desc: 'Film a finished script, every line as written.', superOnly: true },
+    { to: '/app/library', icon: LibraryBig, title: 'Visual library', desc: 'Find, rate and reuse every clip you have made.', superOnly: true },
 ];
 
 export function StudioHubPage() {

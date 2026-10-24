@@ -148,11 +148,42 @@ export interface VoiceOption { id: string; label: string; gender: string; age: s
 export interface LibraryClip {
   id: string;
   prompt: string;
+  /** false when the clip came in without the prompt that made it. */
+  promptKnown?: boolean;
+  lead?: string;
   url: string;
   posterUrl: string | null;
+  /** true when no poster could be made from the clip; it is not tried again. */
+  posterFailed?: boolean;
   durationSec: number | null;
   costUsd: number;
   aspect: string;
   tags: string[];
+  rating?: number | null;
+  source?: { kind: string; projectId?: string } | null;
   createdAt: number;
 }
+
+export interface LibraryLead { lead: string; clips: number }
+
+/** This month's AI video spend against the shared cap. */
+export interface MonthSpend { month: string; spentUsd: number; reservedUsd: number; capUsd: number }
+
+export interface RerollPrice { seconds: number; usd: number }
+
+/** A new clip ordered from a library clip's prompt. */
+export interface RerollJob {
+  id: string;
+  fromClipId: string;
+  prompt: string;
+  status: 'queued' | 'generating' | 'done' | 'error';
+  error: string | null;
+  clipId: string | null;
+  estimateUsd: number;
+  costUsd: number | null;
+  createdAt: number;
+  /** Paid for but not saved: it can be fetched again at no cost for about a day. */
+  refetchable?: boolean;
+}
+
+export interface LibraryFilters { q?: string; aspect?: string; lead?: string; tag?: string; rating?: number; limit?: number }

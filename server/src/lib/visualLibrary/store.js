@@ -128,6 +128,30 @@ export function updateClip(dataDir, id, patch) {
   return updated;
 }
 
+/** Move a made poster into a clip's folder and record it. */
+export function setPoster(ctx, id, posterFile) {
+  const clip = getClip(ctx.dataDir, id);
+  if (!clip || !fs.existsSync(posterFile)) return null;
+  fs.mkdirSync(clipDir(ctx.outputDir, id), { recursive: true });
+  fs.copyFileSync(posterFile, path.join(clipDir(ctx.outputDir, id), "poster.jpg"));
+  fs.rmSync(posterFile, { force: true });
+  let updated = null;
+  const clips = readLibrary(ctx.dataDir).map((c) => {
+    if (c.id !== id) return c;
+    updated = { ...c, posterUrl: urlFor(id, "poster.jpg") };
+    return updated;
+  });
+  if (updated) writeLibrary(ctx.dataDir, clips);
+  return updated;
+}
+
+/** Record that no poster could be made from a clip, so it is not tried again. */
+export function markPosterFailed(dataDir, id) {
+  const clips = readLibrary(dataDir);
+  if (!clips.some((c) => c.id === id)) return;
+  writeLibrary(dataDir, clips.map((c) => (c.id === id ? { ...c, posterFailed: true } : c)));
+}
+
 export function removeClip(ctx, id) {
   const clips = readLibrary(ctx.dataDir);
   if (!clips.some((c) => c.id === id)) return false;
@@ -148,19 +172,39 @@ function similarity(a, b) {
   return shared / (a.size + b.size - shared);
 }
 
+/** Whether a clip shows this lead character: its descriptor is in the prompt, or the clip was made for it. */
+function showsLead(clip, lead) {
+  const want = String(lead).trim().toLowerCase();
+  return clip.lead?.trim().toLowerCase() === want || String(clip.prompt || "").toLowerCase().includes(want);
+}
+
 /**
  * Library clips for a search box: by words in the prompt and tags, newest
- * first among equals. aspect narrows to clips that fit the video's frame.
+ * first among equals. aspect narrows to clips that fit the video's frame;
+ * lead, tag and minRating narrow further.
  */
-export function searchClips(dataDir, { q = "", aspect = null, limit = 60 } = {}) {
+export function searchClips(dataDir, { q = "", aspect = null, lead = "", tag = "", minRating = 0, limit = 60 } = {}) {
   const want = promptWords(q);
+  const wantTag = String(tag).trim().toLowerCase();
   return readLibrary(dataDir)
     .filter((c) => !aspect || c.aspect === aspect)
+    .filter((c) => !String(lead).trim() || showsLead(c, lead))
+    .filter((c) => !wantTag || c.tags.includes(wantTag))
+    .filter((c) => !(minRating > 0) || (c.rating || 0) >= minRating)
     .map((c) => ({ c, score: want.size ? similarity(want, promptWords(`${c.prompt} ${c.tags.join(" ")}`)) : 0 }))
     .filter((x) => !want.size || x.score > 0)
     .sort((x, y) => y.score - x.score || y.c.createdAt - x.c.createdAt)
     .slice(0, limit)
     .map((x) => x.c);
+}
+
+/** The lead characters clips were made for, each with how many clips show them, most shown first. */
+export function leadsOf(dataDir) {
+  const clips = readLibrary(dataDir);
+  const leads = [...new Set(clips.map((c) => String(c.lead || "").trim()).filter(Boolean))];
+  return leads
+    .map((lead) => ({ lead, clips: clips.filter((c) => showsLead(c, lead)).length }))
+    .sort((a, b) => b.clips - a.clips || a.lead.localeCompare(b.lead));
 }
 
 /** Clips whose prompt is close to this one: offered before ordering a new clip. */
