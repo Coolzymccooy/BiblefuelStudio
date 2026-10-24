@@ -430,3 +430,24 @@ test("a real render a restart stopped reads failed, and ambient_cancel clears it
   const waited = await client.callTool({ name: "jobs_wait", arguments: { kind: "ambient", id, timeoutSec: 1 } });
   assert.equal(waited.structuredContent.status, "cancelled");
 });
+
+/** An unlicensed upload in this test user's own media folder and music library. */
+async function unlicensedUpload(name) {
+  const { resolveScopeDirs } = await import("../../lib/paths.js");
+  const { registerTrack } = await import("../../lib/musicLibraryStore.js");
+  const { dataDir, outputDir } = resolveScopeDirs({ sub: USER.id, email: USER.email, role: USER.role });
+  const file = path.join(outputDir, name);
+  fs.writeFileSync(file, "x");
+  return { file: fs.realpathSync(file), track: registerTrack(dataDir, { file: fs.realpathSync(file), label: name, durationSec: 60 }) };
+}
+
+test("a real bed naming an unlicensed upload by its path, or as the one file, is refused", async () => {
+  _setScopeForTests(null);
+  const { file, track } = await unlicensedUpload("unlicensed-bare.mp3");
+  const made = await client.callTool({ name: "ambient_project", arguments: { action: "create", title: "Licence" } });
+  const id = made.structuredContent.project.id;
+  for (const patch of [{ trackRefs: [file] }, { mode: "file", filePath: `mylib:${track.id}` }, { mode: "file", filePath: file }]) {
+    const result = await client.callTool({ name: "ambient_update", arguments: { id, section: "bed", patch } });
+    assert.equal(result.structuredContent.error, "UNCLEARED_TRACKS", JSON.stringify(patch));
+  }
+});

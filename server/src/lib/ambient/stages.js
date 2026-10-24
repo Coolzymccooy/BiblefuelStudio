@@ -141,16 +141,38 @@ export function writeWithMovements(dataDir, project) {
 export function unclearedTracks(dataDir, trackRefs) {
   const items = readMusicLibrary(dataDir).items || [];
   const out = [];
+  const seen = new Set();
   for (const ref of trackRefs || []) {
-    const s = String(ref || "").trim();
-    if (!s.startsWith("mylib:")) continue;
-    const track = items.find((t) => t.id === s.slice("mylib:".length));
-    if (!track) continue;
+    const track = libraryItemFor(items, ref);
+    if (!track || seen.has(track.id)) continue;
+    seen.add(track.id);
     const licence = String(track.licence || "unknown").trim().toLowerCase();
     if (licence && licence !== "unknown") continue;
-    out.push({ id: s, label: track.label || s, licence: track.licence || "unknown" });
+    out.push({ id: `mylib:${track.id}`, label: track.label || `mylib:${track.id}`, licence: track.licence || "unknown" });
   }
   return out;
+}
+
+function realOrNull(file) {
+  try { return fs.realpathSync(file); } catch { return null; }
+}
+
+/**
+ * The library entry a bed ref names: `mylib:<id>`, or a bare path to the
+ * same file (compared by real path, so another spelling of it is the same
+ * track). A bare path must not be a way round the licence gate.
+ */
+function libraryItemFor(items, ref) {
+  const s = String(ref || "").trim();
+  if (!s || s.startsWith("library:")) return null;
+  if (s.startsWith("mylib:")) return items.find((t) => t.id === s.slice("mylib:".length)) || null;
+  if (!path.isAbsolute(s) || s.startsWith("\\\\") || s.startsWith("//")) return null;
+  const real = realOrNull(s);
+  if (!real) return null;
+  return items.find((t) => {
+    const own = t?.file ? realOrNull(t.file) : null;
+    return own && path.relative(own, real) === "";
+  }) || null;
 }
 
 /** Resolve a bed track ref to a real file, or null. */

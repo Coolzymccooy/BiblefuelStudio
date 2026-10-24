@@ -419,6 +419,43 @@ describe("PATCH /api/ambient/:id/bed", () => {
     assert.equal(res.status, 200);
   });
 
+  test("an unknown-licence upload named by its file path instead of its ref is still refused", async () => {
+    const file = path.join(outputDir, "bare.mp3");
+    fs.writeFileSync(file, "x");
+    registerTrack(dataDir, { file, label: "Bare Mix", durationSec: 120 });
+    const p = await createSession();
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ trackRefs: [file] });
+    assert.equal(res.status, 409);
+    assert.deepEqual(res.body.uncleared.map((t) => t.label), ["Bare Mix"]);
+    // Spelled differently (a .. segment) it is the same file.
+    const odd = path.join(outputDir, "sub", "..", "bare.mp3");
+    const res2 = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ trackRefs: [odd] });
+    assert.equal(res2.status, 409);
+  });
+
+  test("a file-mode bed is licence-checked too, by ref or by path", async () => {
+    const file = path.join(outputDir, "onefile.mp3");
+    fs.writeFileSync(file, "x");
+    const track = registerTrack(dataDir, { file, label: "One File", durationSec: 120 });
+    const p = await createSession();
+    for (const filePath of [`mylib:${track.id}`, file]) {
+      const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ mode: "file", filePath });
+      assert.equal(res.status, 409, filePath);
+      assert.deepEqual(res.body.uncleared.map((t) => t.label), ["One File"]);
+    }
+    assert.equal(readProject(dataDir, p.projectId).bed.filePath, null);
+    const ok = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ mode: "file", filePath: file, allowUncleared: true });
+    assert.equal(ok.status, 200);
+  });
+
+  test("an upload with no library entry is not a licence question", async () => {
+    const file = path.join(outputDir, "plain.mp3");
+    fs.writeFileSync(file, "x");
+    const p = await createSession();
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ trackRefs: [file] });
+    assert.equal(res.status, 200);
+  });
+
   test("bundled tracks never trip the gate", async () => {
     assert.deepEqual(unclearedTracks(dataDir, ["library:prayer-piano", "library:devotional"]), []);
   });

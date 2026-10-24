@@ -340,7 +340,9 @@ router.patch("/:id/bed", (req, res) => {
 
     const allowUncleared = body.allowUncleared === true;
     if (!allowUncleared) {
-      const uncleared = unclearedTracks(req.ctx.dataDir, bed.trackRefs);
+      // A file-mode bed plays its one file: that file needs a licence too.
+      const inUse = [...(bed.trackRefs || []), ...(bed.mode === "file" && bed.filePath ? [bed.filePath] : [])];
+      const uncleared = unclearedTracks(req.ctx.dataDir, inUse);
       if (uncleared.length > 0) {
         return res.status(409).json({
           ok: false,
