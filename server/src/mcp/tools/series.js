@@ -3,6 +3,7 @@ import { ok, fail } from "../toolResult.js";
 import { renderQuotaRefusal } from "../planQuota.js";
 import { VOICE_ID_PATTERN } from "./voice.js";
 import { webhookRefusal } from "./publish.js";
+import { CAP_ENV_NAMES } from "../../lib/agentKeys/capEnv.js";
 
 // Series: one Bible passage cut into a numbered set of short videos. Each part
 // is one campaign_auto_post job: rendered and posted to the destination, so
@@ -61,6 +62,23 @@ const seriesProject = {
 
 // ---- series_generate ---------------------------------------------------------
 
+const PER_PART_BUCKETS = new Set(["renders", "publishes"]);
+
+/**
+ * R51: a series longer than the renders or publishes left today gets a refusal that says why and
+ * what to do, keeping the cap error's fields; any other refusal is returned as it is.
+ */
+function tooLongRefusal(refused, parts) {
+  const details = refused?.structuredContent || {};
+  if (details.error !== "MCP_CAP_REACHED" || !PER_PART_BUCKETS.has(details.bucket)) return refused;
+  const left = Math.max(0, Number(details.limit) - Number(details.used));
+  const keyNote = details.scope === "key" ? " The key's owner may also have set a lower daily limit for this key in Settings, Connected agents." : "";
+  const message = `${parts} parts need ${parts} renders and ${parts} publishes; ${left} ${details.bucket} are left today. ` +
+    `Make fewer parts, or raise ${CAP_ENV_NAMES.renders} / ${CAP_ENV_NAMES.publishes}.${keyNote}`;
+  const { error: _code, message: _generic, ...fields } = details;
+  return fail("MCP_CAP_REACHED", message, { ...fields, needed: parts });
+}
+
 const queuedJob = (id) => ({ kind: "job", id: String(id), status: "queued", percent: null, phase: null, output: null, error: null });
 
 /** Charges what the route was expected to start but did not (fewer parts, no pictures made). */
@@ -86,7 +104,7 @@ async function generate(ctx, input) {
   if (outOfQuota) return outOfQuota;
   const charge = { renders: parts, publishes: parts, ...(input.useGenImage ? { images: parts } : {}) };
   const refused = await ctx.chargeCap(charge);
-  if (refused) return refused;
+  if (refused) return tooLongRefusal(refused, parts);
   const response = await ctx.api.call("POST", "/api/series/generate", { body: pick(input, GENERATE_FIELDS) });
   await refundUnstarted(ctx, charge, response);
   const jobIds = Array.isArray(response?.jobIds) ? response.jobIds : [];

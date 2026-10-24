@@ -123,6 +123,30 @@ test("generate is refused before any charge when the plan has fewer renders left
   assert.ok(!routesCalled(calls).includes("POST /api/series/generate"));
 });
 
+test("R51: a series longer than the renders or publishes left is refused saying how to fix it", async () => {
+  for (const [bucket, env] of [["publishes", "MCP_DAILY_PUBLISHES"], ["renders", "MCP_DAILY_RENDERS"]]) {
+    const refusedCtx = fakeMcpCtx({ "GET /api/billing/usage": UNLIMITED, "POST /api/series/preview": { ok: true, plan: PLAN(5) } }, {
+      chargeCap: async () => ({
+        isError: true,
+        content: [{ type: "text", text: `MCP_CAP_REACHED: Daily ${bucket} cap reached for this agent (0 of 3).` }],
+        structuredContent: { error: "MCP_CAP_REACHED", message: "x", bucket, scope: "key", used: 0, limit: 3, resetsAt: "2026-10-25T00:00:00.000Z" },
+      }),
+    });
+    const ctx = { ...refusedCtx.ctx, ...CONSENT };
+    const result = await byName.series_generate.handler(ctx, { reference: "Psalm 23" });
+    const data = result.structuredContent;
+    assert.equal(result.isError, true);
+    assert.equal(data.error, "MCP_CAP_REACHED");
+    assert.equal(data.bucket, bucket);
+    assert.equal(data.used, 0);
+    assert.equal(data.limit, 3);
+    assert.equal(data.needed, 5);
+    assert.match(data.message, /^5 parts need 5 renders and 5 publishes; 3 \w+ are left today\. Make fewer parts, or raise MCP_DAILY_RENDERS \/ MCP_DAILY_PUBLISHES\./);
+    assert.match(result.content[0].text, new RegExp(env));
+    assert.ok(!refusedCtx.calls.some((c) => c.path === "/api/series/generate"));
+  }
+});
+
 test("generate refuses an unknown or disabled webhook id before any charge", async () => {
   const { ctx, calls, chargeCalls } = ctxWith({
     "GET /api/social/config": { ok: true, webhooks: [{ id: "w1", enabled: false }] },
