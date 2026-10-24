@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import { getUsersStore } from "../auth.js";
+import { getUsersStore, jwtSecret } from "../auth.js";
 import { findByPlainKey, toPublic } from "../lib/agentKeys/store.js";
 
 const KEY_PREFIX = "bfk_";
@@ -50,7 +50,7 @@ export function requireAgentKeyOrJwt(req, res, next) {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "dev_secret_change_me");
+    const decoded = jwt.verify(token, jwtSecret());
     // Same rule as requireAuth: a single-purpose token is never a login.
     if (decoded && typeof decoded === "object" && decoded.purpose) {
       return res.status(401).json({ ok: false, error: "Invalid token" });

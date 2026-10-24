@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { writeJsonAtomic } from "./atomicFile.js";
 
 function queuePath(dataDir) {
   if (!dataDir) throw new Error("queue: dataDir required");
@@ -19,7 +20,7 @@ function ensure(dataDir) {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   const f = queuePath(dataDir);
   if (!fs.existsSync(f)) {
-    fs.writeFileSync(f, JSON.stringify({ items: [] }, null, 2));
+    writeJsonAtomic(f, { items: [] });
     log(dataDir, "Created queue.json");
   }
 }
@@ -32,7 +33,7 @@ export function readQueue(dataDir) {
 
 export function writeQueue(dataDir, data) {
   ensure(dataDir);
-  fs.writeFileSync(queuePath(dataDir), JSON.stringify(data, null, 2));
+  writeJsonAtomic(queuePath(dataDir), data);
 }
 
 export function appendQueueItem(dataDir, item) {

@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { writeJsonAtomic } from "./atomicFile.js";
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -234,5 +235,5 @@ export function writeSocialStore(dataDir, next) {
     postiz: normalizePostiz(next?.postiz || {}),
     zernio: normalizeZernio(next?.zernio || {}),
   };
-  fs.writeFileSync(file, JSON.stringify(payload, null, 2));
+  writeJsonAtomic(file, payload);
 }

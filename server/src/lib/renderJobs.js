@@ -191,6 +191,30 @@ export function readPersistedJob(baseDir, jobId) {
 }
 
 /**
+ * reconcilePersistedJobs for the owner's data folder and every user's
+ * (DATA_DIR/users/<id>), so no one's render stays "running" after a restart.
+ */
+export function reconcileAllPersistedJobs(dataDir) {
+  const changed = reconcilePersistedJobs(dataDir);
+  const usersDir = path.join(dataDir, "users");
+  let entries = [];
+  try {
+    entries = fs.readdirSync(usersDir, { withFileTypes: true });
+  } catch {
+    return changed;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    try {
+      changed.push(...reconcilePersistedJobs(path.join(usersDir, e.name)));
+    } catch (err) {
+      console.warn(`[jobs] could not reconcile renders for user ${e.name}:`, err?.message || err);
+    }
+  }
+  return changed;
+}
+
+/**
  * On boot, any persisted job still marked running/queued had its ffmpeg child
  * killed by the restart. Flip those to 'interrupted' so the UI can offer Resume.
  * @returns {Array<{jobId:string, projectId:string|null}>} the changed records

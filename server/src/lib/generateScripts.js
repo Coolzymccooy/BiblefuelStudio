@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { DATA_DIR } from "./paths.js";
 import { sanitizeScriptObject } from "./speakableScript.js";
+import { writeJsonAtomic } from "./atomicFile.js";
 
 const CTA_MAP = {
   save: "Save this verse.",
@@ -152,7 +153,7 @@ function loadHistory() {
 function saveHistory(items) {
   try {
     const file = getHistoryStore();
-    fs.writeFileSync(file, JSON.stringify(items.slice(0, 1000), null, 2));
+    writeJsonAtomic(file, items.slice(0, 1000));
   } catch {
     // ignore
   }

@@ -110,12 +110,11 @@ function AmbientDonePanel({ project, refresh }: { project: AmbientProject; refre
     refresh();
   };
 
-  const token = api.getToken();
+  // /outputs is served without sign-in, so the link carries no token.
   const base = `${api.mediaBaseUrl}/outputs/ambient/${project.projectId}/video.mp4`;
-  const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
   return (
     <div className="space-y-3">
-      <video src={url} controls className="w-full rounded-2xl border border-[rgba(216,184,120,0.22)] shadow-lg" />
+      <video src={base} controls className="w-full rounded-2xl border border-[rgba(216,184,120,0.22)] shadow-lg" />
       <button onClick={() => api.downloadMedia(base, 'ambient-video.mp4')} className={primaryBtnCls}>
         <Download size={16} /> Download MP4
       </button>

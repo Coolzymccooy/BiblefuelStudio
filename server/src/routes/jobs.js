@@ -32,6 +32,7 @@ import { resolveLibraryTrack, defaultTrackRef } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { buildSpeakableLines, cleanCaptionLine, cleanSpeakableText, sanitizeScriptObject } from "../lib/speakableScript.js";
 import { splitCaptionLines } from "../lib/captionLines.js";
+import { writeJsonAtomic } from "../lib/atomicFile.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -155,7 +156,7 @@ function nextScriptTypeIndex() {
     }
     const next = current + 1;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ index: next }, null, 2));
+    writeJsonAtomic(file, { index: next });
     return current;
   } catch (e) {
     console.warn("[JOBS] script rotation counter unavailable, using time-derived index:", e?.message || e);
@@ -230,7 +231,7 @@ function ensureJobsStoreReady() {
       fs.copyFileSync(legacyJobsFile, jobsFile);
       console.warn(`[JOBS] Migrated legacy jobs store from ${legacyJobsFile} -> ${jobsFile}`);
     } else {
-      fs.writeFileSync(jobsFile, JSON.stringify({ jobs: [] }, null, 2), "utf-8");
+      writeJsonAtomic(jobsFile, { jobs: [] });
       console.log(`[JOBS] Initialized jobs store at ${jobsFile}`);
     }
   }

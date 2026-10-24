@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { writeJsonAtomic } from "./atomicFile.js";
 
 function libraryFilePath(dataDir) {
   if (!dataDir) throw new Error("library: dataDir required");
@@ -9,7 +10,7 @@ function libraryFilePath(dataDir) {
 function ensure(dataDir) {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   const f = libraryFilePath(dataDir);
-  if (!fs.existsSync(f)) fs.writeFileSync(f, JSON.stringify({ items: [] }, null, 2));
+  if (!fs.existsSync(f)) writeJsonAtomic(f, { items: [] });
 }
 
 export function readLibrary(dataDir) {
@@ -23,7 +24,7 @@ export function readLibrary(dataDir) {
 
 export function writeLibrary(dataDir, data) {
   ensure(dataDir);
-  fs.writeFileSync(libraryFilePath(dataDir), JSON.stringify(data, null, 2));
+  writeJsonAtomic(libraryFilePath(dataDir), data);
 }
 
 export function addToLibrary(dataDir, item) {

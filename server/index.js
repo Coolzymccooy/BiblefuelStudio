@@ -28,7 +28,8 @@ import seriesRouter from "./src/routes/series.js";
 import transcribeRouter from "./src/routes/transcribe.js";
 import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
-import videogenRouter from "./src/routes/videogen.js";
+import videogenRouter, { VEO_LEDGER_PREFIX } from "./src/routes/videogen.js";
+import { settleStaleReservations } from "./src/lib/videoGen/spend.js";
 import storyRouter from "./src/routes/story.js";
 import lyricVideoRouter from "./src/routes/lyricVideo.js";
 import { FONT_DIR } from "./src/lib/videoFilters.js";
@@ -41,7 +42,7 @@ import musicRouter from "./src/routes/music.js";
 import brandingRouter from "./src/routes/branding.js";
 import stemsWorkerRouter from "./src/routes/stemsWorker.js";
 import { configureLaptopQueue, loadLaptopQueue } from "./src/lib/stems/laptopQueue.js";
-import { requireAuth } from "./src/auth.js";
+import { requireAuth, assertJwtSecret } from "./src/auth.js";
 import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
 import { getAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
 import { safeDownloadName } from "./src/lib/downloadName.js";
@@ -64,7 +65,7 @@ import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 import { ownershipWarning } from "./src/lib/userPlan.js";
 import { cacheControlForOutput, publicAssetHeaders, setOutputSafetyHeaders } from "./src/lib/mediaCache.js";
-import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
+import { reconcileAllPersistedJobs } from "./src/lib/renderJobs.js";
 import { resumeAnimations } from "./src/lib/story/animateStage.js";
 import { createSceneScriptRouter, resumeSceneScriptShots } from "./src/routes/sceneScript.js";
 import { createVisualLibraryRouter, resumeLibraryRerolls } from "./src/routes/visualLibrary.js";
@@ -82,6 +83,14 @@ console.log(`[PATHS] DATA_DIR=${dataDir}`);
 console.log(`[PATHS] OUTPUT_DIR=${outputDir}`);
 console.log(`[PATHS] JOBS_FILE=${jobsFile}`);
 console.log(`📂 Loaded environment from: ${path.join(__dirname, '.env')}`);
+
+// A production server never starts with a guessable login secret.
+try {
+  assertJwtSecret();
+} catch (e) {
+  console.error(`❌ ${e.message}`);
+  process.exit(1);
+}
 
 const app = express();
 app.set("trust proxy", 1);
@@ -461,10 +470,19 @@ app.use((err, req, res, next) => {
 const PORT = Number(process.env.PORT || 5051);
 
 try {
-  const interrupted = reconcilePersistedJobs(DATA_DIR);
+  const interrupted = reconcileAllPersistedJobs(DATA_DIR);
   if (interrupted.length) console.warn(`[story] reconciled ${interrupted.length} interrupted render job(s)`);
 } catch (e) {
   console.warn("[story] job reconciliation skipped:", e?.message || e);
+}
+
+// A Veo order a restart cut off may have been placed: count it on the AI
+// video ledger rather than leave it reserved for ever.
+try {
+  const stale = settleStaleReservations(DATA_DIR, VEO_LEDGER_PREFIX);
+  if (stale.count) console.warn(`[video-gen] counted ${stale.count} Veo order(s) cut off by the restart ($${stale.usd.toFixed(2)})`);
+} catch (e) {
+  console.warn("[video-gen] stale Veo reservations not settled:", e?.message || e);
 }
 
 // AI scene clips ordered before a restart are collected, not bought again.

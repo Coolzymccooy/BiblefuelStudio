@@ -6,6 +6,7 @@ import path from "path";
 import express from "express";
 import request from "supertest";
 import renderRouter from "../../src/routes/render.js";
+import { requireAuth, signToken } from "../../src/auth.js";
 import { hasLibass } from "../../src/lib/kinetic/capability.js";
 
 function makeApp(outDir, userId = "test-user") {
@@ -547,5 +548,42 @@ describe("GET /api/render/captioned-video-status/:jobId — auth + lookup", () =
       .get(`/api/render/captioned-video-status/${created.body.jobId}`);
     assert.equal(peek.status, 403);
     assert.match(peek.body.error || "", /another user/i);
+  });
+
+  test("the progress feed opens with the job's own token, not the login token", async (t) => {
+    const { spawnSync } = await import("child_process");
+    const bin = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    if (spawnSync(bin, ["-version"], { stdio: "ignore" }).status !== 0) return t.skip("ffmpeg not available");
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const realAud = path.join(outDir, "real.wav");
+    const realBg = path.join(outDir, "real.mp4");
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "1", realAud], { stdio: "ignore" });
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "color=size=64x64:rate=10:color=black", "-t", "1", "-pix_fmt", "yuv420p", realBg], { stdio: "ignore" });
+
+    // Signed in the way index.js mounts the router.
+    const app = express();
+    app.use(express.json());
+    app.use("/api/render", requireAuth, (req, _res, next) => {
+      req.ctx = { outputDir: outDir, dataDir: outDir, userId: req.user.sub };
+      next();
+    }, renderRouter);
+    const login = signToken({ id: "user-A", email: "a@example.com", role: "user" });
+
+    const created = await request(app)
+      .post("/api/render/captioned-video")
+      .set("Authorization", `Bearer ${login}`)
+      .send({ audioPath: realAud, backgroundPath: realBg, words: [{ text: "Hi", startMs: 0, endMs: 500 }] });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const { jobId, progressToken } = created.body;
+    assert.ok(progressToken, "the start reply carries a token for the feed");
+
+    const feed = await request(app).get(`/api/render/captioned-video-progress/${jobId}?token=${progressToken}`);
+    assert.equal(feed.status, 200);
+    assert.match(feed.headers["content-type"], /event-stream/);
+    assert.match(feed.text, /event: (done|error)/, "the feed runs to the end of the render");
+
+    assert.equal((await request(app).get(`/api/render/captioned-video-progress/${jobId}?token=${login}`)).status, 401, "the login token is refused in a URL");
+    assert.equal((await request(app).get(`/api/render/captioned-video-status/${jobId}?token=${progressToken}`)).status, 401, "the feed's token opens nothing else");
   });
 });

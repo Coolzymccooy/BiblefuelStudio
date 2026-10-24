@@ -19,6 +19,7 @@ import path from "path";
 import fetch from "node-fetch";
 import { DATA_DIR } from "../paths.js";
 import { normalizeReference, buildApiBiblePassageId } from "./bibleReference.js";
+import { writeJsonAtomic } from "../atomicFile.js";
 
 const CACHE_DIR = path.join(DATA_DIR, "bibleCache");
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
@@ -322,7 +323,7 @@ function writeCache(translation, canonical, verses) {
   memoryCache.set(key, { savedAt, verses });
   try {
     if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-    fs.writeFileSync(cacheFile(translation, canonical), JSON.stringify({ savedAt, verses }, null, 2), "utf-8");
+    writeJsonAtomic(cacheFile(translation, canonical), { savedAt, verses });
   } catch (err) {
     console.warn(`[BIBLE] cache write failed for ${key}:`, err?.message || err);
   }
