@@ -124,6 +124,10 @@ function picturesAfterNarration(project) {
 }
 
 function busyRefusal(project) {
+  // Narrating would end in error at the pictures stage while AI motion clips are still being made.
+  if (runningWork(project).animating) {
+    return fail("SESSION_BUSY", "AI motion clips are being made for this project. Wait for them with jobs_wait (kind longform), or stop them with story_cancel what animate.");
+  }
   const narrating = project.status === "narrating";
   // A narration a restart stopped (alive false) is resumed by narrating again.
   if (narrating ? project.longform?.progress?.alive === false : !runningWork(project).steps) return null;
@@ -151,7 +155,7 @@ const longformNarrate = {
   description:
     "Voice the whole outline (slowly, with the template's pauses), then cut it into scenes and make one picture per scene, all in the background. Returns a handle of kind longform: call jobs_wait with kind longform and the project id. " +
     "It reads narrating with a percent while voicing (a 30 minute session takes several minutes), then the story steps; done with phase ready_to_render means it is ready for story_settings and story_render. " +
-    "If a server restart stops the narration, jobs_wait says so: call longform_narrate again (chunks already voiced are reused). story_cancel stops it. " +
+    "If a server restart stops the narration, jobs_wait says so: call longform_narrate again (chunks already voiced are reused). story_cancel stops it. Refused (uncharged) while the project is busy or AI motion clips are being made for it. " +
     "Costs, charged together up front: one daily tts per section, daily images for the pictures (the template's scene limit, 12 for the sleep sessions; scenes already with a picture are not charged; pictures not made are not given back), and one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up). " +
     "voiceId picks the voice (default: the one used before, else the template's).",
   inputSchema: {

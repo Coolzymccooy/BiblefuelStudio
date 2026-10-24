@@ -180,6 +180,16 @@ test("narrate is refused before any charge: no sections, plan quota spent, or wo
   }
 });
 
+test("L5: narrate is refused SESSION_BUSY, uncharged, while AI clips are being made for the project", async () => {
+  const scenes = [{ id: "scene-001", imageStatus: "done", imagePath: "/x.png", aiVideoStatus: "generating" }];
+  const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": { ok: true, project: PROJECT({ status: "ready_to_render", scenes }) } });
+  const result = await byName.longform_narrate.handler(ctx, { id: "p1" });
+  assert.equal(result.structuredContent.error, "SESSION_BUSY");
+  assert.match(result.content[0].text, /story_cancel/);
+  assert.equal(chargeCalls.length, 0);
+  assert.deepEqual(routesCalled(calls), ["GET /api/story/p1"]);
+});
+
 test("a narration a restart stopped can be narrated again", async () => {
   const { ctx, chargeCalls } = ctxWith({
     "GET /api/story/p1": { ok: true, project: PROJECT({ status: "narrating", longform: { sections: SECTIONS, progress: { done: 1, total: 4, alive: false } } }) },
