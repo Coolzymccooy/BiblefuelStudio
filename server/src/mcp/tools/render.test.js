@@ -110,7 +110,7 @@ test("render_short with consent and auto-publish on charges a render and a publi
   assert.equal(result.structuredContent.autoPublish, "on");
 });
 
-test("render_short with consent and auto-publish off charges only a render and does not suppress", async () => {
+test("render_short with consent and auto-publish off charges only a render and still suppresses auto-publish", async () => {
   const { ctx, calls, chargeCalls } = ctxWith({
     "GET /api/library": LIBRARY,
     "GET /api/postiz/auto-publish": AUTO_OFF,
@@ -118,7 +118,7 @@ test("render_short with consent and auto-publish off charges only a render and d
   }, { agentKey: { publishAllowed: true } });
   const result = await byName.render_short.handler(ctx, { lines: ["x"], backgrounds: ["pexels_123"] });
   assert.deepEqual(chargeCalls, [{ renders: 1 }]);
-  assert.equal(Object.hasOwn(calls.at(-1).opts.body, "autoPublish"), false);
+  assert.equal(calls.at(-1).opts.body.autoPublish, false);
   assert.equal(result.structuredContent.autoPublish, "off");
 });
 

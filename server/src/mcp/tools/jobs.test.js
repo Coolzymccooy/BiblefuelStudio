@@ -225,14 +225,14 @@ test("a render retried without the publish switch is queued with auto-publish su
   assert.equal(used.publishes, 0);
 });
 
-test("a render retried with the publish switch and auto-publish off charges only a render", async () => {
+test("a render retried with the publish switch and auto-publish off charges only a render and is queued suppressed", async () => {
   writeSocialStore(userDir("u_pub"), { postiz: { autoPublish: false, autoPublishPlatforms: [] } });
   seedJobs([renderJob()]);
   const client = await keyClient("u_pub", true);
   const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   const row = readJobRows().find((j) => j.id === result.structuredContent.id);
-  assert.equal(row.suppressAutoPublish, undefined);
+  assert.equal(row.suppressAutoPublish, true);
   const used = await capsUsed(client);
   assert.equal(used.renders, 1);
   assert.equal(used.publishes, 0);

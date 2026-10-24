@@ -34,18 +34,18 @@ test("autoPublishIsOn assumes on when the setting cannot be read, and rethrows o
 test("renderPublishPlan without consent suppresses auto-publish and never reads the setting", async () => {
   const { ctx, calls } = fakeMcpCtx({});
   const plan = await renderPublishPlan(ctx);
-  assert.deepEqual(plan, { suppress: true, charge: {} });
+  assert.deepEqual(plan, { suppress: true, charge: {}, state: "suppressed" });
   assert.deepEqual(calls, []);
 });
 
 test("renderPublishPlan with consent and auto-publish on counts one publish", async () => {
   const { ctx } = fakeMcpCtx({ "GET /api/postiz/auto-publish": { ok: true, enabled: true, platforms: ["youtube"] } });
   const plan = await renderPublishPlan({ ...ctx, agentKey: { publishAllowed: true } });
-  assert.deepEqual(plan, { suppress: false, charge: { publishes: 1 } });
+  assert.deepEqual(plan, { suppress: false, charge: { publishes: 1 }, state: "on" });
 });
 
-test("renderPublishPlan with consent and auto-publish off counts no publish and does not suppress", async () => {
+test("renderPublishPlan with consent and auto-publish off counts no publish and still suppresses (an uncharged render must never post)", async () => {
   const { ctx } = fakeMcpCtx({ "GET /api/postiz/auto-publish": { ok: true, enabled: false, platforms: [] } });
   const plan = await renderPublishPlan({ ...ctx, agentKey: { publishAllowed: true } });
-  assert.deepEqual(plan, { suppress: false, charge: {} });
+  assert.deepEqual(plan, { suppress: true, charge: {}, state: "off" });
 });

@@ -252,7 +252,7 @@ Stuck or finished jobs: `jobs_list`, `jobs_get`, `jobs_retry`, then `jobs_wait`.
 5. `jobs_wait { kind: "job", id }` until `status` is `done`. The handle's `output.path` is the finished video.
 6. `publish_youtube { videoPath: output.path, title }` (needs publish consent), then `jobs_wait { kind: "publish", id }`.
 
-If the user switched on auto-publish in Settings, a finished `render_short` is posted to their auto-publish platforms by itself. That happens only on a key that may publish, and then the render also costs one daily publish (charged with the render, all or nothing). On a key without consent the render is queued with auto-publish off; `autoPublish` in the result says `suppressed`, `on` or `off`. `render_captioned` never posts.
+If the user switched on auto-publish in Settings, a finished `render_short` is posted to their auto-publish platforms by itself. That happens only on a key that may publish, when auto-publish is on at the moment you start the render, and then the render also costs one daily publish (charged with the render, all or nothing). Every other render is queued with auto-publish off and never posts, even if auto-publish is switched on later. `autoPublish` in the result says `suppressed` (no consent), `off` or `on`. The same rule applies to `jobs_retry`. `render_captioned` never posts.
 
 ### Scripts and Bible (available now)
 

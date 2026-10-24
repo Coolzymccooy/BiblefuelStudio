@@ -27,15 +27,18 @@ export async function autoPublishIsOn(ctx) {
 }
 
 /**
- * What a render that may auto-post needs. Without consent the job is queued
- * with auto-publish suppressed, so it can never post. With consent it posts
- * only if the user's auto-publish is on, and then it also spends a publish.
- * `charge` is the extra cap amount to add to the render's own charge, so the
- * caller spends every bucket in one atomic `ctx.chargeCap({ ... })`.
+ * What a render that may auto-post needs. It may post only when the key has
+ * consent AND the user's auto-publish is on now, and then it also spends a
+ * publish. Every other render is queued with auto-publish suppressed, so
+ * switching auto-publish on later can never post a render no publish was
+ * charged for. `charge` is the extra cap amount to add to the render's own
+ * charge, so the caller spends every bucket in one atomic `ctx.chargeCap({ ... })`.
+ * `state` says which: "suppressed" (no consent), "off" or "on".
  *
- * @returns {Promise<{ suppress: boolean, charge: { publishes?: number } }>}
+ * @returns {Promise<{ suppress: boolean, charge: { publishes?: number }, state: "suppressed" | "off" | "on" }>}
  */
 export async function renderPublishPlan(ctx) {
-  if (lacksPublishConsent(ctx)) return { suppress: true, charge: {} };
-  return { suppress: false, charge: (await autoPublishIsOn(ctx)) ? { publishes: 1 } : {} };
+  if (lacksPublishConsent(ctx)) return { suppress: true, charge: {}, state: "suppressed" };
+  if (await autoPublishIsOn(ctx)) return { suppress: false, charge: { publishes: 1 }, state: "on" };
+  return { suppress: true, charge: {}, state: "off" };
 }

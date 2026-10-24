@@ -104,11 +104,6 @@ async function shortPayload(ctx, input) {
   };
 }
 
-function autoPublishWord(plan) {
-  if (plan.suppress) return "suppressed";
-  return plan.charge.publishes ? "on" : "off";
-}
-
 const renderShort = {
   name: "render_short",
   title: "Render a short video",
@@ -118,8 +113,8 @@ const renderShort = {
     "audioPath is a voice file (from voice_synthesize or your media folder); musicPath is a music_library ref or a media file. URLs and paths outside your media folder are refused. " +
     "Returns a job handle of kind job: call jobs_wait with kind job and the id; the finished video's path is what publish_youtube and publish_post take. " +
     "Costs one daily render (plus four daily images with autoBackground, for possible AI pictures), charged together. Videos are capped at the server's maximum length (30 seconds by default). Takes about one to three minutes. " +
-    "If the user has turned on auto-publish in Settings, a finished render is posted automatically: only when this key may publish, and then it also costs one daily publish. Without publish consent the render is queued with auto-publish off. " +
-    "autoPublish in the result says which: suppressed, on or off.",
+    "If the user has turned on auto-publish in Settings, a finished render is posted automatically only when this key may publish and auto-publish is on when you call this; then it also costs one daily publish. Otherwise the render is queued with auto-publish off and never posts. " +
+    "autoPublish in the result says which: suppressed (no publish consent), off (auto-publish is off) or on.",
   inputSchema: {
     lines: z.array(z.string().trim().min(1).max(280)).min(1).max(12).describe("The caption lines, in order (for example hook, verse, reflection, call to action). 1 to 12."),
     backgrounds: z.array(z.string().trim().min(1).max(1000)).min(1).max(MAX_SHORT_BACKGROUNDS).optional().describe("Library ids (from library_items) or files in your media folder; 1 to 10, shown in turn. Omit with autoBackground."),
@@ -155,7 +150,7 @@ const renderShort = {
       body: { type: "render_video", payload: built.payload, ...(plan.suppress ? { autoPublish: false } : {}) },
     });
     const handle = NORMALISERS.job.normalise({ job: response?.job }, { outputUrl: (p) => outputUrl(p, ctx.publicBase) });
-    return ok({ ...handle, autoPublish: autoPublishWord(plan) });
+    return ok({ ...handle, autoPublish: plan.state });
   },
 };
 
