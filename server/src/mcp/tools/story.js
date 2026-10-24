@@ -210,6 +210,9 @@ async function resegment(ctx, id) {
   const motion = aiMotionRefusal(project);
   if (motion) return motion;
   const images = estimateSceneCount(knownDurationMs(project), project.scene);
+  if (images === 0) {
+    return fail("BAD_INPUT", "This project has no narration to cut into scenes yet. Give it one with story_process or story_import_script.");
+  }
   const refused = await chargePictures(ctx, images);
   if (refused) return refused;
   await ctx.api.call("POST", `${projectPath(id)}/resegment`, { body: { maxScenes: images } });

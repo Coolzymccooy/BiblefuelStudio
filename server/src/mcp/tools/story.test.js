@@ -313,6 +313,15 @@ test("story_step resegment charges a fresh picture for every new scene", async (
   assert.equal(result.structuredContent.phase, "segmenting");
 });
 
+test("story_step resegment refuses a project with no narration to cut, before any charge or call", async () => {
+  const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": { ok: true, project: PROJECT({ status: "draft" }) } });
+  const result = await byName.story_step.handler(ctx, { id: "p1", step: "resegment" });
+  assert.equal(result.structuredContent.error, "BAD_INPUT");
+  assert.match(result.structuredContent.message, /no narration/i);
+  assert.deepEqual(routesCalled(calls), ["GET /api/story/p1"]);
+  assert.equal(chargeCalls.length, 0);
+});
+
 test("story_step images refuses an AI-motion project before charging", async () => {
   const project = PROJECT({ scenes: [scene("s1", { imageStatus: "pending" })], aiMotion: { quality: "high", autoStartedAt: null } });
   const { ctx, chargeCalls } = ctxWith({ "GET /api/story/p1": { ok: true, project } });
