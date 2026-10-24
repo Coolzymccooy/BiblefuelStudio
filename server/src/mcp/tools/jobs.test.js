@@ -261,3 +261,20 @@ test("jobs_retry for a free user at the render limit returns QUOTA_EXCEEDED", as
   assert.equal(readJobRows().length, 1);
   assert.equal(readUsage(userDir("u_cap")).counts.render, 5);
 });
+
+test("a posting-job retry refused on publishes spends no render either (one atomic charge)", async () => {
+  writeLibrary(userDir("u_pub"), { items: [{ id: "bg1", path: "http://127.0.0.1:1/bg.mp4" }] });
+  seedJobs([campaignJob()]);
+  const made = keyStore.createKey("u_pub", "retry-no-publishes");
+  keyStore.updateKey("u_pub", made.key.id, { publishAllowed: true, caps: { publishes: 0 } });
+  const client = await connect(made.plain);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_camp" } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error, "MCP_CAP_REACHED");
+  assert.equal(result.structuredContent.bucket, "publishes");
+  assert.equal(readJobRows().length, 1);
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 0);
+  assert.equal(used.publishes, 0);
+  keyStore.revokeKey("u_pub", made.key.id);
+});

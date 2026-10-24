@@ -23,7 +23,12 @@ export function fakeMcpCtx(responses = {}, options = {}) {
     user: options.user || { sub: "u_unit", email: "unit@example.com", role: "user" },
     publicBase: options.publicBase ?? "http://host.test",
     api,
-    chargeCap: options.chargeCap || (async (bucket, amount) => { charges.push({ bucket, amount }); return null; }),
+    chargeCap: options.chargeCap || (async (bucketOrAmounts, amount) => {
+      // Mirrors the registry: (bucket, amount) or one atomic object of { bucket: amount }.
+      const amounts = typeof bucketOrAmounts === "string" ? { [bucketOrAmounts]: amount ?? 1 } : bucketOrAmounts;
+      for (const [bucket, value] of Object.entries(amounts || {})) charges.push({ bucket, amount: value });
+      return null;
+    }),
   };
   return { ctx, calls, charges };
 }

@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { charge } from "../lib/agentKeys/caps.js";
+import { chargeAll } from "../lib/agentKeys/caps.js";
 import { logActivity } from "../lib/agentKeys/activity.js";
 import { ApiError } from "./api.js";
 import { fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "./toolResult.js";
@@ -15,13 +15,14 @@ export { PUBLISH_NOT_ALLOWED_MESSAGE };
  * daily caps, the handler itself (API errors become tool errors), then the
  * activity log and the [MCP] info line.
  *
- * A handler also gets `ctx.chargeCap(bucket, amount)`: it spends `amount` from one of the key's
- * (and its account's) daily cap buckets mid-handler (for tools whose cost depends on what they find) and returns
- * null on success, or the MCP_CAP_REACHED tool error to hand straight back.
+ * A handler also gets `ctx.chargeCap(bucket, amount)` or `ctx.chargeCap({ bucket: amount, ... })`: it spends
+ * from the key's (and its account's) daily cap buckets mid-handler (for tools whose cost depends on what they
+ * find) and returns null on success, or the MCP_CAP_REACHED tool error to hand straight back. Several buckets
+ * are charged atomically: when one is refused, none is spent. A def's declared `caps` are charged the same way.
  *
  * @typedef {{ user: object, agentKey: object, subjectId: string, isSuperAdmin: boolean,
  *   baseUrl: string, publicBase: string, api: { call: Function },
- *   chargeCap?: (bucket: string, amount: number) => Promise<object | null> }} McpCtx
+ *   chargeCap?: (bucketOrAmounts: string | Record<string, number>, amount?: number) => Promise<object | null> }} McpCtx
  * @typedef {{ name: string, title: string, description: string, inputSchema: object,
  *   requires?: "super_admin", publish?: boolean,
  *   caps?: Record<string, number | ((input: object) => number)>,
@@ -81,11 +82,16 @@ function allowed(def, ctx) {
   return def.requires === "super_admin" && ctx.isSuperAdmin;
 }
 
-/** Spends `amount` from one cap bucket; returns null on success or the MCP_CAP_REACHED tool error. */
-async function chargeBucket(ctx, bucket, amount, charged) {
-  const outcome = await charge(ctx.subjectId, ctx.agentKey, bucket, amount);
+/**
+ * Spends every bucket in `amounts` at once (zero amounts skipped); returns null on success or the
+ * MCP_CAP_REACHED tool error. A refusal spends nothing.
+ */
+async function chargeBuckets(ctx, amounts, charged) {
+  const due = Object.entries(amounts).filter(([, amount]) => amount !== 0);
+  if (due.length === 0) return null;
+  const outcome = await chargeAll(ctx.subjectId, ctx.agentKey, Object.fromEntries(due));
   if (!outcome.ok) {
-    const { scope, used, limit, resetsAt } = outcome;
+    const { bucket, scope, used, limit, resetsAt } = outcome;
     const whose = scope === "user" ? "your account across all agents" : "this agent";
     return fail("MCP_CAP_REACHED", `Daily ${bucket} cap reached for ${whose} (${used} of ${limit}).`, {
       bucket,
@@ -95,18 +101,24 @@ async function chargeBucket(ctx, bucket, amount, charged) {
       resetsAt,
     });
   }
-  charged[bucket] = (charged[bucket] || 0) + amount;
+  for (const [bucket, amount] of due) charged[bucket] = (charged[bucket] || 0) + amount;
   return null;
 }
 
-async function chargeCaps(def, ctx, input, charged) {
-  for (const [bucket, amountOrFn] of Object.entries(def.caps || {})) {
-    const amount = typeof amountOrFn === "function" ? amountOrFn(input) : amountOrFn;
-    if (amount === 0) continue;
-    const refused = await chargeBucket(ctx, bucket, amount, charged);
-    if (refused) return refused;
-  }
-  return null;
+function chargeCaps(def, ctx, input, charged) {
+  const amounts = Object.entries(def.caps || {}).map(([bucket, amountOrFn]) => [
+    bucket,
+    typeof amountOrFn === "function" ? amountOrFn(input) : amountOrFn,
+  ]);
+  return chargeBuckets(ctx, Object.fromEntries(amounts), charged);
+}
+
+/** `ctx.chargeCap(bucket, amount)` or `ctx.chargeCap({ bucket: amount, ... })`. */
+function chargeCapFor(ctx, charged) {
+  return (bucketOrAmounts, amount) => {
+    const amounts = typeof bucketOrAmounts === "string" ? { [bucketOrAmounts]: amount ?? 1 } : bucketOrAmounts;
+    return chargeBuckets(ctx, amounts || {}, charged);
+  };
 }
 
 async function runTool(def, ctx, input, charged) {
@@ -116,7 +128,7 @@ async function runTool(def, ctx, input, charged) {
   try {
     const refused = await chargeCaps(def, ctx, input, charged);
     if (refused) return refused;
-    const callCtx = { ...ctx, chargeCap: (bucket, amount) => chargeBucket(ctx, bucket, amount, charged) };
+    const callCtx = { ...ctx, chargeCap: chargeCapFor(ctx, charged) };
     return await def.handler(callCtx, input);
   } catch (err) {
     if (err instanceof ApiError) return fail(err.code, err.message, { hint: err.hint, status: err.status });

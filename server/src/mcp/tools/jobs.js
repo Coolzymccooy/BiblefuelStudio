@@ -50,7 +50,8 @@ const lacksPublishConsent = (ctx) => Boolean(ctx.agentKey && !ctx.agentKey.publi
 /** Retrying a posting job renders and posts: it needs the publish switch and spends renders and publishes. */
 async function retryPostingJob(ctx, path) {
   if (lacksPublishConsent(ctx)) return fail("PUBLISH_NOT_ALLOWED", PUBLISH_NOT_ALLOWED_MESSAGE);
-  const refused = (await ctx.chargeCap("renders", 1)) || (await ctx.chargeCap("publishes", 1));
+  // One atomic charge: a refused publish must not leave a render spent.
+  const refused = await ctx.chargeCap({ renders: 1, publishes: 1 });
   if (refused) return refused;
   return ok(await queueRetry(ctx, path));
 }

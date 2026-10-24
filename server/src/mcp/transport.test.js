@@ -9,6 +9,7 @@ const USERS = [
   { id: "u_user", email: "user@example.com", role: "user", emailVerified: true },
   { id: "u_admin", email: "admin@example.com", role: "user", emailVerified: true },
   { id: "u_other", email: "other@example.com", role: "user", emailVerified: true },
+  { id: "u_multi", email: "multi@example.com", role: "user", emailVerified: true },
 ];
 
 const testApp = await startTestApp({ users: USERS, superAdminEmail: "admin@example.com" });
@@ -45,6 +46,21 @@ const CATALOGUE = [
     inputSchema: { text: z.string() },
     caps: { renders: 1 },
     handler: echoHandler,
+  },
+  {
+    name: "render_publish_echo",
+    title: "Render and publish echo",
+    description: "Pretends to render and publish.",
+    inputSchema: { text: z.string() },
+    caps: { renders: 1, publishes: 1 },
+    handler: echoHandler,
+  },
+  {
+    name: "charge_object_echo",
+    title: "Charge object echo",
+    description: "Charges a render and a publish from inside the handler.",
+    inputSchema: { text: z.string() },
+    handler: async (ctx, input) => (await ctx.chargeCap({ renders: 1, publishes: 1 })) || ok({ text: input.text }),
   },
   {
     name: "my_usage",
@@ -339,4 +355,39 @@ test("rate limit answers 429 after 120 requests in a minute", async () => {
   const limited = await fetch(mcpUrl, { method: "GET", headers });
   assert.equal(limited.status, 429);
   assert.deepEqual(await limited.json(), { ok: false, error: "RATE_LIMITED" });
+});
+
+const caps = await import("../lib/agentKeys/caps.js");
+
+/** A u_multi key whose own publishes cap is 0, so any publish charge is refused on that bucket. */
+function noPublishKey(name) {
+  const made = newKey("u_multi", name);
+  store.updateKey("u_multi", made.key.id, { caps: { publishes: 0 } });
+  return made;
+}
+
+for (const tool of ["render_publish_echo", "charge_object_echo"]) {
+  test(`${tool}: a refusal on the second bucket leaves the first bucket untouched`, async () => {
+    const { key, plain } = noPublishKey(`Atomic ${tool}`);
+    const client = await connect(plain);
+    const refused = await client.callTool({ name: tool, arguments: { text: "x" } });
+    assert.equal(refused.isError, true);
+    assert.equal(refused.structuredContent.error, "MCP_CAP_REACHED");
+    assert.equal(refused.structuredContent.bucket, "publishes");
+    assert.equal(refused.structuredContent.scope, "key");
+    assert.equal(caps.readKeyUsage(key.id).counts.renders, 0);
+    assert.equal(caps.readUserUsage("u_multi").counts.renders, 0);
+    store.revokeKey("u_multi", key.id);
+  });
+}
+
+test("a multi-bucket charge that fits spends every bucket and logs it", async () => {
+  const { key, plain } = newKey("u_multi", "Atomic ok");
+  const client = await connect(plain);
+  const result = await client.callTool({ name: "charge_object_echo", arguments: { text: "y" } });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.equal(caps.readKeyUsage(key.id).counts.renders, 1);
+  assert.equal(caps.readKeyUsage(key.id).counts.publishes, 1);
+  const [entry] = activity.readActivity({ keyId: key.id });
+  assert.deepEqual(entry.caps, { renders: 1, publishes: 1 });
 });

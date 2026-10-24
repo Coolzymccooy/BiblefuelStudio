@@ -141,41 +141,87 @@ function countersFor(subjectId, key) {
   return counters;
 }
 
-function doCharge(subjectId, key, bucket, amount) {
+/** The first counter (bucket by bucket, key before account) the charge would push over its limit. */
+function firstOverLimit(checked, entries) {
+  for (const [bucket, amount] of entries) {
+    const over = checked.find(({ usage, limits }) => usage.counts[bucket] + amount > limits[bucket] + EPSILON);
+    if (over) return { bucket, over };
+  }
+  return null;
+}
+
+function doChargeAll(subjectId, key, entries) {
   const day = clock();
   const store = readStore();
   const checked = countersFor(subjectId, key).map((counter) => ({
     ...counter,
     usage: usageFor(store, counter.subjectId, day),
-    limit: counter.limits[bucket],
   }));
   // The key's own cap is checked first, so a lower per-key cap is what the agent is told about.
-  const over = checked.find(({ usage, limit }) => usage.counts[bucket] + amount > limit + EPSILON);
-  if (over) {
-    return { ok: false, scope: over.scope, used: over.usage.counts[bucket], limit: over.limit, resetsAt: nextMidnightUtc(day) };
+  const refusal = firstOverLimit(checked, entries);
+  if (refusal) {
+    const { bucket, over } = refusal;
+    return {
+      ok: false,
+      bucket,
+      scope: over.scope,
+      used: over.usage.counts[bucket],
+      limit: over.limits[bucket],
+      resetsAt: nextMidnightUtc(day),
+    };
   }
-  const charged = checked.map(({ subjectId: id, usage }) => [
-    id,
-    { day, counts: { ...usage.counts, [bucket]: roundCount(usage.counts[bucket] + amount) } },
-  ]);
+  const charged = checked.map(({ subjectId: id, usage }) => {
+    const added = entries.map(([bucket, amount]) => [bucket, roundCount(usage.counts[bucket] + amount)]);
+    return [id, { day, counts: { ...usage.counts, ...Object.fromEntries(added) } }];
+  });
   const nextSubjects = { ...store.subjects, ...Object.fromEntries(charged) };
   writeStore({ ...store, subjects: nextSubjects });
-  return { ok: true, used: nextSubjects[subjectId].counts[bucket], limit: checked[0].limit };
+  const own = nextSubjects[subjectId].counts;
+  return {
+    ok: true,
+    used: Object.fromEntries(entries.map(([bucket]) => [bucket, own[bucket]])),
+    limits: Object.fromEntries(entries.map(([bucket]) => [bucket, checked[0].limits[bucket]])),
+  };
 }
 
-/**
- * Reserve `amount` of `bucket` for this key and for its owner's account.
- * Refuses without writing either counter when either would exceed its cap;
- * the refusal's `scope` ("key" or "user") says which. Calls run one after another.
- */
-export async function charge(subjectId, key, bucket, amount = 1) {
-  assertBucket(bucket);
+function assertAmount(amount) {
   if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
     throw new Error(`caps: invalid amount ${amount}`);
   }
-  const run = queue.then(() => doCharge(subjectId, key, bucket, amount));
+}
+
+/**
+ * Reserve several buckets at once, e.g. `{ renders: 1, publishes: 1 }`, for this key and for its
+ * owner's account. Every bucket is checked on both counters first; when any one would exceed its cap
+ * nothing is written, and the refusal names the `bucket` and the `scope` ("key" or "user").
+ * Calls run one after another (one queue shared with `charge`).
+ */
+export async function chargeAll(subjectId, key, amounts) {
+  const entries = Object.entries(amounts || {});
+  if (entries.length === 0) throw new Error("caps: nothing to charge");
+  for (const [bucket, amount] of entries) {
+    assertBucket(bucket);
+    assertAmount(amount);
+  }
+  const run = queue.then(() => doChargeAll(subjectId, key, entries));
   queue = run.catch(() => {});
   return run;
+}
+
+/**
+ * Reserve `amount` of one `bucket` for this key and for its owner's account.
+ * Refuses without writing either counter when either would exceed its cap;
+ * the refusal's `scope` ("key" or "user") says which.
+ */
+export async function charge(subjectId, key, bucket, amount = 1) {
+  assertBucket(bucket);
+  assertAmount(amount);
+  const outcome = await chargeAll(subjectId, key, { [bucket]: amount });
+  if (!outcome.ok) {
+    const { bucket: _bucket, ...refusal } = outcome;
+    return refusal;
+  }
+  return { ok: true, used: outcome.used[bucket], limit: outcome.limits[bucket] };
 }
 
 function summarise(counts, limits) {
