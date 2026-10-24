@@ -5,7 +5,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { charge } from "../lib/agentKeys/caps.js";
 import { logActivity } from "../lib/agentKeys/activity.js";
 import { ApiError } from "./api.js";
-import { fail } from "./toolResult.js";
+import { fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "./toolResult.js";
+
+export { PUBLISH_NOT_ALLOWED_MESSAGE };
 
 /**
  * Builds one McpServer per MCP request from the tool catalogue. Every tool
@@ -13,8 +15,13 @@ import { fail } from "./toolResult.js";
  * daily caps, the handler itself (API errors become tool errors), then the
  * activity log and the [MCP] info line.
  *
+ * A handler also gets `ctx.chargeCap(bucket, amount)`: it spends `amount` from one of the key's
+ * daily cap buckets mid-handler (for tools whose cost depends on what they find) and returns
+ * null on success, or the MCP_CAP_REACHED tool error to hand straight back.
+ *
  * @typedef {{ user: object, agentKey: object | null, subjectId: string, isSuperAdmin: boolean,
- *   baseUrl: string, publicBase: string, api: { call: Function } }} McpCtx
+ *   baseUrl: string, publicBase: string, api: { call: Function },
+ *   chargeCap?: (bucket: string, amount: number) => Promise<object | null> }} McpCtx
  * @typedef {{ name: string, title: string, description: string, inputSchema: object,
  *   requires?: "super_admin", publish?: boolean,
  *   caps?: Record<string, number | ((input: object) => number)>,
@@ -74,36 +81,41 @@ function allowed(def, ctx) {
   return def.requires === "super_admin" && ctx.isSuperAdmin;
 }
 
+/** Spends `amount` from one cap bucket; returns null on success or the MCP_CAP_REACHED tool error. */
+async function chargeBucket(ctx, bucket, amount, charged) {
+  const outcome = await charge(ctx.subjectId, ctx.agentKey, bucket, amount);
+  if (!outcome.ok) {
+    const { used, limit, resetsAt } = outcome;
+    return fail("MCP_CAP_REACHED", `Daily ${bucket} cap reached for this agent (${used} of ${limit}).`, {
+      bucket,
+      used,
+      limit,
+      resetsAt,
+    });
+  }
+  charged[bucket] = (charged[bucket] || 0) + amount;
+  return null;
+}
+
 async function chargeCaps(def, ctx, input, charged) {
   for (const [bucket, amountOrFn] of Object.entries(def.caps || {})) {
     const amount = typeof amountOrFn === "function" ? amountOrFn(input) : amountOrFn;
     if (amount === 0) continue;
-    const outcome = await charge(ctx.subjectId, ctx.agentKey, bucket, amount);
-    if (!outcome.ok) {
-      const { used, limit, resetsAt } = outcome;
-      return fail("MCP_CAP_REACHED", `Daily ${bucket} cap reached for this agent (${used} of ${limit}).`, {
-        bucket,
-        used,
-        limit,
-        resetsAt,
-      });
-    }
-    charged[bucket] = amount;
+    const refused = await chargeBucket(ctx, bucket, amount, charged);
+    if (refused) return refused;
   }
   return null;
 }
 
 async function runTool(def, ctx, input, charged) {
   if (def.publish && ctx.agentKey && !ctx.agentKey.publishAllowed) {
-    return fail(
-      "PUBLISH_NOT_ALLOWED",
-      "the key's owner has not allowed publishing. Ask them to switch it on in Settings → Connected agents",
-    );
+    return fail("PUBLISH_NOT_ALLOWED", PUBLISH_NOT_ALLOWED_MESSAGE);
   }
   try {
     const refused = await chargeCaps(def, ctx, input, charged);
     if (refused) return refused;
-    return await def.handler(ctx, input);
+    const callCtx = { ...ctx, chargeCap: (bucket, amount) => chargeBucket(ctx, bucket, amount, charged) };
+    return await def.handler(callCtx, input);
   } catch (err) {
     if (err instanceof ApiError) return fail(err.code, err.message, { hint: err.hint, status: err.status });
     console.warn(`[MCP] tool ${def.name} failed:`, err?.message || String(err));

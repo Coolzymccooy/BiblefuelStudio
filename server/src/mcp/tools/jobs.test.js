@@ -5,7 +5,11 @@ import path from "node:path";
 import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
 import { _setWaitForJobForTests } from "./jobs.js";
 
-const USERS = [{ id: "u_user", email: "user@example.com", role: "user", emailVerified: true }];
+const USERS = [
+  { id: "u_user", email: "user@example.com", role: "user", emailVerified: true },
+  { id: "u_pub", email: "u_pub@example.com", role: "user", emailVerified: true },
+  { id: "u_cap", email: "u_cap@example.com", role: "user", emailVerified: true },
+];
 
 const testApp = await startTestApp({ users: USERS });
 const { port } = testApp;
@@ -145,4 +149,99 @@ test("jobs_wait clamps timeoutSec to 90 and defaults to 60", async () => {
   assert.deepEqual(seen.map((o) => o.timeoutSec), [90, 60, 1]);
   assert.equal(seen[2].projectId, "p1");
   assert.equal(typeof seen[0].outputUrl, "function");
+});
+
+// ---- Codex findings: retries respect publish consent, caps and plan quota ----
+
+const campaignJob = (extra = {}) => ({
+  id: "job_camp", type: "campaign_auto_post", ownerId: "u_pub", status: "done", progress: 100,
+  payload: { niche: "faith" }, createdAt: "2026-10-23T10:00:00.000Z", ...extra,
+});
+const renderJob = (extra = {}) => ({
+  id: "job_render", type: "render_waveform", ownerId: "u_pub", status: "failed", progress: 40,
+  payload: { audioPath: "http://127.0.0.1:1/a.mp3" }, createdAt: "2026-10-23T10:00:00.000Z", ...extra,
+});
+
+const { resolveScopeDirs } = await import("../../lib/paths.js");
+const { writeLibrary } = await import("../../lib/library.js");
+const { incrementUsage, readUsage } = await import("../../lib/usageStore.js");
+const keyStore = await import("../../lib/agentKeys/store.js");
+
+function userDir(userId) {
+  return resolveScopeDirs({ sub: userId, email: `${userId}@example.com`, role: "user" }).dataDir;
+}
+
+function readJobRows() {
+  return JSON.parse(fs.readFileSync(path.join(testApp.dataDir, "jobs.json"), "utf-8")).jobs;
+}
+
+async function keyClient(userId, publishAllowed) {
+  const made = keyStore.createKey(userId, `retry-${publishAllowed ? "on" : "off"}`);
+  if (publishAllowed) keyStore.updateKey(userId, made.key.id, { publishAllowed: true });
+  return connect(made.plain);
+}
+
+async function capsUsed(client) {
+  const who = await client.callTool({ name: "whoami", arguments: {} });
+  return Object.fromEntries(Object.entries(who.structuredContent.caps).map(([b, c]) => [b, c.used]));
+}
+
+test("jobs_retry of a posting job without the publish switch is refused and charges nothing", async () => {
+  writeLibrary(userDir("u_pub"), { items: [{ id: "bg1", path: "http://127.0.0.1:1/bg.mp4" }] });
+  seedJobs([campaignJob()]);
+  const client = await keyClient("u_pub", false);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_camp" } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error, "PUBLISH_NOT_ALLOWED");
+  assert.equal(readJobRows().length, 1);
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 0);
+  assert.equal(used.publishes, 0);
+});
+
+test("jobs_retry of a posting job with the publish switch queues it and charges a render and a publish", async () => {
+  writeLibrary(userDir("u_pub"), { items: [{ id: "bg1", path: "http://127.0.0.1:1/bg.mp4" }] });
+  seedJobs([campaignJob()]);
+  const client = await keyClient("u_pub", true);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_camp" } });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.equal(result.structuredContent.type, "campaign_auto_post");
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 1);
+  assert.equal(used.publishes, 1);
+});
+
+test("a render retried without the publish switch is queued with auto-publish suppressed", async () => {
+  seedJobs([renderJob()]);
+  const client = await keyClient("u_pub", false);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  const row = readJobRows().find((j) => j.id === result.structuredContent.id);
+  assert.equal(row.suppressAutoPublish, true);
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 1);
+  assert.equal(used.publishes, 0);
+});
+
+test("a render retried with the publish switch is not suppressed and also charges a publish", async () => {
+  seedJobs([renderJob()]);
+  const client = await keyClient("u_pub", true);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  const row = readJobRows().find((j) => j.id === result.structuredContent.id);
+  assert.equal(row.suppressAutoPublish, undefined);
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 1);
+  assert.equal(used.publishes, 1);
+});
+
+test("jobs_retry for a free user at the render limit returns QUOTA_EXCEEDED", async () => {
+  incrementUsage(userDir("u_cap"), "render", 5);
+  seedJobs([renderJob({ ownerId: "u_cap" })]);
+  const client = await keyClient("u_cap", false);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
+  assert.equal(readJobRows().length, 1);
+  assert.equal(readUsage(userDir("u_cap")).counts.render, 5);
 });

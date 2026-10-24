@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ok, fail } from "../toolResult.js";
+import { ok, fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "../toolResult.js";
 import { JOB_KINDS, NORMALISERS, clampTimeoutSec, outputUrl, waitForJob } from "../jobs.js";
 
 const DEFAULT_LIST_LIMIT = 20;
@@ -42,16 +42,58 @@ const jobsGet = {
   },
 };
 
+const POSTING_JOB_TYPE = "campaign_auto_post";
+const AUTO_PUBLISH_JOB_TYPES = new Set(["render_video", "render_waveform"]);
+
+const lacksPublishConsent = (ctx) => Boolean(ctx.agentKey && !ctx.agentKey.publishAllowed);
+
+/** Retrying a posting job renders and posts: it needs the publish switch and spends renders and publishes. */
+async function retryPostingJob(ctx, path) {
+  if (lacksPublishConsent(ctx)) return fail("PUBLISH_NOT_ALLOWED", PUBLISH_NOT_ALLOWED_MESSAGE);
+  const refused = (await ctx.chargeCap("renders", 1)) || (await ctx.chargeCap("publishes", 1));
+  if (refused) return refused;
+  return ok(await queueRetry(ctx, path));
+}
+
+/**
+ * Retrying a render spends a render. Without consent the retry is queued with
+ * autoPublish off, so it can never post. With consent, /api/social/config does
+ * not expose the Postiz auto-publish switch, so a render retry is charged a
+ * publish too (conservative: a retry that may post counts as one).
+ */
+async function retryRender(ctx, path) {
+  const refused = await ctx.chargeCap("renders", 1);
+  if (refused) return refused;
+  if (lacksPublishConsent(ctx)) return ok(await queueRetry(ctx, path, { autoPublish: false }));
+  const publishRefused = await ctx.chargeCap("publishes", 1);
+  if (publishRefused) return publishRefused;
+  return ok(await queueRetry(ctx, path));
+}
+
+async function queueRetry(ctx, path, body) {
+  const response = await ctx.api.call("POST", `${path}/retry`, body ? { body } : undefined);
+  return jobRow(response.job, ctx);
+}
+
 const jobsRetry = {
   name: "jobs_retry",
   title: "Retry a job",
-  description: "Re-queue a finished or failed job with the same settings. Returns the NEW job (a different id). A job that is still queued or running cannot be retried.",
+  description:
+    "Re-queue a finished or failed job with the same settings. Returns the NEW job (a different id). " +
+    "A job that is still queued or running cannot be retried. Retrying a posting job (campaign_auto_post) " +
+    "needs the key's publish switch and spends a render and a publish; a render retried without the " +
+    "publish switch never auto-posts.",
   inputSchema: { id: z.string().min(1).describe("The id of the job to retry.") },
   routes: ["/api/jobs"],
-  caps: { renders: 1 },
   async handler(ctx, { id }) {
-    const body = await ctx.api.call("POST", `${NORMALISERS.job.route(id)}/retry`);
-    return ok(jobRow(body.job, ctx));
+    const path = NORMALISERS.job.route(id);
+    const original = await ctx.api.call("GET", path);
+    const type = original?.job?.type;
+    if (type === POSTING_JOB_TYPE) return retryPostingJob(ctx, path);
+    if (AUTO_PUBLISH_JOB_TYPES.has(type)) return retryRender(ctx, path);
+    const refused = await ctx.chargeCap("renders", 1);
+    if (refused) return refused;
+    return ok(await queueRetry(ctx, path));
   },
 };
 

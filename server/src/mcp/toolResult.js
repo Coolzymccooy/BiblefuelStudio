@@ -29,3 +29,11 @@ export function withoutOk(body) {
   const { ok: _ok, ...rest } = body || {};
   return rest;
 }
+
+/**
+ * The tool error text for a publishing call from a key whose owner has not
+ * switched publishing on. Lives here, not in registry.js, so tool modules can
+ * import it (registry.js loads the tools, so tools cannot import it back).
+ */
+export const PUBLISH_NOT_ALLOWED_MESSAGE =
+  "the key's owner has not allowed publishing. Ask them to switch it on in Settings → Connected agents";
