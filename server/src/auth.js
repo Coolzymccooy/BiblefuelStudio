@@ -161,7 +161,7 @@ export function signInternalToken(user) {
   return jwt.sign(claims, secret, { expiresIn: "60s" });
 }
 
-const OAUTH_STATE_AUDIENCE ="biblefuel-oauth-state";
+const OAUTH_STATE_AUDIENCE = "biblefuel-oauth-state";
 
 // OAuth states travel through Google's and Zernio's redirects, so they land in
 // third-party logs and browser history. Signing them with a key derived from

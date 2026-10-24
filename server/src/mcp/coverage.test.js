@@ -76,3 +76,12 @@ test("EXCLUDED names are all mounted routers", () => {
   const unknown = EXCLUDED.filter((name) => !mounted.includes(name));
   assert.deepEqual(unknown, [], `excluded but not mounted: ${unknown.join(", ")}`);
 });
+
+test("the account routers agents must never act on carry refuseAgentCalls", () => {
+  const lines = fs.readFileSync(INDEX_FILE, "utf-8").split(/\r?\n/);
+  for (const name of ["admin", "access-requests"]) {
+    const mount = lines.find((l) => l.startsWith(`app.use("/api/${name}"`) || l.startsWith(`app.use('/api/${name}'`));
+    assert.ok(mount, `/api/${name} is mounted`);
+    assert.match(mount, /refuseAgentCalls/, `/api/${name} mount carries refuseAgentCalls`);
+  }
+});

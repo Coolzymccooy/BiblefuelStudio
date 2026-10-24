@@ -14,7 +14,7 @@ import express from "express";
 import request from "supertest";
 import { spawnSync } from "node:child_process";
 import mediaRouter, { isPlayableVideo } from "./media.js";
-import { _setDownloader, _resetDownloader, _setHeadroomCheck, _resetHeadroomCheck } from "./mediaImportUrl.js";
+import { _setDownloader, _resetDownloader, _setHeadroomCheck, _resetHeadroomCheck, importTimeoutMs } from "./mediaImportUrl.js";
 
 /** PCM16 mono WAV of silence, `seconds` long. */
 function silentWav(seconds, rate = 8000) {
@@ -338,4 +338,13 @@ describe("isPlayableVideo", () => {
     assert.equal(isPlayableVideo(junk), false);
     assert.equal(isPlayableVideo(path.join(dir, "missing.mp4")), false);
   });
+});
+
+test("IMPORT_URL_TIMEOUT_MS falls back to 10 minutes unless it is a finite positive number", () => {
+  const DEFAULT = 10 * 60_000;
+  for (const raw of [undefined, "", "abc", "0", "-5", "Infinity", "NaN"]) {
+    assert.equal(importTimeoutMs(raw), DEFAULT, String(raw));
+  }
+  assert.equal(importTimeoutMs("90000"), 90_000);
+  assert.equal(importTimeoutMs("1.5"), 1.5);
 });

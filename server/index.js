@@ -224,6 +224,8 @@ const emailTransport = createEmailTransport({
 });
 const sendEmail = (req) => sendEmailViaTransport(emailTransport, req);
 const accessRequestsStore = getAccessRequestsStore();
+// refuseAgentCalls here is belt-and-braces: the router is a public POST with no
+// requireAuth, so req.user is normally unset and it passes everyone through.
 app.use('/api/access-requests', refuseAgentCalls, createAccessRequestsRouter({
   store: accessRequestsStore,
   sendEmail,

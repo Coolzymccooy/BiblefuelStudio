@@ -25,6 +25,8 @@ const app = express();
 app.get("/p", requireAgentKeyOrJwt, (req, res) => res.json({ user: req.user, key: req.agentKey }));
 app.delete("/me", auth.requireAuth, refuseAgentCalls, (_req, res) => res.json({ ok: true }));
 app.delete("/anon", refuseAgentCalls, (_req, res) => res.json({ ok: true }));
+app.delete("/agent-me", requireAgentKeyOrJwt, refuseAgentCalls, (_req, res) => res.json({ ok: true }));
+app.get("/app-only", auth.requireAuth, (_req, res) => res.json({ ok: true }));
 
 beforeEach(() => {
   fs.writeFileSync(usersFile, JSON.stringify({ users: USERS }, null, 2));
@@ -133,4 +135,24 @@ test("signInternalToken expires in 60 seconds and carries via=mcp", () => {
   assert.equal(decoded.email, "one@example.com");
   assert.equal(decoded.role, "user");
   assert.equal(decoded.emailVerified, true);
+});
+
+test("an internal (via) token is refused at the MCP auth with 401 AGENT_KEY_INVALID", async () => {
+  const internal = auth.signInternalToken({ sub: "u_1", email: "one@example.com", role: "user", emailVerified: true });
+  const res = await request(app).get("/p").set("Authorization", `Bearer ${internal}`);
+  assert.equal(res.status, 401);
+  assert.deepEqual(res.body, { ok: false, error: "AGENT_KEY_INVALID", message: "Invalid token" });
+});
+
+test("refuseAgentCalls refuses a request authenticated by an agent key", async () => {
+  const { plain } = store.createKey("u_1", "Refused");
+  const res = await request(app).delete("/agent-me").set("Authorization", `Bearer ${plain}`);
+  assert.equal(res.status, 403);
+  assert.deepEqual(res.body, { ok: false, error: "AGENT_FORBIDDEN" });
+});
+
+test("requireAuth refuses a bfk_ agent key bearer", async () => {
+  const { plain } = store.createKey("u_1", "Not a login");
+  const res = await request(app).get("/app-only").set("Authorization", `Bearer ${plain}`);
+  assert.equal(res.status, 401);
 });

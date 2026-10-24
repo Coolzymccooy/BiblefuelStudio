@@ -52,7 +52,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
       ts: new Date().toISOString(),
       uptimeSec: 1,
       system: { ffmpeg: "test", platform: process.platform, node: process.version },
-      capabilities: { elevenLabs: false, openai: false },
+      capabilities: { elevenlabs: false, openai: false },
     });
   });
   app.use("/api/mcp", createMcpRouter());

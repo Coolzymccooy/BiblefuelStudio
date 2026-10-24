@@ -17,7 +17,14 @@ const MAX_FILENAME_LENGTH = 200;
 const IMAGE_EXT_BY_MIME = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
 
 // Overall deadline for one import; a 200 MB file needs minutes, not the lib's 60 s default.
-const IMPORT_TIMEOUT_MS = Number(process.env.IMPORT_URL_TIMEOUT_MS || 10 * 60_000);
+const DEFAULT_IMPORT_TIMEOUT_MS = 10 * 60_000;
+
+/** IMPORT_URL_TIMEOUT_MS when it is a finite positive number, else the default. */
+export function importTimeoutMs(raw = process.env.IMPORT_URL_TIMEOUT_MS) {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_IMPORT_TIMEOUT_MS;
+}
+const IMPORT_TIMEOUT_MS = importTimeoutMs();
 
 const GUARD_STATUS = { URL_SCHEME: 400, URL_PRIVATE: 400, URL_REDIRECTS: 400, URL_TOO_LARGE: 413, URL_TIMEOUT: 504 };
 const GUARD_MESSAGE = {

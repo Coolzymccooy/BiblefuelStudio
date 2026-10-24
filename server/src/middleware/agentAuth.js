@@ -55,6 +55,11 @@ export function requireAgentKeyOrJwt(req, res, next) {
     if (decoded && typeof decoded === "object" && decoded.purpose) {
       return res.status(401).json({ ok: false, error: "Invalid token" });
     }
+    // Internal loopback tokens (via: "mcp") act inside the app only; one
+    // presented here would let a leaked 60 s token drive the MCP surface.
+    if (decoded && typeof decoded === "object" && decoded.via !== undefined) {
+      return res.status(401).json({ ok: false, error: "AGENT_KEY_INVALID", message: "Invalid token" });
+    }
     req.user = decoded;
     req.agentKey = null;
     return next();
