@@ -125,6 +125,7 @@ export function projectView(project, publicBase, payload = {}) {
       { project, preparing: payload.preparing, interrupted: payload.interrupted },
       { outputUrl: (p) => outputUrl(p, publicBase) },
     ),
+    ...(payload.interrupted ? { interrupted: true } : {}),
   };
 }
 

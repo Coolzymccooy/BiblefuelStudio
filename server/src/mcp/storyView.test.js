@@ -106,3 +106,12 @@ test("runningWork: generating_images counts only while a scene is being made or 
   for (const status of ["transcribing", "segmenting", "rendering", "narrating"]) assert.equal(runningWork({ status }).steps, true, status);
   for (const status of ["draft", "draft_script", "ready_to_render", "done", "error"]) assert.equal(runningWork({ status }).steps, false, status);
 });
+
+test("projectView passes a restart-stopped flag through to the handle and the view", () => {
+  const project = { projectId: "p1", status: "rendering", render: { jobId: "j", status: "running" }, scenes: [] };
+  const view = projectView(project, BASE, { interrupted: true });
+  assert.equal(view.interrupted, true);
+  assert.equal(view.job.status, "failed");
+  assert.match(view.job.error, /server restarted/);
+  assert.equal(projectView(project, BASE).interrupted, undefined);
+});

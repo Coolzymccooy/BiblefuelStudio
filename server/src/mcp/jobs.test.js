@@ -467,3 +467,26 @@ test("waitForJob rejects an unknown kind", async () => {
   const h = harness([{}]);
   await assert.rejects(waitForJob(h.api, { kind: "nope", id: "x", ...h.opts }), (err) => err.code === "BAD_KIND");
 });
+
+const STORY_RESTART = "This stopped when the server restarted. Call story_cancel, then story_process or story_render again.";
+
+test("story: a step a restart stopped (interrupted) reads failed, saying what to do", () => {
+  const busy = [
+    [{ status: "rendering", render: { jobId: "j", status: "running", percent: 40 } }, "rendering"],
+    [{ status: "transcribing" }, "transcribing"],
+    [{ status: "segmenting" }, "segmenting"],
+    [{ status: "generating_images", scenes: [scene("s1", { imageStatus: "generating" })] }, "generating_images"],
+    [{ status: "ready_to_render", scenes: [scene("s1", { aiVideoStatus: "generating" })] }, "animating"],
+  ];
+  for (const [fields, phase] of busy) {
+    const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", ...fields }, interrupted: true }, { outputUrl: toUrl });
+    assert.equal(handle.status, "failed", phase);
+    assert.equal(handle.phase, phase);
+    assert.equal(handle.error, STORY_RESTART);
+  }
+});
+
+test("story: without the route's interrupted flag the same project keeps running", () => {
+  const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", status: "transcribing" } }, { outputUrl: toUrl });
+  assert.equal(handle.status, "running");
+});

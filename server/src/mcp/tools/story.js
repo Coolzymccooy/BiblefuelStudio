@@ -270,7 +270,8 @@ const storyRender = {
   description:
     "Render the story into a video: every scene's picture (or clip), the narration, the music bed and the captions. Every scene needs a picture first (story_step images; the call is refused otherwise and costs nothing). " +
     "Returns a handle of kind story: call jobs_wait with kind story and the project id until done; output.path is the video, which publish_youtube and publish_post take. " +
-    "Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up). Takes about real time or longer for long narrations; a server deploy stops a running render. It never posts anywhere. story_cancel stops it.",
+    "Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up). Takes about real time or longer for long narrations. It never posts anywhere. story_cancel stops it. " +
+    "A server deploy or restart stops a running render (and any running story step): about two minutes later jobs_wait reports failed with \"This stopped when the server restarted\", and story_project get shows interrupted: true. Then call story_cancel, then story_render again (or story_process, for pictures that were being made).",
   inputSchema: { id: STORY_ID.describe("The project id.") },
   routes: ["/api/story"],
   async handler(ctx, { id }) {

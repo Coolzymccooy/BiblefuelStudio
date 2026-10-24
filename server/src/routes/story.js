@@ -35,6 +35,7 @@ import { isSceneVideoUpload, resolveSceneVideo } from "../lib/story/sceneVideo.j
 import { normalizeStoryAspect, storyFrameSize } from "../lib/story/sceneFraming.js";
 import { createStoryAnimateRouter } from "./storyAnimate.js";
 import { isAnimating } from "../lib/story/animateStage.js";
+import { asRunningStoryStep, busyStep, isStoryStepRunning, signOfLifeStale } from "../lib/story/storyLiveness.js";
 import { autoAnimate } from "../lib/story/autoAnimate.js";
 import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
 
@@ -206,7 +207,18 @@ function imageAspectFor(project) {
 }
 
 // --- Pipeline stages (re-entrant). ctx = { dataDir, outputDir }. ---
-async function transcribeStage(ctx, projectId, mediaPath) {
+// Each runs as a step of its project (lib/story/storyLiveness.js): listed as
+// live in this process and beating, so GET /:id can tell it from one a
+// restart killed.
+function transcribeStage(ctx, projectId, mediaPath) {
+  return asRunningStoryStep(ctx, projectId, () => runTranscribe(ctx, projectId, mediaPath));
+}
+
+function segmentStage(ctx, projectId, options = {}) {
+  return asRunningStoryStep(ctx, projectId, () => runSegment(ctx, projectId, options));
+}
+
+async function runTranscribe(ctx, projectId, mediaPath) {
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
   if (project.transcript?.words?.length) {
@@ -235,7 +247,7 @@ async function transcribeStage(ctx, projectId, mediaPath) {
   });
 }
 
-async function segmentStage(ctx, projectId, { maxScenes } = {}) {
+async function runSegment(ctx, projectId, { maxScenes } = {}) {
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
   if (project.scenes?.length) {
@@ -344,7 +356,7 @@ async function imagesStage(ctx, projectId, opts = {}) {
   imageRuns.set(projectId, (imageRuns.get(projectId) || 0) + 1);
   let result;
   try {
-    result = await runImagesStage(ctx, projectId, opts);
+    result = await asRunningStoryStep(ctx, projectId, () => runImagesStage(ctx, projectId, opts));
   } finally {
     const left = (imageRuns.get(projectId) || 1) - 1;
     if (left > 0) imageRuns.set(projectId, left); else imageRuns.delete(projectId);
@@ -385,6 +397,8 @@ async function runImagesStage(ctx, projectId, opts = {}) {
     }
   }
 
+  // The writes below are from this run's own copy of the project, so each
+  // stamps heartbeatAt: an older copy must not put a stale beat back (R50).
   // Single shared, mutated-in-place scenes array. writeProject is fully
   // synchronous (writeFileSync + renameSync), and JS is single-threaded, so
   // incremental writes from the concurrent workers below can't interleave or
@@ -443,7 +457,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
           imageReuseScore: reused.score,
           ...NO_SCENE_VIDEO,
         };
-        writeProject(ctx.dataDir, { ...project, scenes });
+        writeProject(ctx.dataDir, { ...project, scenes, heartbeatAt: Date.now() });
         continue;
       }
 
@@ -483,7 +497,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
       } else {
         scenes[i] = { ...scenes[i], imageStatus: "error", imageError: shortImageError(result?.error) };
       }
-      writeProject(ctx.dataDir, { ...project, scenes });
+      writeProject(ctx.dataDir, { ...project, scenes, heartbeatAt: Date.now() });
     }
   };
 
@@ -736,6 +750,26 @@ router.get("/characters", (_req, res) => {
 // POST /:id/... paths that nothing below shares.
 router.use(createStoryAnimateRouter({ sceneBlocked: sceneImageBlocked }));
 
+function renderJobLive(project) {
+  const job = project.render?.jobId ? getRenderJob(project.render.jobId) : null;
+  return Boolean(job && (job.status === "queued" || job.status === "running"));
+}
+
+/** Anything for this project running in this process: a step, an image run, the pictures' preparation, AI clips, a render. */
+function liveHere(project) {
+  const id = project.projectId;
+  return isStoryStepRunning(id) || imagesRunning(id) || preparingProjects.has(id) || isAnimating(id) || renderJobLive(project);
+}
+
+/**
+ * R50: a project showing a busy step that nothing in this process is running,
+ * with no heartbeat or write for over two minutes, was stopped by a restart or
+ * deploy; nothing will ever move it on.
+ */
+function interruptedByRestart(project) {
+  return Boolean(busyStep(project)) && !liveHere(project) && signOfLifeStale(project);
+}
+
 router.get("/:id", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
@@ -759,9 +793,12 @@ router.get("/:id", (req, res) => {
     out = { ...out, longform: { ...out.longform, progress: { ...progress, alive: isNarrationActive(project.projectId) } } };
   }
   // Wire-only: the pictures are about to start by themselves (an AI music
-  // video's song copy or prompts), though no scene is being made yet.
+  // video's song copy or prompts), though no scene is being made yet; or a
+  // restart killed the step the project shows as running (left as stored;
+  // Cancel resets it).
   const preparing = preparingProjects.has(project.projectId) ? { preparing: true } : {};
-  return res.json({ ok: true, project: out, ...preparing });
+  const interrupted = interruptedByRestart(project) ? { interrupted: true } : {};
+  return res.json({ ok: true, project: out, ...preparing, ...interrupted });
 });
 
 router.delete("/:id", (req, res) => {
@@ -1416,7 +1453,8 @@ router.post("/:id/render", async (req, res) => {
         }
       } catch { /* progress persistence is best-effort */ }
     };
-    _renderFn({
+    // A step of the project (live here, beating) until the render settles.
+    asRunningStoryStep({ dataDir }, pid, () => _renderFn({
       jobId: job.jobId,
       // Long-form templates set scene.beatSec so a 12-image, 30-minute session
       // is re-cut into ~40 s beats cycling through the images (each with its
@@ -1459,7 +1497,7 @@ router.post("/:id/render", async (req, res) => {
       captionTitle: project.captionTitle,
       outPath,
       audioDurationSec: audioDurationSec || undefined,
-    }).then((r) => {
+    })).then((r) => {
       const fresh = readProject(req.ctx.dataDir, project.projectId);
       if (!fresh) return;
       const done = r.ok;

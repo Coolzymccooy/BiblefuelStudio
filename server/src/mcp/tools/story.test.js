@@ -72,6 +72,10 @@ test("descriptions name the job kind, the costs and the resegment warning", () =
   assert.match(byName.story_step.description, /resegment discards/i);
   assert.match(byName.story_render.description, /every scene needs a picture/i);
   assert.match(byName.story_render.description, /never posts/i);
+  // R50: how an agent tells that a restart stopped it, and what to call.
+  assert.match(byName.story_render.description, /server restarted/);
+  assert.match(byName.story_render.description, /interrupted: true/);
+  assert.match(byName.story_render.description, /story_cancel, then story_render/);
   assert.match(byName.story_process.description, /images/);
   // R43: only work-starting calls count plan quota.
   assert.match(byName.story_project.description, /Only work-starting calls count/);
