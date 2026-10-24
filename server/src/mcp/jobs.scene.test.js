@@ -74,9 +74,9 @@ test("scene: each stage's problem makes it failed, labelled by stage", () => {
   const voice = scene({ voice: { status: "error", error: "2 line(s) could not be voiced. Try again." } });
   assert.equal(voice.status, "failed");
   assert.match(voice.error, /^Voicing: 2 line\(s\) could not be voiced/);
-  const shots = scene({ shots: [shot("s1", { status: "error", error: "Stopped before this clip was ordered." }), shot("s2", { status: "done" })] });
+  const shots = scene({ shots: [shot("s1", { status: "error", error: "Something went wrong making this clip." }), shot("s2", { status: "done" })] });
   assert.equal(shots.status, "failed");
-  assert.match(shots.error, /Shots: 1 of 2 shots have no clip \(Stopped before/);
+  assert.match(shots.error, /Shots: 1 of 2 shots have no clip \(Something went wrong/);
   const render = scene({ render: { status: "error", error: "Interrupted by a server restart. Render again; clips and voices are kept." } });
   assert.equal(render.status, "failed");
   assert.match(render.error, /^Render: Interrupted by a server restart/);
@@ -93,7 +93,7 @@ test("scene: the handle carries a per-stage summary", () => {
     lines: [line("l1", { audio: { file: "a" } }), line("l2", { audio: { file: "b" }, audioError: "bad" })],
     shots: [shot("s1", { status: "done" }), shot("s2", { status: "error" }), shot("s3")],
   });
-  assert.deepEqual(h.stages, { voice: "done", linesVoiced: 1, lines: 2, shotsWithClip: 1, shotsFailed: 1, shots: 3, render: "done" });
+  assert.deepEqual(h.stages, { voice: "done", linesVoiced: 1, lines: 2, shotsWithClip: 1, shotsFailed: 1, shots: 3, render: "done", last: null });
 });
 
 // ---- longform ----
@@ -130,4 +130,65 @@ test("longform: after narration it reads like a story, under the longform kind",
   assert.equal(ready.phase, "ready_to_render");
   const cancelled = longform({ status: "error", error: "Cancelled." });
   assert.equal(cancelled.status, "cancelled");
+});
+
+// ---- L3: the stage run last decides ----
+
+test("scene: an old render error does not fail the handle once a later voicing succeeded", () => {
+  const h = scene({
+    render: { status: "error", error: "ffmpeg failed", startedAt: 100, finishedAt: 200 },
+    voice: { status: "done", finishedAt: 300 },
+    blockers: [],
+  });
+  assert.equal(h.status, "done");
+  assert.equal(h.phase, "ready_to_render");
+  assert.equal(h.stages.last, "voice");
+});
+
+test("scene: an old render error does not fail a shots run that finished later", () => {
+  const h = scene({
+    render: { status: "error", error: "Interrupted by a server restart.", startedAt: 100 },
+    voice: { status: "done", finishedAt: 50 },
+    shotsRun: { startedAt: 400, finishedAt: 500, cancelled: false },
+    shots: [shot("s1", { status: "done", libraryId: "c1" })],
+    blockers: [],
+  });
+  assert.equal(h.status, "done");
+  assert.equal(h.stages.last, "shots");
+});
+
+test("scene: the stage run last still fails the handle with its own problem only", () => {
+  const h = scene({
+    voice: { status: "error", error: "1 line(s) could not be voiced. Try again.", finishedAt: 100 },
+    render: { status: "error", error: "ffmpeg failed", startedAt: 200, finishedAt: 300 },
+  });
+  assert.equal(h.status, "failed");
+  assert.equal(h.error, "Render: ffmpeg failed");
+});
+
+test("scene: a stopped shots run reads cancelled, with or without the run record", () => {
+  const stopped = { status: "error", error: "Stopped before this clip was ordered." };
+  const withRun = scene({ shotsRun: { startedAt: 10, finishedAt: 20, cancelled: true }, shots: [shot("s1", { status: "done" }), shot("s2", stopped)] });
+  assert.equal(withRun.status, "cancelled");
+  const legacy = scene({ shots: [shot("s1", { status: "done" }), shot("s2", stopped)] });
+  assert.equal(legacy.status, "cancelled");
+});
+
+test("scene: a shots run that ran last with failed clips is failed", () => {
+  const h = scene({
+    voice: { status: "done", finishedAt: 10 },
+    shotsRun: { startedAt: 20, finishedAt: 30, cancelled: false },
+    shots: [shot("s1", { status: "error", error: "BytePlus declined this shot's prompt." }), shot("s2", { status: "done" })],
+  });
+  assert.equal(h.status, "failed");
+  assert.match(h.error, /^Shots: 1 of 2 shots have no clip/);
+});
+
+test("scene: a render that ran last and finished is rendered even with an older voicing problem", () => {
+  const h = scene({
+    voice: { status: "error", error: "x", finishedAt: 10 },
+    render: { status: "done", url: "/outputs/scene-scripts/x/v.mp4", finishedAt: 20 },
+  });
+  assert.equal(h.status, "done");
+  assert.equal(h.phase, "rendered");
 });
