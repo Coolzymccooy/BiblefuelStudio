@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import {
   createJob, markRunning, markDone, markError, getJob, _resetJobs,
-  persistJob, reconcilePersistedJobs, readPersistedJob,
+  persistJob, reconcilePersistedJobs, reconcileAllPersistedJobs, readPersistedJob,
   attachProc, cancelJob, gcJobs,
 } from "./renderJobs.js";
 
@@ -70,6 +70,24 @@ describe("durable render jobs", () => {
     assert.equal(readPersistedJob(baseDir, a.jobId).status, "interrupted");
     assert.equal(readPersistedJob(baseDir, b.jobId).status, "done"); // untouched
     assert.ok(changed.some((c) => c.jobId === a.jobId));
+  });
+
+  test("reconcileAllPersistedJobs covers the owner and every user's renders", () => {
+    const owner = createJob("owner", { durationSec: 5 });
+    persistJob(baseDir, { ...owner, projectId: "o", status: "running" });
+    const userDir = path.join(baseDir, "users", "u-2");
+    const theirs = createJob("u-2", { durationSec: 5 });
+    persistJob(userDir, { ...theirs, projectId: "t", status: "queued" });
+    const finished = createJob("u-2", { durationSec: 5 });
+    persistJob(userDir, { ...finished, projectId: "f", status: "done" });
+    fs.writeFileSync(path.join(baseDir, "users", "stray.txt"), "not a user folder");
+
+    const changed = reconcileAllPersistedJobs(baseDir);
+    assert.equal(readPersistedJob(baseDir, owner.jobId).status, "interrupted");
+    assert.equal(readPersistedJob(userDir, theirs.jobId).status, "interrupted", "another user's render is no longer stuck as running");
+    assert.equal(readPersistedJob(userDir, finished.jobId).status, "done");
+    assert.deepEqual(changed.map((c) => c.jobId).sort(), [owner.jobId, theirs.jobId].sort());
+    assert.deepEqual(reconcileAllPersistedJobs(path.join(baseDir, "nowhere")), [], "a missing data folder is fine");
   });
 
   test("in-memory job API still works (back-compat)", () => {
