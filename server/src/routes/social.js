@@ -8,8 +8,6 @@ import cron from "node-cron";
 import { google } from "googleapis";
 import crypto from "node:crypto";
 import { signOAuthState, verifyOAuthState } from "../auth.js";
-import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
 import { buildZernioPost } from "../lib/zernioPayload.js";
 // readTikTokOutcome replaced this branch's isTikTokCapacityError: the capacity
 // check now reads attempt.outcome.atCapacity rather than sniffing the message.
@@ -25,6 +23,8 @@ import { startPublishJob, getPublishJob, _resetPublishJobs as resetPublishJobs }
 import { readProject, writeProject, publishedEntry, withPublished } from "../lib/ambient/projectStore.js";
 import os from "os";
 import { confineToDir } from "../lib/confinePath.js";
+import { downloadPublicUrl, assertPublicHttpUrl, isUrlGuardError, urlGuardMessage } from "../lib/safeDownload.js";
+import { MAX_INPUT_MB } from "../lib/backgroundLimits.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
@@ -39,6 +39,37 @@ const scheduleTasks = new Map();
 let _fetch = fetch;
 export function _setFetchImpl(impl) { _fetch = impl; }
 export function _resetFetchImpl() { _fetch = fetch; }
+
+// Injectable DNS lookup for the SSRF guards (video download, webhooks), so
+// tests can call a made-up hostname public or private. Unset = real DNS.
+let _lookup = null;
+export function _setLookupImpl(impl) { _lookup = impl; }
+export function _resetLookupImpl() { _lookup = null; }
+const lookupOpts = () => (_lookup ? { lookup: _lookup } : {});
+
+// A remote video for upload: capped like every other input, with a deadline
+// long enough for a 200 MB file (a stalled body still dies on the idle timer).
+const VIDEO_FETCH_TIMEOUT_MS = 10 * 60_000;
+
+/** An Error for a failed video download; a refusal keeps its code. */
+function videoFetchError(err) {
+  if (isUrlGuardError(err)) return Object.assign(new Error(urlGuardMessage(err)), { code: err.code });
+  return new Error(`Failed to fetch video: ${err?.message || err}`);
+}
+
+/**
+ * Vet a webhook URL (http(s), public addresses only). DNS can change after a
+ * hook is saved, so delivery calls this again. Resolves the refusal message,
+ * or null when the URL may be used.
+ */
+async function webhookUrlRefusal(url) {
+  try {
+    await assertPublicHttpUrl(url, lookupOpts());
+    return null;
+  } catch (err) {
+    return urlGuardMessage(err) || `Couldn't look up the webhook's host: ${err?.message || err}`;
+  }
+}
 
 function getConfiguredPublicBaseUrl() {
   return String(
@@ -129,25 +160,24 @@ async function resolveVideoInputForUpload(videoUrl, req) {
     throw new Error(`videoUrl must be absolute or resolvable: ${videoUrl}`);
   }
 
-  const resp = await _fetch(absoluteUrl);
-  if (!resp.ok) {
-    const errText = typeof resp.text === "function" ? await resp.text() : "";
-    throw new Error(`Failed to fetch video: ${resp.status} ${errText}`);
-  }
-  if (!resp.body) throw new Error("Fetched video has no body");
-
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
   const outFile = path.join(outputDir, `youtube-upload-${uuid()}.mp4`);
-  // Stream to disk. A 60-minute 1080p file is gigabytes; buffering it with
-  // arrayBuffer() took the whole process down.
-  const source = typeof resp.body.pipe === "function" ? resp.body : Readable.fromWeb(resp.body);
+  // Streamed to disk by the SSRF-hardened downloader: the host is vetted (so
+  // a URL on this server that did not map to a local output above, or any
+  // private/metadata address, is refused), redirects are re-vetted and the
+  // body is capped. Buffering with arrayBuffer() once took the process down.
   try {
-    await pipeline(source, fs.createWriteStream(outFile));
+    await downloadPublicUrl(absoluteUrl, outFile, {
+      maxBytes: MAX_INPUT_MB * 1024 * 1024,
+      timeoutMs: VIDEO_FETCH_TIMEOUT_MS,
+      fetchImpl: _fetch,
+      ...lookupOpts(),
+    });
   } catch (e) {
     // A download that broke half way left a partial multi-gigabyte file in
     // the account's outputs, with nothing to ever remove it.
     try { fs.unlinkSync(outFile); } catch { /* never written */ }
-    throw e;
+    throw videoFetchError(e);
   }
   if (!fs.statSync(outFile).size) { try { fs.unlinkSync(outFile); } catch {} throw new Error("Fetched video is empty"); }
 
@@ -345,7 +375,14 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   const resolvedTitle = String(title || "").trim().slice(0, 100) || deriveCleanTitle(caption);
 
   let make = null;
-  if (url) {
+  const refusal = url ? await webhookUrlRefusal(url) : null;
+  if (refusal) {
+    console.warn(`[SOCIAL] webhook delivery skipped: ${refusal}`);
+    const msg = `Webhook refused: ${refusal}`;
+    recordWebhookDelivery(req?.ctx?.dataDir, target?.id, { ok: false, error: msg });
+    if (!zernioConfigured) throw new Error(msg);
+    make = { ok: false, error: msg };
+  } else if (url) {
     // Fire-and-forget downstream: we only wait long enough for Make/Zapier
     // to acknowledge the trigger (the 2xx). We do NOT wait for the
     // downstream platform work (TikTok upload, IG processing, etc.) —
@@ -365,6 +402,8 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
           sentAt: new Date().toISOString(),
         }),
         signal: ctrl.signal,
+        // A public hook must not bounce the POST to an internal address.
+        redirect: "manual",
       });
       clearTimeout(timer);
       if (!resp.ok) {
@@ -1363,14 +1402,13 @@ router.get("/webhooks", (req, res) => {
   });
 });
 
-router.post("/webhooks", (req, res) => {
+router.post("/webhooks", async (req, res) => {
   const name = String(req.body?.name || "").trim();
   const url = String(req.body?.url || "").trim();
   if (!name) return res.status(400).json({ ok: false, error: "name required" });
   if (!url) return res.status(400).json({ ok: false, error: "url required" });
-  if (!/^https?:\/\//i.test(url)) {
-    return res.status(400).json({ ok: false, error: "url must start with http:// or https://" });
-  }
+  const refusal = await webhookUrlRefusal(url);
+  if (refusal) return res.status(400).json({ ok: false, error: refusal });
   const enabled = req.body?.enabled !== false;
   const incomingId = String(req.body?.id || "").trim();
 
@@ -1403,6 +1441,13 @@ router.post("/webhooks/:id/test", async (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const hook = (store.webhooks || []).find((w) => w.id === id);
   if (!hook?.url) return res.status(404).json({ ok: false, error: "webhook not found" });
+  // Re-vetted at delivery: DNS can change after the hook was saved.
+  const refusal = await webhookUrlRefusal(hook.url);
+  if (refusal) {
+    console.warn(`[SOCIAL] webhook test skipped for ${id}: ${refusal}`);
+    recordWebhookDelivery(req.ctx.dataDir, id, { ok: false, error: refusal });
+    return res.json({ ok: false, error: refusal });
+  }
 
   // Sample payload mirrors what the campaign worker actually sends so the
   // user's Make/Zapier scenario can be designed against it. The `__test`
@@ -1428,6 +1473,7 @@ router.post("/webhooks/:id/test", async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(sample),
       signal: ctrl.signal,
+      redirect: "manual",
     });
     clearTimeout(timer);
     const bodyText = await resp.text().catch(() => "");
