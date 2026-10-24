@@ -35,6 +35,7 @@ import { isSceneVideoUpload, resolveSceneVideo } from "../lib/story/sceneVideo.j
 import { normalizeStoryAspect, storyFrameSize } from "../lib/story/sceneFraming.js";
 import { createStoryAnimateRouter } from "./storyAnimate.js";
 import { isAnimating } from "../lib/story/animateStage.js";
+import { asRunningStoryStep, busyStep, isStoryStepRunning, signOfLifeStale } from "../lib/story/storyLiveness.js";
 import { autoAnimate } from "../lib/story/autoAnimate.js";
 import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
 
@@ -206,7 +207,18 @@ function imageAspectFor(project) {
 }
 
 // --- Pipeline stages (re-entrant). ctx = { dataDir, outputDir }. ---
-async function transcribeStage(ctx, projectId, mediaPath) {
+// Each runs as a step of its project (lib/story/storyLiveness.js): listed as
+// live in this process and beating, so GET /:id can tell it from one a
+// restart killed.
+function transcribeStage(ctx, projectId, mediaPath) {
+  return asRunningStoryStep(ctx, projectId, () => runTranscribe(ctx, projectId, mediaPath));
+}
+
+function segmentStage(ctx, projectId, options = {}) {
+  return asRunningStoryStep(ctx, projectId, () => runSegment(ctx, projectId, options));
+}
+
+async function runTranscribe(ctx, projectId, mediaPath) {
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
   if (project.transcript?.words?.length) {
@@ -235,7 +247,7 @@ async function transcribeStage(ctx, projectId, mediaPath) {
   });
 }
 
-async function segmentStage(ctx, projectId) {
+async function runSegment(ctx, projectId, { maxScenes } = {}) {
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
   if (project.scenes?.length) {
@@ -245,7 +257,7 @@ async function segmentStage(ctx, projectId) {
   if (!words.length) throw new Error("no transcript to segment");
   const scenes = await segmentScenes({
     words, style: project.style, cast: project.cast || [],
-    targetSec: project.scene?.targetSceneSec, maxScenes: project.scene?.maxScenes,
+    targetSec: project.scene?.targetSceneSec, maxScenes: maxScenes ?? project.scene?.maxScenes,
   });
   return writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 }
@@ -344,7 +356,7 @@ async function imagesStage(ctx, projectId, opts = {}) {
   imageRuns.set(projectId, (imageRuns.get(projectId) || 0) + 1);
   let result;
   try {
-    result = await runImagesStage(ctx, projectId, opts);
+    result = await asRunningStoryStep(ctx, projectId, () => runImagesStage(ctx, projectId, opts));
   } finally {
     const left = (imageRuns.get(projectId) || 1) - 1;
     if (left > 0) imageRuns.set(projectId, left); else imageRuns.delete(projectId);
@@ -385,6 +397,8 @@ async function runImagesStage(ctx, projectId, opts = {}) {
     }
   }
 
+  // The writes below are from this run's own copy of the project, so each
+  // stamps heartbeatAt: an older copy must not put a stale beat back (R50).
   // Single shared, mutated-in-place scenes array. writeProject is fully
   // synchronous (writeFileSync + renameSync), and JS is single-threaded, so
   // incremental writes from the concurrent workers below can't interleave or
@@ -400,6 +414,9 @@ async function runImagesStage(ctx, projectId, opts = {}) {
     pending.push(i);
   }
   writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
+  // The workers' writes keep the live run's status: the copy read above may
+  // say ready_to_render (a forced re-run), which would read finished early.
+  const live = { ...project, status: STORY_STATUS.GENERATING_IMAGES };
 
   const timeoutMs = imageStageTimeoutMs();
   const style = String(project.style || "");
@@ -443,7 +460,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
           imageReuseScore: reused.score,
           ...NO_SCENE_VIDEO,
         };
-        writeProject(ctx.dataDir, { ...project, scenes });
+        writeProject(ctx.dataDir, { ...live, scenes, heartbeatAt: Date.now() });
         continue;
       }
 
@@ -483,7 +500,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
       } else {
         scenes[i] = { ...scenes[i], imageStatus: "error", imageError: shortImageError(result?.error) };
       }
-      writeProject(ctx.dataDir, { ...project, scenes });
+      writeProject(ctx.dataDir, { ...live, scenes, heartbeatAt: Date.now() });
     }
   };
 
@@ -502,10 +519,13 @@ async function runImagesStage(ctx, projectId, opts = {}) {
   return writeProject(ctx.dataDir, { ...project, scenes, status: allDone ? STORY_STATUS.READY_TO_RENDER : STORY_STATUS.GENERATING_IMAGES });
 }
 
-/** Run the whole pipeline server-side. Awaitable; the route fires it detached. */
-export async function runStoryPipeline(ctx, projectId, mediaPath) {
+/**
+ * Run the whole pipeline server-side. Awaitable; the route fires it detached.
+ * `maxScenes` caps this run's segmentation only (an agent's charged picture count, R44).
+ */
+export async function runStoryPipeline(ctx, projectId, mediaPath, { maxScenes } = {}) {
   await transcribeStage(ctx, projectId, mediaPath);
-  await segmentStage(ctx, projectId);
+  await segmentStage(ctx, projectId, { maxScenes });
   await imagesStage(ctx, projectId);
 }
 
@@ -668,6 +688,34 @@ export function patchScenePrompts(ctx, projectId, prompts) {
   return writeProject(ctx.dataDir, { ...fresh, scenes });
 }
 
+// R43: only requests that start paid or heavy work count the plan's render
+// quota: transcribing, making pictures or clips, rendering, narrating a script,
+// and an import that starts its pipeline. Creating, editing, deleting, reading
+// and cancelling are free. index.js passes this as the skip of the router's
+// quota("render") mount. Express matches routes ignoring case and a trailing
+// slash, so this does too.
+const WORK_PATHS = [
+  /^\/[^/]+\/(?:process|render|images|resegment|transcribe|animate)$/,
+  /^\/[^/]+\/scenes\/[^/]+\/(?:regenerate|animate)$/,
+  /^\/script-to-audio$/,
+];
+export function isQuotaFreeStoryRequest(req) {
+  if (req?.method !== "POST") return true;
+  const route = String(req?.path || "").toLowerCase().replace(/\/+$/, "");
+  if (route === "/import-script") return req?.body?.autoStart !== true;
+  return !WORK_PATHS.some((pattern) => pattern.test(route));
+}
+
+// The most scenes one /process or /resegment run may cut (R44): agents pass the
+// picture count they were charged for. Absent keeps the project's own policy.
+const MAX_SCENES_LIMIT = 60;
+function maxScenesFrom(body) {
+  const raw = body?.maxScenes;
+  if (raw === undefined) return { ok: true, value: undefined };
+  return Number.isInteger(raw) && raw >= 1 && raw <= MAX_SCENES_LIMIT ? { ok: true, value: raw } : { ok: false };
+}
+const BAD_MAX_SCENES = Object.freeze({ ok: false, error: `maxScenes must be a whole number from 1 to ${MAX_SCENES_LIMIT}` });
+
 const router = Router();
 const VIDEO_EXT = new Set([".mp4", ".mov", ".webm", ".m4v"]);
 
@@ -705,6 +753,26 @@ router.get("/characters", (_req, res) => {
 // POST /:id/... paths that nothing below shares.
 router.use(createStoryAnimateRouter({ sceneBlocked: sceneImageBlocked }));
 
+function renderJobLive(project) {
+  const job = project.render?.jobId ? getRenderJob(project.render.jobId) : null;
+  return Boolean(job && (job.status === "queued" || job.status === "running"));
+}
+
+/** Anything for this project running in this process: a step, an image run, the pictures' preparation, AI clips, a render. */
+function liveHere(project) {
+  const id = project.projectId;
+  return isStoryStepRunning(id) || imagesRunning(id) || preparingProjects.has(id) || isAnimating(id) || renderJobLive(project);
+}
+
+/**
+ * R50: a project showing a busy step that nothing in this process is running,
+ * with no heartbeat or write for over two minutes, was stopped by a restart or
+ * deploy; nothing will ever move it on.
+ */
+function interruptedByRestart(project) {
+  return Boolean(busyStep(project)) && !liveHere(project) && signOfLifeStale(project);
+}
+
 router.get("/:id", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
@@ -727,7 +795,13 @@ router.get("/:id", (req, res) => {
     const progress = project.longform?.progress || { done: 0, total: 0 };
     out = { ...out, longform: { ...out.longform, progress: { ...progress, alive: isNarrationActive(project.projectId) } } };
   }
-  return res.json({ ok: true, project: out });
+  // Wire-only: the pictures are about to start by themselves (an AI music
+  // video's song copy or prompts), though no scene is being made yet; or a
+  // restart killed the step the project shows as running (left as stored;
+  // Cancel resets it).
+  const preparing = preparingProjects.has(project.projectId) ? { preparing: true } : {};
+  const interrupted = interruptedByRestart(project) ? { interrupted: true } : {};
+  return res.json({ ok: true, project: out, ...preparing, ...interrupted });
 });
 
 router.delete("/:id", (req, res) => {
@@ -807,9 +881,10 @@ router.post("/script-to-audio", async (req, res) => {
 // no lossy speech-recognition round trip over words we already have.
 //
 // Body: { script, audioPath, durationMs, words?, title?, style?, aiMotion?, autoStart? }
-// Returns a project already at SEGMENTING. With autoStart: true the pipeline
-// (segment -> images) runs detached on the server; otherwise the client calls
-// /:id/segment and /:id/images exactly as the media path does. aiMotion
+// With autoStart: true it returns a project already at SEGMENTING and the
+// pipeline (segment -> images) runs detached on the server; otherwise the
+// project is a DRAFT and the client calls /:id/segment and /:id/images
+// exactly as the media path does. aiMotion
 // (true or { quality }) is kept only for a super admin, and makes the images
 // stage animate the scenes when the pictures are done (lib/story/autoAnimate.js).
 // PATCH /:id/cast — set which figures appear in this story.
@@ -929,10 +1004,12 @@ router.post("/import-script", (req, res) => {
       aiMotion,
     });
 
+    // Without autoStart nothing runs, so it is an idle draft: "segmenting" read
+    // as a step running forever. /:id/segment and /:id/process work from either.
     const ready = writeProject(req.ctx.dataDir, {
       ...project,
       ...patch,
-      status: STORY_STATUS.SEGMENTING,
+      status: autoStart ? STORY_STATUS.SEGMENTING : STORY_STATUS.DRAFT,
     });
 
     // Build it now (the transcript is already there, so transcription is
@@ -1103,7 +1180,10 @@ router.post("/:id/images", (req, res) => {
     } catch {}
   });
   // Reflect the in-flight state immediately so the UI shows progress, not idle.
-  writeProject(ctx.dataDir, { ...project, status: STORY_STATUS.GENERATING_IMAGES, error: null });
+  // Read again: the run has already marked its scenes generating, and writing
+  // the copy read above would put their old error statuses back.
+  const started = readProject(ctx.dataDir, id) || project;
+  writeProject(ctx.dataDir, { ...started, status: STORY_STATUS.GENERATING_IMAGES, error: null });
   return res.json({ ok: true, project: readProject(ctx.dataDir, id) });
 });
 
@@ -1124,6 +1204,8 @@ router.post("/:id/cancel", (req, res) => {
 router.post("/:id/process", (req, res) => {
   const existing = readProject(req.ctx.dataDir, req.params.id);
   if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
+  const limit = maxScenesFrom(req.body);
+  if (!limit.ok) return res.status(400).json(BAD_MAX_SCENES);
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
   // The pictures are about to start by themselves (an AI music video's prompts
   // are being written): Resume must not start a second run. It only undoes a
@@ -1154,7 +1236,7 @@ router.post("/:id/process", (req, res) => {
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
   cancelledProjects.delete(id);
-  runStoryPipeline(ctx, id, guard.path).catch((e) => {
+  runStoryPipeline(ctx, id, guard.path, { maxScenes: limit.value }).catch((e) => {
     try {
       const fresh = readProject(ctx.dataDir, id);
       if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
@@ -1170,6 +1252,8 @@ router.post("/:id/process", (req, res) => {
 router.post("/:id/resegment", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  const limit = maxScenesFrom(req.body);
+  if (!limit.ok) return res.status(400).json(BAD_MAX_SCENES);
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
   if (preparingProjects.has(req.params.id)) return res.status(409).json(PREPARING_REFUSAL);
   if (!project.transcript?.words?.length) {
@@ -1198,7 +1282,7 @@ router.post("/:id/resegment", (req, res) => {
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
   cancelledProjects.delete(id);
-  runStoryPipeline(ctx, id, audioPath).catch((e) => {
+  runStoryPipeline(ctx, id, audioPath, { maxScenes: limit.value }).catch((e) => {
     try {
       const fresh = readProject(ctx.dataDir, id);
       if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
@@ -1303,8 +1387,11 @@ router.patch("/:id/music", (req, res) => {
   try {
     const project = readProject(req.ctx.dataDir, req.params.id);
     if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    // A body without `path` changes only volume or ducking and keeps the stored
+    // bed (it was checked when stored, and render checks it again); null clears it.
+    const keepPath = !Object.hasOwn(req.body || {}, "path");
     const raw = req.body?.path ? String(req.body.path).trim() : "";
-    let path = null;
+    let path = keepPath ? (project.music?.path ?? null) : null;
     if (raw) {
       // A ref is stored as the ref (it resolves again at render); a file as its checked real path.
       try {
@@ -1372,7 +1459,8 @@ router.post("/:id/render", async (req, res) => {
         }
       } catch { /* progress persistence is best-effort */ }
     };
-    _renderFn({
+    // A step of the project (live here, beating) until the render settles.
+    asRunningStoryStep({ dataDir }, pid, () => _renderFn({
       jobId: job.jobId,
       // Long-form templates set scene.beatSec so a 12-image, 30-minute session
       // is re-cut into ~40 s beats cycling through the images (each with its
@@ -1415,7 +1503,7 @@ router.post("/:id/render", async (req, res) => {
       captionTitle: project.captionTitle,
       outPath,
       audioDurationSec: audioDurationSec || undefined,
-    }).then((r) => {
+    })).then((r) => {
       const fresh = readProject(req.ctx.dataDir, project.projectId);
       if (!fresh) return;
       const done = r.ok;

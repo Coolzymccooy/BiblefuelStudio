@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
-import { _setWaitForJobForTests } from "./jobs.js";
+import jobsTools, { _setWaitForJobForTests } from "./jobs.js";
+import { fakeMcpCtx } from "../../../test/helpers/fakeMcpCtx.js";
 
 const USERS = [
   { id: "u_user", email: "user@example.com", role: "user", emailVerified: true },
@@ -224,14 +225,14 @@ test("a render retried without the publish switch is queued with auto-publish su
   assert.equal(used.publishes, 0);
 });
 
-test("a render retried with the publish switch and auto-publish off charges only a render", async () => {
+test("a render retried with the publish switch and auto-publish off charges only a render and is queued suppressed", async () => {
   writeSocialStore(userDir("u_pub"), { postiz: { autoPublish: false, autoPublishPlatforms: [] } });
   seedJobs([renderJob()]);
   const client = await keyClient("u_pub", true);
   const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   const row = readJobRows().find((j) => j.id === result.structuredContent.id);
-  assert.equal(row.suppressAutoPublish, undefined);
+  assert.equal(row.suppressAutoPublish, true);
   const used = await capsUsed(client);
   assert.equal(used.renders, 1);
   assert.equal(used.publishes, 0);
@@ -261,3 +262,122 @@ test("jobs_retry for a free user at the render limit returns QUOTA_EXCEEDED", as
   assert.equal(readJobRows().length, 1);
   assert.equal(readUsage(userDir("u_cap")).counts.render, 5);
 });
+
+test("a posting-job retry refused on publishes spends no render either (one atomic charge)", async () => {
+  writeLibrary(userDir("u_pub"), { items: [{ id: "bg1", path: "http://127.0.0.1:1/bg.mp4" }] });
+  seedJobs([campaignJob()]);
+  const made = keyStore.createKey("u_pub", "retry-no-publishes");
+  keyStore.updateKey("u_pub", made.key.id, { publishAllowed: true, caps: { publishes: 0 } });
+  const client = await connect(made.plain);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_camp" } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error, "MCP_CAP_REACHED");
+  assert.equal(result.structuredContent.bucket, "publishes");
+  assert.equal(readJobRows().length, 1);
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 0);
+  assert.equal(used.publishes, 0);
+  keyStore.revokeKey("u_pub", made.key.id);
+});
+
+test("a render retry that would auto-post, refused on publishes, spends no render either (one atomic charge)", async () => {
+  writeSocialStore(userDir("u_pub"), { postiz: { autoPublish: true, autoPublishPlatforms: ["tiktok"] } });
+  seedJobs([renderJob()]);
+  const made = keyStore.createKey("u_pub", "render-retry-no-publishes");
+  keyStore.updateKey("u_pub", made.key.id, { publishAllowed: true, caps: { publishes: 0 } });
+  const client = await connect(made.plain);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.bucket, "publishes");
+  assert.equal(readJobRows().length, 1);
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 0);
+  keyStore.revokeKey("u_pub", made.key.id);
+  writeSocialStore(userDir("u_pub"), { postiz: { autoPublish: false, autoPublishPlatforms: [] } });
+});
+
+// ---- Consent fails closed: a context without an agent key never posts ----
+
+const jobsRetryDef = jobsTools.find((def) => def.name === "jobs_retry");
+
+test("jobs_retry with no agentKey refuses a posting job and never queues it", async () => {
+  const { ctx, calls, charges } = fakeMcpCtx({ "GET /api/jobs/job_camp": { ok: true, job: campaignJob() } });
+  const result = await jobsRetryDef.handler(ctx, { id: "job_camp" });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error, "PUBLISH_NOT_ALLOWED");
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["GET /api/jobs/job_camp"]);
+  assert.deepEqual(charges, []);
+});
+
+const UNLIMITED_USAGE = { ok: true, usage: { plan: "premium", buckets: { render: { used: 0, limit: -1, unlimited: true, remaining: null } } } };
+const SPENT_USAGE = { ok: true, usage: { plan: "free", buckets: { render: { used: 5, limit: 5, unlimited: false, remaining: 0 } } } };
+
+test("jobs_retry with no agentKey queues a render with auto-publish off", async () => {
+  const { ctx, calls, charges } = fakeMcpCtx({
+    "GET /api/billing/usage": UNLIMITED_USAGE,
+    "GET /api/jobs/job_render": { ok: true, job: renderJob() },
+    "POST /api/jobs/job_render/retry": { ok: true, job: renderJob({ id: "job_new", status: "queued" }) },
+  });
+  const result = await jobsRetryDef.handler(ctx, { id: "job_render" });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["GET /api/jobs/job_render", "GET /api/billing/usage", "POST /api/jobs/job_render/retry"]);
+  assert.deepEqual(calls[2].opts, { body: { autoPublish: false } });
+  assert.deepEqual(charges, [{ bucket: "renders", amount: 1 }]);
+});
+
+// ---- Plan render quota is read before any cap is charged (the retry route spends one) ----
+
+for (const [label, job] of [["a render", renderJob()], ["a posting job", campaignJob()]]) {
+  test(`jobs_retry of ${label} with the plan's renders used up returns QUOTA_EXCEEDED before any charge`, async () => {
+    const { ctx, calls, charges } = fakeMcpCtx({
+      "GET /api/billing/usage": SPENT_USAGE,
+      [`GET /api/jobs/${job.id}`]: { ok: true, job },
+    });
+    const result = await jobsRetryDef.handler({ ...ctx, agentKey: { publishAllowed: true } }, { id: job.id });
+    assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
+    assert.deepEqual(charges, []);
+    assert.equal(calls.some((c) => c.path.endsWith("/retry")), false);
+  });
+}
+
+test("jobs_retry of a job type that spends no render quota does not read it", async () => {
+  const other = { id: "job_other", type: "transcode", ownerId: "u_pub", status: "done" };
+  const { ctx, calls, charges } = fakeMcpCtx({
+    "GET /api/jobs/job_other": { ok: true, job: other },
+    "POST /api/jobs/job_other/retry": { ok: true, job: { ...other, id: "job_other2", status: "queued" } },
+  });
+  const result = await jobsRetryDef.handler(ctx, { id: "job_other" });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.equal(calls.some((c) => c.path === "/api/billing/usage"), false);
+  assert.deepEqual(charges, [{ bucket: "renders", amount: 1 }]);
+});
+
+test("jobs_retry for a free user at the render limit spends no daily render (pre-check, nothing to refund)", async () => {
+  seedJobs([renderJob({ ownerId: "u_cap" })]);
+  const client = await keyClient("u_cap", false);
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_render" } });
+  assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
+  const used = await capsUsed(client);
+  assert.equal(used.renders, 0);
+});
+
+// M1: an id or projectId of "", "." or ".." would move the loopback route; it is refused before any call.
+for (const [label, name, input] of [
+  ["jobs_get id ..", "jobs_get", { id: ".." }],
+  ["jobs_get id .", "jobs_get", { id: "." }],
+  ["jobs_retry id ..", "jobs_retry", { id: ".." }],
+  ["jobs_wait id ..", "jobs_wait", { kind: "story", id: ".." }],
+  ["jobs_wait projectId ..", "jobs_wait", { kind: "lyric_render", id: "r_1", projectId: ".." }],
+  ["jobs_wait projectId empty", "jobs_wait", { kind: "lyric_render", id: "r_1", projectId: "" }],
+]) {
+  test(`${label} is BAD_INPUT and makes no loopback call`, async () => {
+    const { ctx, calls, charges } = fakeMcpCtx({});
+    const def = jobsTools.find((t) => t.name === name);
+    const result = await def.handler(ctx, input);
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error, "BAD_INPUT");
+    assert.match(result.structuredContent.message, /not a valid id/);
+    assert.equal(calls.length, 0);
+    assert.equal(charges.length, 0);
+  });
+}

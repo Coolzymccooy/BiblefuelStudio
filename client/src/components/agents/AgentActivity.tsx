@@ -3,6 +3,7 @@ import { ChevronRight, Download, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '../ui/Button';
 import { downloadActivityCsv, listAgentActivity, type ActivityEntry } from '../../lib/agentKeysApi';
+import { saveBlob } from '../../lib/saveBlob';
 import { timeAgo } from '../../lib/timeAgo';
 
 const RECENT_LIMIT = 50;
@@ -14,17 +15,6 @@ const KEY_EVENT_TEXT: Record<string, string> = {
   'key:publish_off': 'Publishing forbidden',
   'key:caps_changed': 'Limits changed',
 };
-
-function saveBlob(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 
 interface AgentActivityProps {
   /** Names for key ids, so a key event (which carries no name) still shows one. */

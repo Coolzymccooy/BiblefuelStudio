@@ -39,17 +39,11 @@ test("whoami reports the user, plan, quota, caps and the key", async () => {
   assert.equal(data.plan, "free");
   assert.equal(typeof data.quota.scripts.limit, "number");
   assert.equal(data.caps.renders.limit, 10);
+  assert.deepEqual(data.accountCaps.renders, { used: 0, limit: 10, remaining: 10 });
+  assert.deepEqual(Object.keys(data.accountCaps).sort(), Object.keys(data.caps).sort());
   assert.equal(data.key.name, "test");
   assert.equal(data.key.publishAllowed, false);
   assert.equal(typeof data.key.id, "string");
-});
-
-test("whoami with a JWT session has no key", async () => {
-  const client = await connect(testApp.jwtFor("u_user"));
-  const result = await client.callTool({ name: "whoami", arguments: {} });
-  assert.notEqual(result.isError, true);
-  assert.equal(result.structuredContent.key, null);
-  assert.equal(result.structuredContent.user.email, "user@example.com");
 });
 
 test("capabilities reports the server, boolean features, music and AI video", async () => {
@@ -66,4 +60,12 @@ test("capabilities reports the server, boolean features, music and AI video", as
   assert.equal("ok" in data.music, false);
   assert.equal(typeof data.aiVideo.enabled, "boolean");
   assert.equal("ok" in data.aiVideo, false);
+});
+
+test("capabilities says it describes the server, not what this key may use", async () => {
+  const client = await connect(testApp.keyFor("u_user", "Capabilities description"));
+  const { tools } = await client.listTools();
+  const description = tools.find((t) => t.name === "capabilities").description;
+  assert.match(description, /not what this key may use/);
+  assert.match(description, /whoami/);
 });

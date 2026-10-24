@@ -1450,6 +1450,13 @@ router.get("/captioned-video-status/:jobId", (req, res) => {
   return res.json({ ok: true, ...summarizeJob(job) });
 });
 
+// POSTs on this router that start no render. index.js passes this to the
+// router's quota("render") mount, so a user out of renders can still cancel.
+const CANCEL_PATH = /^\/captioned-video\/[^/]+\/cancel$/;
+export function isQuotaFreeRenderRequest(req) {
+  return req?.method === "POST" && CANCEL_PATH.test(String(req?.path || ""));
+}
+
 /**
  * Cancel a running render: SIGKILL its ffmpeg and mark the job cancelled. The
  * SSE feed then emits a terminal `error` ("Render cancelled") so any other

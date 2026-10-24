@@ -7,6 +7,7 @@ export const BUCKET_LABELS: Record<CapBucket, string> = {
   images: 'Images',
   tts: 'Voice (TTS)',
   publishes: 'Publishes',
+  imports: 'Imports',
 };
 
 /** Whole counts as they are; the dollar bucket always shows cents. */

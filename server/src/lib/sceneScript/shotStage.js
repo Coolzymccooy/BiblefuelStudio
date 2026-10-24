@@ -250,6 +250,15 @@ async function runShots(ctx, id, ids, opts) {
   await Promise.allSettled(Array.from({ length: Math.min(SHOT_CONCURRENCY, ids.length) }, worker));
 }
 
+/** Records the end of a shots run (best-effort: the project may have been deleted meanwhile). */
+function recordRunEnd(ctx, id, cancelled) {
+  try {
+    updateProject(ctx.dataDir, id, (p) => ({ ...p, shotsRun: { ...(p.shotsRun || {}), finishedAt: Date.now(), cancelled } }));
+  } catch (e) {
+    console.warn(`[scene-script] shots ${id}: could not record the run's end: ${e?.message || e}`);
+  }
+}
+
 /**
  * Queue the chosen shots (all shots with no clip when only is absent) and
  * order them in the background. Returns the project as written, or null when
@@ -264,6 +273,8 @@ export function startShots(ctx, id, { only, ledgerDir, deps } = {}) {
   const secs = clipSeconds(project);
   const written = updateProject(ctx.dataDir, id, (p) => ({
     ...p,
+    // When this run started and ended, and whether it was stopped: the agent job handle reads it.
+    shotsRun: { startedAt: Date.now(), finishedAt: null, cancelled: false },
     shots: p.shots.map((s) => (picked.has(s.id) && canRefetch(s)
       ? { ...s, clip: { ...s.clip, status: "generating", error: null } }
       : picked.has(s.id)
@@ -274,7 +285,11 @@ export function startShots(ctx, id, { only, ledgerDir, deps } = {}) {
   cancels.delete(id);
   runShots(ctx, id, [...picked], { ledgerDir, deps: { ...defaultDeps, ...deps } })
     .catch((e) => console.warn(`[scene-script] shots ${id} failed: ${e?.message || e}`))
-    .finally(() => { runs.delete(id); cancels.delete(id); });
+    .finally(() => {
+      recordRunEnd(ctx, id, cancels.has(id));
+      runs.delete(id);
+      cancels.delete(id);
+    });
   return written;
 }
 

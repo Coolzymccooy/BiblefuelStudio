@@ -5,6 +5,8 @@ import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
+import { toastError } from '../lib/errors';
+import { enqueueBatch, reportBatch } from '../lib/batchEnqueue';
 import { Trash2, RefreshCcw, Download, Archive, Trash, Mic, Video, Library, Layers } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -131,30 +133,22 @@ export function QueuePage() {
         }
 
         setIsBatchProcessing(true);
-        let successCount = 0;
         const selectedItems = queue.filter(item => selectedIds.has(item.id));
-
-        for (const item of selectedItems) {
-            try {
-                const lines = [item.title, item.hook, item.verse, item.reference, item.reflection, item.cta].slice(0, 6);
-                const res = await api.post('/api/jobs/enqueue', {
-                    type: 'render_video',
-                    payload: {
-                        backgroundPath: backgroundItem.id, // Assuming backend handles ID or absolute path
-                        lines,
-                        durationSec: 20
-                    }
-                });
-                if (res.ok) successCount++;
-            } catch (err) {
-                console.error('Batch error', err);
+        // Stops at the first plan-quota refusal; the rest would be refused the same way.
+        const outcome = await enqueueBatch(selectedItems, (item) => api.post('/api/jobs/enqueue', {
+            type: 'render_video',
+            payload: {
+                backgroundPath: backgroundItem.id, // Assuming backend handles ID or absolute path
+                lines: [item.title, item.hook, item.verse, item.reference, item.reflection, item.cta].slice(0, 6),
+                durationSec: 20
             }
-        }
-
-        toast.success(`Enqueued ${successCount} render jobs!`);
+        }));
+        reportBatch(outcome, { success: toast.success, error: toast.error, apiError: toastError });
         setIsBatchProcessing(false);
-        setShowBatchModal(false);
-        setSelectedIds(new Set());
+        if (outcome.queued > 0) {
+            setShowBatchModal(false);
+            setSelectedIds(new Set());
+        }
     };
 
     return (

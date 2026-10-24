@@ -9,6 +9,28 @@ let _fetch = fetch;
 export function _setFetchForTest(impl) { _fetch = impl; }
 export function _resetFetchForTest() { _fetch = fetch; }
 
+const SIZES = ["large", "medium", "small", "tiny"];
+
+/** One Pixabay search hit as the app's video item. */
+export function pixabayHitToVideo(v) {
+  const files = v.videos || {};
+  const pickPreview = SIZES.map((s) => files[s]).find(Boolean);
+  return {
+    id: v.id,
+    duration: v.duration,
+    url: v.pageURL,
+    image: v.picture_id ? `https://i.vimeocdn.com/video/${v.picture_id}_640x360.jpg` : undefined,
+    previewUrl: pickPreview?.url,
+    files: SIZES.filter((s) => files[s]).map((s) => ({
+      quality: s,
+      width: files[s].width,
+      height: files[s].height,
+      link: files[s].url,
+      file_type: "video/mp4",
+    })),
+  };
+}
+
 export async function pixabaySearchVideos(query, perPage = 24) {
   const rawKey = (process.env.PIXABAY_API_KEY || "");
   const key = rawKey.replace(/['"]/g, '').trim();
@@ -21,25 +43,7 @@ export async function pixabaySearchVideos(query, perPage = 24) {
     throw new Error(`Pixabay API Error (${resp.status}): ${errText}`);
   }
   const data = await resp.json();
-  const videos = (data.hits || []).map(v => {
-    const files = v.videos || {};
-    const sizes = ["large", "medium", "small", "tiny"];
-    const pickPreview = sizes.map(s => files[s]).find(Boolean);
-    return {
-      id: v.id,
-      duration: v.duration,
-      url: v.pageURL,
-      image: v.userImageURL || v.picture_id ? `https://i.vimeocdn.com/video/${v.picture_id}_640x360.jpg` : undefined,
-      previewUrl: pickPreview?.url,
-      files: sizes.map(s => files[s]).filter(Boolean).map(f => ({
-        quality: s,
-        width: f.width,
-        height: f.height,
-        link: f.url,
-        file_type: "video/mp4"
-      }))
-    };
-  });
+  const videos = (data.hits || []).map(pixabayHitToVideo);
   return videos;
 }
 
