@@ -22,6 +22,10 @@ export const QUOTAS = Object.freeze({
  */
 export function quota(bucket) {
   return function quotaCheck(req, res, next) {
+    // Reads never spend budget: every GET on the quota-mounted routers is a
+    // status/list read, and charging them let a polling client (e.g. the MCP
+    // jobs_wait tool) drain the bucket and 429 its own render.
+    if (req.method === "GET" || req.method === "HEAD") return next();
     const ctx = req?.ctx;
     if (!ctx) {
       return res.status(401).json({ ok: false, error: "Missing user context" });
