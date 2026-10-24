@@ -12,7 +12,8 @@ import { buildXfadeChain } from "./sceneTransitions.js";
 import { SCENE_VIDEO_INPUT_GUARD } from "./sceneVideo.js";
 import { FIT_CONTAIN, withSceneFits } from "./sceneFraming.js";
 import { markRunning, markProgress, markDone, markError, attachProc, getJob } from "../renderJobs.js";
-import { isLocalOrRemote } from "../mediaThumb.js";
+import { LOCAL_PROTOCOL_GUARD, localInput } from "../videoInputGuard.js";
+import { isUrlLike } from "../inputUrl.js";
 import { logoOverlay } from "../branding.js";
 import { isStudioLook, resolveLook } from "../kinetic/looks.js";
 import { studioCaptionFilter } from "../kinetic/filter.js";
@@ -288,21 +289,21 @@ export function buildStoryFfmpegArgs({
     // frames, so the default (one thread per core) multiplies memory by the
     // number of clip scenes: two threads each keeps that bounded.
     if (playsClip[i]) args.push(...SCENE_VIDEO_INPUT_GUARD, "-threads", "2", "-stream_loop", "-1", "-i", seg.videoPath);
-    else args.push("-loop", "1", "-i", seg.imagePath);
+    else args.push("-loop", "1", ...localInput(seg.imagePath));
   });
-  args.push("-i", audioPath);
+  args.push(...localInput(audioPath));
   const audioInputIdx = segs.length;
   let musicInputIdx = -1;
   // Defense in depth: even though callers (story.js) are responsible for
-  // turning an unresolved library:/mylib: ref into null, a musicPath that
-  // isn't a real local file or a remote URL must never reach ffmpeg here
-  // either — a nonexistent `-i` input kills the ENTIRE render, not just the
-  // music bed.
-  if (musicPath && isLocalOrRemote(musicPath)) {
+  // turning an unresolved library:/mylib: ref into null and for localising a
+  // URL bed, a musicPath that isn't a real local file must never reach ffmpeg
+  // here either — a nonexistent `-i` input kills the ENTIRE render, not just
+  // the music bed, and a URL would be fetched with no SSRF check.
+  if (musicPath && !isUrlLike(musicPath) && fs.existsSync(musicPath)) {
     // Loop the bed indefinitely: a long-form narration (30-60 min) outlasts
     // any single track, and without this the music simply stopped after its
     // first play. amix=duration=first (below) still ends the mix at the voice.
-    args.push("-stream_loop", "-1", "-i", musicPath);
+    args.push("-stream_loop", "-1", ...localInput(musicPath));
     musicInputIdx = segs.length + 1;
   }
 
@@ -571,7 +572,7 @@ export function probeAudioDurationSec(filePath, { timeoutMs = 20_000 } = {}) {
     const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
     const proc = spawn(ffprobe, [
       "-v", "error", "-show_entries", "format=duration",
-      "-of", "default=noprint_wrappers=1:nokey=1", filePath,
+      "-of", "default=noprint_wrappers=1:nokey=1", ...LOCAL_PROTOCOL_GUARD, filePath,
     ]);
     let out = "";
     let settled = false;

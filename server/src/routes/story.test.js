@@ -858,6 +858,48 @@ describe("story routes", () => {
     assert.equal(readProject(dataDir, project.projectId).status, "ready_to_render");
   });
 
+  test("render refuses stored audio that is a URL in any form, or another account's file", async () => {
+    const calls = [];
+    _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "story-route-other-"));
+    const theirs = path.join(other, "their-voice.mp3"); fs.writeFileSync(theirs, "mp3");
+    for (const audioPath of ["http:/127.0.0.1:1/voice.mp3", "tcp://127.0.0.1:1", theirs]) {
+      const project = remoteProject({ audioPath });
+      const { req, res } = mockReqRes({ params: { id: project.projectId }, dataDir, outputDir });
+      await handlerFor("post", "/:id/render")(req, res);
+      assert.equal(res.statusCode, 400, `${audioPath}: ${JSON.stringify(res.payload)}`);
+      assert.match(res.payload.error, /audio/i);
+      assert.equal(readProject(dataDir, project.projectId).status, "ready_to_render");
+    }
+    assert.equal(calls.length, 0);
+    fs.rmSync(other, { recursive: true, force: true });
+  });
+
+  test("resegment refuses stored audio outside the caller's folders", async () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "story-route-other-"));
+    const theirs = path.join(other, "their-voice.mp3"); fs.writeFileSync(theirs, "mp3");
+    for (const audioPath of ["tcp://127.0.0.1:1", theirs]) {
+      const project = remoteProject({ audioPath });
+      writeProject(dataDir, { ...readProject(dataDir, project.projectId), transcript: { words: [{ text: "hi", startMs: 0, endMs: 500 }] } });
+      const { req, res } = mockReqRes({ params: { id: project.projectId }, dataDir, outputDir });
+      await handlerFor("post", "/:id/resegment")(req, res);
+      assert.equal(res.statusCode, 400, `${audioPath}: ${JSON.stringify(res.payload)}`);
+      assert.match(res.payload.error, /audio/i);
+      assert.equal(readProject(dataDir, project.projectId).scenes.length, 1, "scenes left as they were");
+    }
+    fs.rmSync(other, { recursive: true, force: true });
+  });
+
+  test("render passes the confined audio path on to the renderer", async () => {
+    const calls = [];
+    _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
+    const project = remoteProject({});
+    const { req, res } = mockReqRes({ params: { id: project.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(req, res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    assert.equal(calls[0].audioPath, path.resolve(outputDir, "voice.mp3"));
+  });
+
   test("a local music path still reaches the renderer unchanged", async () => {
     const calls = [];
     _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
