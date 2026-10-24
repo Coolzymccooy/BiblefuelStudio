@@ -1,4 +1,4 @@
-import { toHandle, toPercent, text } from "./jobHandle.js";
+import { toHandle, toPercent, text, routeSegment } from "./jobHandle.js";
 
 /**
  * Normalisers for the lyric video and Moments job kinds (registered in jobs.js NORMALISERS):
@@ -82,12 +82,12 @@ export function fromMoments(payload, ctx) {
   );
 }
 
-const encoded = (value) => encodeURIComponent(String(value));
+const encoded = (value, field) => routeSegment(value, field);
 
 export const SONG_NORMALISERS = {
   lyric_align: { route: (id) => `/api/lyric-video/${encoded(id)}`, normalise: fromLyricAlign },
   lyric_render: {
-    route: (id, projectId) => `/api/lyric-video/${encoded(projectId)}/render/${encoded(id)}`,
+    route: (id, projectId) => `/api/lyric-video/${encoded(projectId, "projectId")}/render/${encoded(id)}`,
     normalise: fromLyricRender,
     needsProjectId: true,
   },

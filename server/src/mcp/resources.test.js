@@ -152,3 +152,24 @@ test("jobAddress refuses a malformed id as BAD_INPUT", () => {
     return true;
   });
 });
+
+// M1: "." and ".." would move the loopback route up a level (the review reached /api/render/... this way).
+test("a .. projectId in the query is refused as BAD_INPUT through the real transport", async () => {
+  const err = await readError("biblefuel://jobs/lyric_render/captioned-video-history?projectId=..");
+  assert.equal(err.data.error, "BAD_INPUT");
+  assert.match(err.data.message, /not a valid id/);
+});
+
+test("readJobHandle refuses an empty, . or .. id or projectId before any loopback call", async () => {
+  for (const address of [
+    { kind: "story", id: ".." },
+    { kind: "job", id: "." },
+    { kind: "lyric_render", id: "r_1", projectId: ".." },
+    { kind: "lyric_render", id: "r_1", projectId: "." },
+    { kind: "timeline", id: "t_1", projectId: ".." },
+  ]) {
+    const { ctx, calls } = fakeMcpCtx({});
+    await assert.rejects(readJobHandle(ctx, address), (err) => err.data?.error === "BAD_INPUT", JSON.stringify(address));
+    assert.equal(calls.length, 0, JSON.stringify(address));
+  }
+});

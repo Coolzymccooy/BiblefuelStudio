@@ -3,6 +3,7 @@ import { ok, fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "../toolResult.js";
 import { JOB_KINDS, NORMALISERS, clampTimeoutSec, outputUrl, waitForJob } from "../jobs.js";
 import { lacksPublishConsent, renderPublishPlan } from "../autoPublish.js";
 import { renderQuotaRefusal } from "../planQuota.js";
+import { jobAddressProblem } from "../jobHandle.js";
 
 const DEFAULT_LIST_LIMIT = 20;
 
@@ -39,6 +40,8 @@ const jobsGet = {
   inputSchema: { id: z.string().min(1).describe("The job id, e.g. job_...") },
   routes: ["/api/jobs"],
   async handler(ctx, { id }) {
+    const badId = jobAddressProblem({ id });
+    if (badId) return fail("BAD_INPUT", badId);
     const body = await ctx.api.call("GET", NORMALISERS.job.route(id));
     return ok(jobRow(body.job, ctx));
   },
@@ -92,6 +95,8 @@ const jobsRetry = {
   inputSchema: { id: z.string().min(1).describe("The id of the job to retry.") },
   routes: ["/api/jobs"],
   async handler(ctx, { id }) {
+    const badId = jobAddressProblem({ id });
+    if (badId) return fail("BAD_INPUT", badId);
     const path = NORMALISERS.job.route(id);
     const original = await ctx.api.call("GET", path);
     const type = original?.job?.type;
@@ -122,6 +127,8 @@ const jobsWait = {
     if (!Object.hasOwn(NORMALISERS, kind)) {
       return fail("BAD_KIND", `Unknown job kind "${kind}". Use one of: ${JOB_KINDS.join(", ")}.`);
     }
+    const badId = jobAddressProblem({ id, projectId });
+    if (badId) return fail("BAD_INPUT", badId);
     if (NORMALISERS[kind].needsProjectId && !projectId) {
       return fail("BAD_INPUT", `A ${kind} job needs projectId as well as id: pass both from the handle that started it.`);
     }

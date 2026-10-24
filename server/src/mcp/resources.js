@@ -1,6 +1,7 @@
 import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { JOB_KINDS, NORMALISERS, outputUrl } from "./jobs.js";
+import { jobAddressProblem } from "./jobHandle.js";
 
 /**
  * The job handle as an MCP resource, for clients that prefer reading resources
@@ -51,6 +52,8 @@ function addressRefusal({ kind, id, projectId }) {
     return refusal("BAD_KIND", `Unknown job kind "${kind}". Use one of: ${JOB_KINDS.join(", ")}.`);
   }
   if (!id) return refusal("BAD_INPUT", "The job address needs an id: biblefuel://jobs/<kind>/<id>.");
+  const badId = jobAddressProblem({ id, projectId });
+  if (badId) return refusal("BAD_INPUT", badId);
   if (NORMALISERS[kind].needsProjectId && !projectId) {
     return refusal("BAD_INPUT", `A ${kind} job needs projectId as well as id: pass both from the handle that started it.`);
   }

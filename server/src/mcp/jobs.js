@@ -8,7 +8,7 @@
  *   phase: string|null, output: { url: string, path: string|null }|null, error: string|null }} JobHandle
  */
 
-import { toHandle, toPercent, text } from "./jobHandle.js";
+import { toHandle, toPercent, text, routeSegment, jobAddressProblem } from "./jobHandle.js";
 import { SONG_NORMALISERS } from "./songJobs.js";
 import { sceneState } from "./sceneJob.js";
 
@@ -292,7 +292,7 @@ function fromPublish(payload, ctx) {
   );
 }
 
-const routeFor = (prefix) => (id) => `${prefix}${encodeURIComponent(String(id))}`;
+const routeFor = (prefix) => (id) => `${prefix}${routeSegment(id)}`;
 
 /** @type {Record<string, { route: (id: string, projectId?: string) => string, normalise: (payload: object, ctx: { outputUrl: (p: string) => string }) => JobHandle, needsProjectId?: boolean }>} */
 export const NORMALISERS = {
@@ -327,6 +327,8 @@ export async function waitForJob(api, options) {
   const entry = Object.hasOwn(NORMALISERS, kind) ? NORMALISERS[kind] : null;
   if (!entry) throw Object.assign(new Error(`Unknown job kind "${kind}". Use one of: ${JOB_KINDS.join(", ")}.`), { code: "BAD_KIND" });
   if (entry.needsProjectId && !projectId) throw Object.assign(new Error(`A ${kind} job needs its projectId.`), { code: "NEEDS_PROJECT_ID" });
+  const badId = jobAddressProblem({ id, projectId });
+  if (badId) throw Object.assign(new Error(badId), { code: "BAD_INPUT" });
   const deadline = now() + clampTimeoutSec(timeoutSec) * 1000;
   for (;;) {
     const payload = await api.call("GET", entry.route(id, projectId));

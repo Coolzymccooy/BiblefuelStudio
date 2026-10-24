@@ -20,6 +20,30 @@ const STATUS_WORDS = {
 
 const CANCEL_MESSAGE = /^(render |job )?cancell?ed\.?$/i;
 
+// encodeURIComponent leaves "." and ".." as they are, and fetch then folds them, moving the route up a level.
+const ROUTE_CHANGING_IDS = new Set(["", ".", ".."]);
+
+/**
+ * Why `value` cannot be a job or project id in a status route, or null when it can. `field` names it
+ * in the message ("id" or "projectId"). Every job tool, the job resource and the route builders share it.
+ */
+export function jobIdProblem(field, value) {
+  if (!ROUTE_CHANGING_IDS.has(String(value ?? ""))) return null;
+  return `${field} is not a valid id: it may not be empty, "." or "..". Pass the ${field} from the handle that started the job.`;
+}
+
+/** The id as one encoded route segment; throws a BAD_INPUT error for an id that would change the route. */
+export function routeSegment(value, field = "id") {
+  const problem = jobIdProblem(field, value);
+  if (problem) throw Object.assign(new Error(problem), { code: "BAD_INPUT" });
+  return encodeURIComponent(String(value));
+}
+
+/** The first problem with a handle's id and (when given) projectId, or null. */
+export function jobAddressProblem({ id, projectId }) {
+  return jobIdProblem("id", id) || (projectId === undefined ? null : jobIdProblem("projectId", projectId));
+}
+
 /** A percent (clamped to 0..100) from a number, or from `{ percent }` / `{ pct }`; anything else is null. */
 export function toPercent(value) {
   if (typeof value === "number") return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null;
