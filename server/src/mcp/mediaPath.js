@@ -8,7 +8,13 @@ import { fail } from "./toolResult.js";
  * paths itself (voice cloning, audio processing and merging). An agent may
  * name a file only if it sits in the key owner's own media folder, or is a
  * voice file the TTS providers wrote to the shared output folder (`tts-*`).
- * Both sides are realpath'd so a symlink cannot lead out.
+ *
+ * Two checks, in this order. First a lexical one on the resolved string, with
+ * no file system access at all: a UNC or device path would otherwise make the
+ * server open a network share or device just to answer "not found". Only a
+ * path that passes it is realpath'd and checked again, so a symlink or
+ * junction inside the folder cannot lead out. A path outside the scope gets
+ * one fixed answer whether or not anything exists there.
  *
  * `../lib/paths.js` reads env at import time, so it is imported on first use.
  */
@@ -17,6 +23,9 @@ const SHARED_VOICE_FILE = /^tts-[\w.-]+$/i;
 const MEDIA_REF = /^(?:library|mylib):[\w.-]+$/;
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const OUTPUTS_ALIAS = /^\.?\/?outputs\/(.+)$/;
+const NETWORK_OR_DEVICE = /^[\\/]{2}/;
+const OUTSIDE_MESSAGE =
+  "That file is outside your media folder or does not exist. Use a path from media_list, media_import_url or another tool's output.";
 
 async function defaultScope(user) {
   const paths = await import("../lib/paths.js");
@@ -42,16 +51,34 @@ function refuse(code, message) {
   return { refusal: fail(code, message) };
 }
 
-function aliasToPath(raw, outputDir) {
-  const match = OUTPUTS_ALIAS.exec(raw.split("\\").join("/"));
-  return match ? path.join(outputDir, match[1]) : raw;
+/** The same folder, by path.relative so Windows case differences do not matter. */
+function sameDir(a, b) {
+  return path.relative(a, b) === "";
 }
 
-function insideScope(real, outputDir, sharedDir) {
+function isSharedVoiceFile(file, sharedDir) {
+  return sameDir(path.dirname(file), sharedDir) && SHARED_VOICE_FILE.test(path.basename(file));
+}
+
+/** Pure string check: does this resolved path fall in the media folder or name a shared voice file? */
+function lexicallyInScope(file, outputDir, sharedDir) {
+  return isInsideDir(file, path.resolve(outputDir)) || isSharedVoiceFile(file, path.resolve(sharedDir));
+}
+
+/** After realpath: the same rule against the real folders. */
+function realInScope(real, outputDir, sharedDir) {
   const mine = realpathOrNull(outputDir);
   if (mine && isInsideDir(real, mine)) return true;
   const shared = realpathOrNull(sharedDir);
-  return Boolean(shared && path.dirname(real) === shared && SHARED_VOICE_FILE.test(path.basename(real)));
+  return Boolean(shared && isSharedVoiceFile(real, shared));
+}
+
+/** Where the raw value may point: an /outputs/ url form maps into the media folder, and a voice file also into the shared one. */
+function candidatesFor(raw, outputDir, sharedDir) {
+  const match = OUTPUTS_ALIAS.exec(raw.split("\\").join("/"));
+  if (!match) return [path.resolve(raw)];
+  const own = path.resolve(path.join(outputDir, match[1]));
+  return SHARED_VOICE_FILE.test(path.basename(match[1])) ? [own, path.resolve(path.join(sharedDir, match[1]))] : [own];
 }
 
 /**
@@ -67,11 +94,15 @@ export async function resolveMediaInput(ctx, value, { allowRefs = false } = {}) 
   if (URL_LIKE.test(raw)) {
     return refuse("PATH_OUTSIDE_MEDIA", "URLs are not accepted here. Import the file with media_import_url first, then use the path it returns.");
   }
+  if (raw.includes("\0") || NETWORK_OR_DEVICE.test(raw)) return refuse("PATH_OUTSIDE_MEDIA", OUTSIDE_MESSAGE);
   const { outputDir, sharedDir } = await scopeOf(ctx.user);
-  const real = realpathOrNull(path.resolve(aliasToPath(raw, outputDir)));
-  if (!real) return refuse("FILE_NOT_FOUND", `File not found: ${raw}`);
-  if (!insideScope(real, outputDir, sharedDir)) {
-    return refuse("PATH_OUTSIDE_MEDIA", "That file is outside your media folder. Use a path from media_list, media_import_url or another tool's output.");
+  const inScope = candidatesFor(raw, outputDir, sharedDir).filter((file) => lexicallyInScope(file, outputDir, sharedDir));
+  if (inScope.length === 0) return refuse("PATH_OUTSIDE_MEDIA", OUTSIDE_MESSAGE);
+  for (const file of inScope) {
+    const real = realpathOrNull(file);
+    if (!real) continue;
+    if (!realInScope(real, outputDir, sharedDir)) return refuse("PATH_OUTSIDE_MEDIA", OUTSIDE_MESSAGE);
+    return { path: real };
   }
-  return { path: real };
+  return refuse("FILE_NOT_FOUND", `File not found: ${raw}`);
 }

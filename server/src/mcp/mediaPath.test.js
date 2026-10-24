@@ -82,14 +82,67 @@ test("an empty value is BAD_INPUT", async () => {
   assert.equal(out.refusal.structuredContent.error, "BAD_INPUT");
 });
 
-test("a symlink inside the folder pointing out is refused", async (t) => {
-  const link = path.join(mine, "link.mp3");
+test("a link inside the folder pointing out is refused (file symlink, else a directory junction)", async (t) => {
+  let link = path.join(mine, "link.mp3");
   try {
     fs.symlinkSync(path.join(elsewhere, "secret.mp3"), link);
   } catch {
-    t.skip("symlinks not permitted on this machine");
-    return;
+    // Windows without symlink rights: a directory junction needs none.
+    const dirLink = path.join(mine, "linkdir");
+    try {
+      fs.symlinkSync(elsewhere, dirLink, "junction");
+    } catch {
+      t.skip("neither symlinks nor junctions can be made on this machine");
+      return;
+    }
+    link = path.join(dirLink, "secret.mp3");
   }
   const out = await resolveMediaInput(ctx, link);
   assert.equal(out.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+});
+
+test("outside the media folder, an existing file and a missing file get the same answer", async () => {
+  const existing = await resolveMediaInput(ctx, path.join(elsewhere, "secret.mp3"));
+  const missing = await resolveMediaInput(ctx, path.join(elsewhere, "no-such-file.mp3"));
+  assert.equal(existing.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+  assert.deepEqual(missing.refusal.structuredContent, existing.refusal.structuredContent);
+  const gone = await resolveMediaInput(ctx, path.join(root, "no-such-dir", "x.mp3"));
+  assert.deepEqual(gone.refusal.structuredContent, existing.refusal.structuredContent);
+});
+
+test("UNC, device and double-slash paths are refused before any file is touched", async () => {
+  const same = (await resolveMediaInput(ctx, path.join(elsewhere, "secret.mp3"))).refusal.structuredContent;
+  for (const bad of ["\\\\server\\share\\a.mp3", "\\\\.\\C:\\a.mp3", "\\\\?\\C:\\a.mp3", "//server/share/a.mp3", "/\\server\\share\\a.mp3"]) {
+    const out = await resolveMediaInput(ctx, bad);
+    assert.deepEqual(out.refusal.structuredContent, same, bad);
+  }
+});
+
+test("a path that only looks like it is inside the folder (sibling prefix) is refused", async () => {
+  const sibling = `${mine}-evil`;
+  fs.mkdirSync(sibling, { recursive: true });
+  fs.writeFileSync(path.join(sibling, "a.mp3"), "x");
+  const out = await resolveMediaInput(ctx, path.join(sibling, "a.mp3"));
+  assert.equal(out.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+});
+
+test("the shared folder is recognised however its case is spelled on Windows", { skip: process.platform !== "win32" && "Windows paths only" }, async () => {
+  _setScopeForTests(async () => ({ outputDir: mine, sharedDir: shared.toUpperCase() }));
+  const out = await resolveMediaInput(ctx, path.join(shared, "tts-abc.mp3"));
+  _setScopeForTests(async () => ({ outputDir: mine, sharedDir: shared }));
+  assert.ok(out.path.endsWith("tts-abc.mp3"));
+});
+
+test("an /outputs/tts-*.mp3 url form also finds the voice file in the shared folder", async () => {
+  const out = await resolveMediaInput(ctx, "/outputs/tts-abc.mp3");
+  assert.equal(out.path, fs.realpathSync(path.join(shared, "tts-abc.mp3")));
+  const notVoice = await resolveMediaInput(ctx, "/outputs/other.mp3");
+  assert.equal(notVoice.refusal.structuredContent.error, "FILE_NOT_FOUND");
+});
+
+test("a media-folder file wins over a shared file of the same /outputs/ name", async () => {
+  fs.writeFileSync(path.join(mine, "tts-own.mp3"), "x");
+  fs.writeFileSync(path.join(shared, "tts-own.mp3"), "x");
+  const out = await resolveMediaInput(ctx, "/outputs/tts-own.mp3");
+  assert.equal(out.path, fs.realpathSync(path.join(mine, "tts-own.mp3")));
 });
