@@ -98,7 +98,7 @@ describe("confineUserPath", () => {
       return;
     }
     // rmdir removes the junction itself; a recursive rm would follow it.
-    t.after(() => fs.rmdirSync(link));
+    t.after(() => fs.unlinkSync(link));
     refusedWith(() => confineUserPath(path.join(link, "secret.mp3"), ctx), "PATH_OUTSIDE_MEDIA");
     refusedWith(() => confineUserPath("/outputs/escape/secret.mp3", ctx), "PATH_OUTSIDE_MEDIA");
   });

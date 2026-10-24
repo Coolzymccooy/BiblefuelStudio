@@ -445,7 +445,7 @@ describe("POST /api/longform/draft — inspiration", () => {
       assert.match(res.body.error, /audioPath/i);
       assert.equal(read, false);
     } finally {
-      fs.rmdirSync(door);
+      fs.unlinkSync(door);
       fs.rmSync(other, { recursive: true, force: true });
     }
   });

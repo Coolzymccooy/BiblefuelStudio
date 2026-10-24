@@ -72,7 +72,7 @@ before(() => {
 
 after(() => {
   // rmdir removes the junction itself; a recursive rm would follow it.
-  if (junction) fs.rmdirSync(junction);
+  if (junction) fs.unlinkSync(junction);
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
 });
 

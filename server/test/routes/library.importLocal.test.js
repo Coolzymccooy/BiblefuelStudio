@@ -59,7 +59,7 @@ before(() => {
 });
 
 after(() => {
-  try { fs.rmdirSync(junction); } catch { /* already gone */ }
+  try { fs.unlinkSync(junction); } catch { /* already gone */ }
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
 });
 

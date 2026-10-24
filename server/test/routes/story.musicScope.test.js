@@ -75,7 +75,7 @@ before(() => {
 
 after(() => {
   _resetRenderImpl();
-  try { fs.rmdirSync(door); } catch { /* already gone */ }
+  try { fs.unlinkSync(door); } catch { /* already gone */ }
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
 });
 

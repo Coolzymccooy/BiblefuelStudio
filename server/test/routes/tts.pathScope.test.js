@@ -81,7 +81,7 @@ before(async () => {
 after(async () => {
   bridge.closeAllConnections();
   await new Promise((resolve) => bridge.close(resolve));
-  if (junction) fs.rmdirSync(junction);
+  if (junction) fs.unlinkSync(junction);
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
 });
 

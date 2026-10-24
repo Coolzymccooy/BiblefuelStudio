@@ -195,7 +195,7 @@ describe("POST /api/social/post destination=youtube", () => {
     fs.writeFileSync(path.join(other, "pic.png"), "img");
     const door = path.join(outputDir, "door");
     fs.symlinkSync(other, door, "junction");
-    t.after(() => { try { fs.rmdirSync(door); } catch {} });
+    t.after(() => { try { fs.unlinkSync(door); } catch {} });
     const video = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "/outputs/door/private.mp4", title: "T" });
     assert.equal(video.status, 400, JSON.stringify(video.body));
     assert.match(video.body.error, /videoUrl must point inside your outputs folder/);

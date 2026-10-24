@@ -78,7 +78,7 @@ before(async () => {
 after(async () => {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
-  if (junction) fs.rmdirSync(junction);
+  if (junction) fs.unlinkSync(junction);
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
 });
 

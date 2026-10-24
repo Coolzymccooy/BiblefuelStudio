@@ -100,7 +100,7 @@ describe("/api/audio/process path scope", () => {
       t.skip(`cannot create a junction here: ${err.code}`);
       return;
     }
-    t.after(() => fs.rmdirSync(link));
+    t.after(() => fs.unlinkSync(link));
     const res = await request(appFor(ctx)).post("/api/audio/process").send({ inputPath: path.join(link, "theirs.mp3"), preset: "raw" });
     assertOutside(res);
     assert.deepEqual(processed(mine), []);
