@@ -844,6 +844,66 @@ describe("cartoon film stage", () => {
       assert.equal(readLedger(ledgerDir).settledUsd, 0, "a hold is never charged");
     });
 
+    /** Fake deps whose clip for each named shot waits until that shot's gate is opened. */
+    function shotGates(projectId, names, options = {}) {
+      const gates = Object.fromEntries(names.map((name) => {
+        let open;
+        const gate = new Promise((r) => { open = r; });
+        return [name, { gate, open }];
+      }));
+      const fake = fakeDeps({
+        ...options,
+        wait: async (taskId) => {
+          const args = fake.calls.submit[Number(taskId.slice(5)) - 1];
+          const shotId = shotOf(readProject(ctx.dataDir, projectId), args);
+          if (gates[shotId]) await gates[shotId].gate;
+          return null;
+        },
+      });
+      return { ...fake, open: (name) => gates[name].open(), openAll: () => Object.values(gates).forEach((g) => g.open()) };
+    }
+
+    async function ended(projectId, shotId) {
+      for (let i = 0; i < 400 && readProject(ctx.dataDir, projectId).shots.find((s) => s.id === shotId).clip.status === "queued"; i += 1) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    }
+
+    test("a stopped shot gives its share of the hold back at once, not when the run ends", async () => {
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      const fresh = readProject(ctx.dataDir, project.id);
+      const price = (id) => estimateFilm(fresh, [id]).usd;
+      const { deps, calls, open, openAll } = shotGates(project.id, ["sh1", "sh3"]);
+      startFilm(ctx, project.id, { ledgerDir, deps });
+      await submitted(calls, 2);
+      cancelFilm(project.id);
+      open("sh1");
+      await ended(project.id, "sh2");
+      assert.match(readProject(ctx.dataDir, project.id).shots[1].clip.error, /Stopped/);
+      assert.equal(isFilming(project.id), true, "the run is still collecting sh3");
+      near(ledgerSummary(ledgerDir).reservedUsd, price("sh3") + price("sh4"), "sh2's share is no longer reserved");
+      openAll();
+      await settle(project.id);
+      assert.deepEqual(readLedger(ledgerDir).reservations, {});
+    });
+
+    test("a shot whose picture is refused gives its share of the hold back at once", async () => {
+      const project = newProject();
+      approve(project.id, ["Eli", "Pip"]);
+      const fresh = readProject(ctx.dataDir, project.id);
+      const price = (id) => estimateFilm(fresh, [id]).usd;
+      const { deps, openAll } = shotGates(project.id, ["sh3"], { frameOk: false });
+      startFilm(ctx, project.id, { ledgerDir, deps });
+      await ended(project.id, "sh2");
+      assert.equal(readProject(ctx.dataDir, project.id).shots[1].clip.status, "error");
+      assert.equal(isFilming(project.id), true, "the run is still collecting sh3");
+      near(ledgerSummary(ledgerDir).reservedUsd, price("sh3") + price("sh4"), "sh2's share is no longer reserved");
+      openAll();
+      await settle(project.id);
+      assert.deepEqual(readLedger(ledgerDir).reservations, {});
+    });
+
     test("resume leaves a running film's hold alone", async () => {
       const project = newProject();
       approve(project.id, ["Eli", "Pip"]);

@@ -6,7 +6,7 @@ import path from "path";
 import {
   estimateTokens, usdForTokens, usdPerSecond, priceMultiplier, monthlyCapUsd, monthKey, capMessage,
   readLedger, ledgerSummary, wouldExceedCap, reserveSpend, settleSpend, releaseSpend,
-  settleSpendUsd, settleStaleReservations, holdSpend, drawSpend, releaseReservations,
+  settleSpendUsd, settleStaleReservations, holdSpend, drawSpend, releaseReservations, shrinkHold,
 } from "./spend.js";
 
 const MINI = "dreamina-seedance-2-0-mini-260615";
@@ -203,6 +203,16 @@ describe("holds", () => {
     assert.deepEqual(drawSpend(dir, "film:none", "c:1", 0.6, OCT), { ok: true });
     assert.equal(drawSpend(dir, "film:none", "c:2", 0.6, OCT).ok, false);
     assert.equal(drawSpend(dir, "film:none", "c:3", -1, OCT).ok, false);
+  });
+  test("shrinkHold gives back a share no clip will draw, and drops an emptied hold", () => {
+    holdSpend(dir, "film:a", 1.5, { now: OCT });
+    assert.equal(shrinkHold(dir, "film:a", 0.5, OCT), 0.5);
+    assert.deepEqual(readLedger(dir, OCT).reservations, { "film:a": 1 });
+    assert.equal(shrinkHold(dir, "film:a", 4, OCT), 1, "never more than is held");
+    assert.deepEqual(readLedger(dir, OCT).reservations, {});
+    assert.equal(shrinkHold(dir, "film:a", 1, OCT), 0, "no hold, nothing to give back");
+    assert.equal(shrinkHold(dir, "film:a", NaN, OCT), 0);
+    assert.equal(readLedger(dir, OCT).settledUsd, 0);
   });
   test("releaseReservations drops the prefix's keys except those kept, and charges nothing", () => {
     holdSpend(dir, "film:a", 1, { now: OCT });

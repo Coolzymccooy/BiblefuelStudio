@@ -169,6 +169,23 @@ export function drawSpend(dir, holdKey, key, usd, now = new Date()) {
 }
 
 /**
+ * Give back part of a hold that no clip will draw (a shot stopped or refused
+ * before it was ordered), so other orders can use it at once rather than when
+ * the run ends. Never takes more than is held; an emptied hold is dropped.
+ * Returns the amount given back.
+ */
+export function shrinkHold(dir, holdKey, usd, now = new Date()) {
+  if (!validUsd(usd)) return 0;
+  const l = readLedger(dir, now);
+  const held = Number(l.reservations[holdKey]) || 0;
+  if (held <= 0) return 0;
+  const left = held - Math.min(held, usd);
+  const rest = withoutKeys(l.reservations, [holdKey]);
+  writeLedger(dir, { ...l, reservations: left > 1e-9 ? { ...rest, [holdKey]: left } : rest });
+  return held - left;
+}
+
+/**
  * Drop every reservation whose key starts with `prefix`, except those `keep`
  * names, charging nothing. Only for holds: a hold stands for clips not yet
  * ordered, so one left by a run a restart cut off covers no order at all.

@@ -30,6 +30,7 @@ import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
 import videogenRouter, { VEO_LEDGER_PREFIX } from "./src/routes/videogen.js";
 import { settleStaleReservations } from "./src/lib/videoGen/spend.js";
+import { releaseOrphanHolds } from "./src/lib/videoGen/orphanHolds.js";
 import storyRouter from "./src/routes/story.js";
 import lyricVideoRouter from "./src/routes/lyricVideo.js";
 import { FONT_DIR } from "./src/lib/videoFilters.js";
@@ -541,6 +542,16 @@ try {
   if (stale.count) console.warn(`[video-gen] counted ${stale.count} Veo order(s) cut off by the restart ($${stale.usd.toFixed(2)})`);
 } catch (e) {
   console.warn("[video-gen] stale Veo reservations not settled:", e?.message || e);
+}
+
+// A film or shot-run hold left by a run the restart cut off stands for clips
+// never ordered: release it now, whether or not AI video is set up, so it can
+// never shrink this month's cap (or the next) for every other feature.
+try {
+  const holds = releaseOrphanHolds(DATA_DIR);
+  if (holds) console.warn(`[video-gen] released ${holds} hold(s) left by runs the restart cut off`);
+} catch (e) {
+  console.warn("[video-gen] orphan holds not released:", e?.message || e);
 }
 
 // AI scene clips ordered before a restart are collected, not bought again.

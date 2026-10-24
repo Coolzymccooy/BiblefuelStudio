@@ -4,7 +4,9 @@ import { randomUUID } from "crypto";
 import {
   SEEDANCE_MODELS, seedanceRatio, submitSeedanceTask, waitForSeedanceTask, downloadSeedanceVideo,
 } from "../videoGen/providers/seedance.js";
-import { estimateTokens, usdForTokens, holdSpend, drawSpend, releaseSpend, releaseReservations } from "../videoGen/spend.js";
+import {
+  estimateTokens, usdForTokens, holdSpend, drawSpend, shrinkHold, releaseSpend, releaseReservations,
+} from "../videoGen/spend.js";
 import { chargeTaskOnce } from "../videoGen/chargeOnce.js";
 import { runFfmpeg } from "../motion/render.js";
 import { probeAudioDurationSec } from "../story/storyRender.js";
@@ -45,8 +47,10 @@ export { lastFrameOf } from "./shotPictures.js";
  *    against the cap in that same write, so a second film (or any other AI
  *    video order) started a moment later already counts it. Each clip then
  *    draws its own reservation out of the hold, which the cap never refuses,
- *    and whatever is left of the hold is released when the run ends. A hold
- *    left by a run a restart cut off is released on resume.
+ *    and whatever is left of the hold is released when the run ends. A shot
+ *    that ends before it draws (stopped, picture refused) gives its share
+ *    back at once. A hold left by a run a restart cut off is released on
+ *    resume, and at boot.
  *
  * Clip states: queued, generating, waiting, done, error, refused.
  */
@@ -280,22 +284,43 @@ function removeQuietly(file) {
   try { fs.rmSync(file, { force: true }); } catch { /* best effort */ }
 }
 
-async function orderOne(ctx, id, shotId, { ledgerDir, deps }) {
+/**
+ * A queued shot is ending before it drew its reservation: give its share of
+ * the run's hold back now, so another order can use it before the run ends.
+ * At most once per shot per run (`opts.shares` records shots drawn or given
+ * back), so the hold never shrinks below what the other shots still need.
+ */
+function giveShareBack(ctx, id, shotId, opts) {
+  if (!opts.shares || opts.shares.has(shotId)) return;
+  opts.shares.add(shotId);
+  const project = readProject(ctx.dataDir, id);
+  const clip = project?.shots.find((s) => s.id === shotId)?.clip;
+  // A free re-fetch was never part of the hold.
+  if (clip?.status === "queued") shrinkHold(opts.ledgerDir, filmHoldKey(id), clipUsd(project, clip.seconds));
+}
+
+async function orderOne(ctx, id, shotId, opts) {
+  const { ledgerDir, deps } = opts;
   const project = readProject(ctx.dataDir, id);
   const index = project ? project.shots.findIndex((s) => s.id === shotId) : -1;
   const shot = project?.shots[index];
   if (shot?.clip?.status === "generating" && shot.clip.taskId) return collect(ctx, id, shotId, shot.clip.taskId, { ledgerDir, deps });
   if (!shot || shot.clip?.status !== "queued") return undefined;
-  if (cancels.has(id)) return endShot(ctx.dataDir, id, shotId, null, { status: "error", error: STOPPED });
+  const endUndrawn = (patch) => {
+    giveShareBack(ctx, id, shotId, opts);
+    return endShot(ctx.dataDir, id, shotId, null, patch);
+  };
+  if (cancels.has(id)) return endUndrawn({ status: "error", error: STOPPED });
   const chained = isChained(shot, index);
   const pictures = await picturesFor(ctx, project, index, deps);
-  if (!pictures.ok) return endShot(ctx.dataDir, id, shotId, null, { status: pictures.status || "error", error: pictures.error });
-  if (cancels.has(id)) return endShot(ctx.dataDir, id, shotId, null, { status: "error", error: STOPPED });
+  if (!pictures.ok) return endUndrawn({ status: pictures.status || "error", error: pictures.error });
+  if (cancels.has(id)) return endUndrawn({ status: "error", error: STOPPED });
   const seconds = shot.clip.seconds;
   const key = filmLedgerKey(id, shotId);
   // Out of the run's hold: what startFilm held for this clip is never refused by the cap.
   const reserved = drawSpend(ledgerDir, filmHoldKey(id), key, clipUsd(project, seconds));
-  if (!reserved.ok) return endShot(ctx.dataDir, id, shotId, null, { status: "error", error: reserved.error });
+  if (!reserved.ok) return endUndrawn({ status: "error", error: reserved.error });
+  opts.shares?.add(shotId);
   const submitted = await deps.submit({
     prompt: shot.clip.prompt, aspect: project.meta?.aspect, durationSec: seconds, model: FILM_MODEL, resolution: FILM_RESOLUTION,
     generateAudio: true, allowTextFallback: false, seed: project.seed, ...pictures.input,
@@ -317,6 +342,7 @@ async function orderSafely(ctx, id, shotId, opts) {
     const clip = project?.shots.find((s) => s.id === shotId)?.clip;
     const taskId = clip?.taskId ?? null;
     if (!taskId) {
+      giveShareBack(ctx, id, shotId, opts);
       releaseSpend(opts.ledgerDir, filmLedgerKey(id, shotId));
     } else if (clip.chargedTaskId !== taskId) {
       // A submitted task may be billed: settle the estimate (as for a timeout) rather than leave the reservation stuck.
@@ -333,7 +359,8 @@ function runFilm(ctx, id, ids, opts) {
     const index = shots.findIndex((s) => s.id === shotId);
     return isChained(shots[index], index) ? shots[index - 1].id : null;
   };
-  return runInOrder(ids, { parentOf, concurrency: FILM_CONCURRENCY, run: (shotId) => orderSafely(ctx, id, shotId, opts) });
+  const run = { ...opts, shares: new Set() };
+  return runInOrder(ids, { parentOf, concurrency: FILM_CONCURRENCY, run: (shotId) => orderSafely(ctx, id, shotId, run) });
 }
 
 /**
@@ -416,6 +443,11 @@ function endRun(id, ledgerDir) {
   }
 }
 
+/** Release every film hold not owned by a run in this process. Returns how many were released. */
+export function releaseOrphanFilmHolds(ledgerDir) {
+  return releaseReservations(ledgerDir, FILM_HOLD_PREFIX, (key) => runs.has(key.slice(FILM_HOLD_PREFIX.length)));
+}
+
 /**
  * After a restart: collect clips that were ordered (never charged twice) and
  * end shots that were queued but never ordered. A chained shot whose parent
@@ -428,7 +460,7 @@ function endRun(id, ledgerDir) {
  */
 export async function resumeFilm(ctx, projects, { ledgerDir, deps } = {}) {
   const d = { ...defaultDeps, ...deps };
-  releaseReservations(ledgerDir, FILM_HOLD_PREFIX, (key) => runs.has(key.slice(FILM_HOLD_PREFIX.length)));
+  releaseOrphanFilmHolds(ledgerDir);
   let count = 0;
   const pending = [];
   for (const listed of projects || []) {

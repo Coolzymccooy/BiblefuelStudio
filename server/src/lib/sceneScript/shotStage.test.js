@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { createProject, readProject, updateProject } from "./projectStore.js";
 import { projectFromMarkdown } from "./model.js";
-import { startShots, isOrderingShots, estimateShots, useLibraryClip, resumeShots, shotPrompt, ledgerKey, shotsHoldKey } from "./shotStage.js";
+import { startShots, isOrderingShots, cancelShots, estimateShots, useLibraryClip, resumeShots, shotPrompt, ledgerKey, shotsHoldKey } from "./shotStage.js";
 import { readLibrary, addClip } from "../visualLibrary/store.js";
 import { readLedger, reserveSpend, holdSpend } from "../videoGen/spend.js";
 
@@ -107,6 +107,30 @@ describe("shot stage", () => {
     assert.ok(Object.keys(reservations).some((k) => k.startsWith(`ss:${project.id}:`)), "clips reserve their own estimate");
     open();
     return settle(project.id);
+  });
+
+  test("a shot stopped before it was ordered gives its share of the hold back at once", async () => {
+    const six = [1, 2, 3, 4, 5, 6].map((n) => [
+      `### Scene ${n} — Part (0:${String((n - 1) * 6).padStart(2, "0")}–0:${String(n * 6).padStart(2, "0")})`,
+      `*Visual: A quiet place number ${n}.*`, "**Narrator:**", `"Line ${n}."`,
+    ].join("\n")).join("\n");
+    const project = createProject(ctx.dataDir, projectFromMarkdown(six));
+    assert.equal(project.shots.length, 6);
+    let open;
+    const gate = new Promise((r) => { open = r; });
+    const { deps } = fakeDeps();
+    const gated = { ...deps, wait: async (taskId) => { if (taskId === "task-1") await gate; return deps.wait(taskId); } };
+    startShots(ctx, project.id, { ledgerDir, deps: gated });
+    cancelShots(project.id);
+    const stopped = () => readProject(ctx.dataDir, project.id).shots.slice(4).every((s) => s.clip.status === "error");
+    for (let i = 0; i < 400 && !stopped(); i += 1) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(stopped(), "the last two shots were stopped");
+    assert.equal(isOrderingShots(project.id), true, "the run is still collecting the first clip");
+    const reserved = Object.values(readLedger(ledgerDir).reservations).reduce((sum, v) => sum + v, 0);
+    assert.ok(Math.abs(reserved - estimateShots(project, ["sh1"]).usd) < 1e-9, "only the clip still out is reserved");
+    open();
+    await settle(project.id);
+    assert.deepEqual(readLedger(ledgerDir).reservations, {});
   });
 
   test("resume releases a run's hold that a restart left behind", async () => {
