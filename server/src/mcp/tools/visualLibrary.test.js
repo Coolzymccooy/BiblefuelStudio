@@ -2,6 +2,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
 import { fakeMcpCtx } from "../../../test/helpers/fakeMcpCtx.js";
 import { _setScopeForTests } from "../mediaPath.js";
@@ -121,4 +122,12 @@ test("the super-admin lists and searches the real (empty) library, and an unknow
   const gone = await adminClient.callTool({ name: "visual_library", arguments: { action: "remove", id: "00000000-0000-4000-8000-000000000000" } });
   assert.equal(gone.isError, true);
   assert.equal(gone.structuredContent.status, 404);
+});
+
+test("clip ids must be plain ids, and the description does not promise an import no tool can make", () => {
+  const schema = z.object(visualLibrary.inputSchema);
+  assert.equal(schema.safeParse({ action: "remove", id: "123e4567-e89b-12d3-a456-426614174000" }).success, true);
+  for (const id of ["../x", "a/b", "a?force=1", "a b", ""]) assert.equal(schema.safeParse({ action: "remove", id }).success, false, id);
+  assert.doesNotMatch(visualLibrary.description, /Story animate/);
+  assert.match(visualLibrary.description, /no tool here creates one/);
 });

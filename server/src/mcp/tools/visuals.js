@@ -10,6 +10,8 @@ const LIBRARY_ACTIONS = ["list", "add", "remove", "categories", "download"];
 const ASPECTS = ["portrait", "landscape", "square"];
 const VIDEO_EXT = /\.(mp4|mov|webm|m4v)$/i;
 const PROVIDER_ID = /^\d{1,12}$/;
+// Library ids are word characters and hyphens (pexels_123, agent_<uuid>); anything else could change the route's path.
+const ITEM_ID = /^[\w-]{1,200}$/;
 const SEARCH_DEFAULT = 12;
 const SEARCH_MAX = 24;
 const LIST_DEFAULT = 50;
@@ -85,7 +87,8 @@ function publicItem(item, base) {
 async function listItems(ctx, { category, limit }) {
   const body = await ctx.api.call("GET", "/api/library");
   const all = Array.isArray(body?.library?.items) ? body.library.items : [];
-  const matching = category ? all.filter((item) => Array.isArray(item.categories) && item.categories.includes(category)) : all;
+  const wanted = category?.trim().toLowerCase();
+  const matching = wanted ? all.filter((item) => Array.isArray(item.categories) && item.categories.includes(wanted)) : all;
   const items = matching.slice(0, limit ?? LIST_DEFAULT).map((item) => publicItem(item, ctx.publicBase));
   return ok({ items, total: matching.length });
 }
@@ -97,10 +100,20 @@ async function addItem(ctx, { mediaPath, title, categories, durationSec }) {
   if (!VIDEO_EXT.test(checked.path)) return fail("BAD_INPUT", "add takes a video file: mp4, mov, webm or m4v.");
   const id = `agent_${randomUUID()}`;
   await ctx.api.call("POST", "/api/library/add", { body: defined({ id, url: checked.path, title, duration: durationSec }) });
-  if (categories?.length) {
+  const added = { id, added: true, file: path.basename(checked.path) };
+  if (!categories?.length) return ok(added);
+  return ok({ ...added, categoriesApplied: await applyCategories(ctx, id, categories) });
+}
+
+/** Tags an item that was just created; a failure leaves the item in place and reports false. */
+async function applyCategories(ctx, id, categories) {
+  try {
     await ctx.api.call("PATCH", `/api/library/${encodeURIComponent(id)}/categories`, { body: { categories } });
+    return true;
+  } catch (err) {
+    if (err?.name === "ApiError") return false;
+    throw err;
   }
-  return ok({ id, added: true, file: path.basename(checked.path) });
 }
 
 async function removeItem(ctx, { id }) {
@@ -117,6 +130,8 @@ async function listCategories(ctx) {
 async function downloadItem(ctx, { source, sourceId, query, durationSec }) {
   if (!source || !sourceId) return fail("BAD_INPUT", "download needs source (pexels or pixabay) and sourceId (the id from backgrounds_search).");
   if (!PROVIDER_ID.test(sourceId)) return fail("BAD_INPUT", "sourceId must be the numeric id from backgrounds_search.");
+  const refused = await ctx.chargeCap("imports", 1);
+  if (refused) return refused;
   const body = await ctx.api.call("POST", `/api/${source}/download`, {
     body: defined({ id: sourceId, searchQuery: query, duration: durationSec }),
   });
@@ -132,12 +147,12 @@ const libraryItems = {
     "Your saved background videos. A library id (the id of an item here, for example pexels_123) is accepted as a background by the render tools, so this is where backgrounds come from. " +
     "action list: items with id, previewUrl, image, durationSec and categories; filter with category, limit is 1 to 200 (default 50). " +
     "action categories: the category names you can tag with. " +
-    "action download: save a backgrounds_search result (source and sourceId; query tags it by mood, durationSec is optional); takes a few seconds, returns the item whose id you pass as a background. " +
+    "action download: save a backgrounds_search result (source and sourceId; query tags it by mood, durationSec is optional); the clip is stored on the server and counts against the daily imports cap (one per call); takes a few seconds, returns the item whose id you pass as a background. " +
     "action add: put a video from your media folder (mediaPath from media_list or media_import_url) in the library, with optional title, categories and durationSec; returns its new id. " +
     "action remove: delete the item with that id from the library (the video file is kept; removing an id that is not there still succeeds). Free.",
   inputSchema: {
     action: z.enum(LIBRARY_ACTIONS).describe("list, add, remove, categories or download."),
-    id: z.string().max(200).optional().describe("remove: the library item id."),
+    id: z.string().regex(ITEM_ID, "id must be letters, digits, _ and - only").optional().describe("remove: the library item id."),
     category: z.string().max(40).optional().describe("list: only items tagged with this category."),
     limit: z.number().int().min(1).max(LIST_MAX).optional().describe("list: how many to return, 1 to 200."),
     source: z.enum(SOURCES).optional().describe("download: pexels or pixabay."),

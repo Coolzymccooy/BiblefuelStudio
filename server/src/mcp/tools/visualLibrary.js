@@ -6,6 +6,7 @@ import { resolveMediaInput } from "../mediaPath.js";
 const ACTIONS = ["list", "similar", "import", "update", "remove"];
 const ASPECTS = ["portrait", "landscape", "square"];
 const LIST_MAX = 200;
+const CLIP_ID = /^[\w-]{1,200}$/;
 
 /** A copy of `fields` without undefined values, so the route's own defaults apply. */
 function defined(fields) {
@@ -75,11 +76,11 @@ const visualLibrary = {
     "action similar: clips whose prompt is close to prompt, with a score; check this before paying for a new clip. " +
     "action update: set tags and/or rating (1 to 5) on the clip with that id. " +
     "action remove: delete a clip and its file; if a video uses it you get IN_USE, and force true removes it anyway. " +
-    "action import: add a clip made elsewhere; uploadPath must be a background clip upload in your media folder (named bg-video-<uuid>.mp4, such as an AI clip a Story animate step wrote), otherwise 404; optional prompt, tags, costUsd, model, taskId. " +
+    "action import: add a clip made elsewhere; uploadPath must be a background clip upload in your media folder named bg-video-<uuid>.mp4 (the app's own upload makes these; no tool here creates one yet, so most agents cannot use import), otherwise 404; optional prompt, tags, costUsd, model, taskId. " +
     "Re-rolling a clip spends money and is not available here. Free and instant, except import, which checks and may convert the video (up to about a minute).",
   inputSchema: {
     action: z.enum(ACTIONS).describe("list, similar, import, update or remove."),
-    id: z.string().max(100).optional().describe("update, remove: the clip id."),
+    id: z.string().regex(CLIP_ID, "id must be letters, digits, _ and - only").optional().describe("update, remove: the clip id."),
     q: z.string().max(200).optional().describe("list: words to find in the prompt."),
     aspect: z.enum(ASPECTS).optional().describe("list, similar: portrait, landscape or square."),
     lead: z.string().max(600).optional().describe("list: only clips that show this lead subject."),

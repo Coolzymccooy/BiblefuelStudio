@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
 import { fakeMcpCtx } from "../../../test/helpers/fakeMcpCtx.js";
+import { z } from "zod";
 import { _setScopeForTests } from "../mediaPath.js";
 import visualTools from "./visuals.js";
 
@@ -131,6 +132,18 @@ test("library_items list filters by category and limits", async () => {
   assert.equal(one.structuredContent.total, 2);
 });
 
+test("library_items list matches the category filter whatever its case", async () => {
+  const { ctx } = fakeMcpCtx({ "GET /api/library": LIBRARY });
+  const sky = await byName.library_items.handler(ctx, { action: "list", category: " SKY " });
+  assert.deepEqual(sky.structuredContent.items.map((i) => i.id), ["pexels_101"]);
+});
+
+test("library_items and the schemas only accept plain ids", () => {
+  const schema = z.object(byName.library_items.inputSchema);
+  for (const id of ["pexels_101", "agent_123e4567-e89b-12d3-a456-426614174000"]) assert.equal(schema.safeParse({ action: "remove", id }).success, true, id);
+  for (const id of ["../x", "a/b", "a b", "a?force=1", "", "x".repeat(201)]) assert.equal(schema.safeParse({ action: "remove", id }).success, false, id);
+});
+
 test("library_items categories returns the category names", async () => {
   const { ctx } = fakeMcpCtx({ "GET /api/library/categories": { ok: true, categories: ["faith", "sky"] } });
   const result = await byName.library_items.handler(ctx, { action: "categories" });
@@ -165,6 +178,23 @@ test("library_items add sends only a resolved media path, never a raw item, and 
   assert.deepEqual(Object.keys(sent).sort(), ["id", "title", "url"]);
   assert.deepEqual(patched, [{ route: `/api/library/${sent.id}/categories`, opts: { body: { categories: ["sky"] } } }]);
   assert.equal(result.structuredContent.id, sent.id);
+  assert.equal(result.structuredContent.categoriesApplied, true);
+});
+
+test("library_items add still returns the id, with categoriesApplied false, when tagging fails", async () => {
+  const dir = mediaWith("clip.mp4");
+  const failure = Object.assign(new Error("library item not found"), { name: "ApiError", status: 404 });
+  const { ctx, calls } = fakeMcpCtx({ "POST /api/library/add": { ok: true }, "PATCH": failure });
+  const original = ctx.api.call;
+  ctx.api.call = async (method, route, opts) => {
+    if (method === "PATCH") throw failure;
+    return original(method, route, opts);
+  };
+  const result = await byName.library_items.handler(ctx, { action: "add", mediaPath: path.join(dir, "clip.mp4"), categories: ["sky"] });
+  assert.notEqual(result.isError, true);
+  assert.equal(result.structuredContent.id, calls[0].opts.body.id);
+  assert.equal(result.structuredContent.added, true);
+  assert.equal(result.structuredContent.categoriesApplied, false);
 });
 
 test("library_items add refuses a path outside the media folder, a URL and a non-video", async () => {
@@ -191,13 +221,38 @@ test("library_items download saves a search result by provider id and returns th
   assert.ok(!JSON.stringify(result.structuredContent).includes("C:/srv"));
 });
 
-test("library_items download needs a numeric provider id and a source", async () => {
-  const { ctx, calls } = fakeMcpCtx({});
+test("library_items download spends one daily import before it calls the provider route, and says so", async () => {
+  const { ctx, calls, charges } = fakeMcpCtx({ "POST /api/pixabay/download": { ok: true, item: { id: "pixabay_7" } } });
+  await byName.library_items.handler(ctx, { action: "download", source: "pixabay", sourceId: "7" });
+  assert.deepEqual(charges, [{ bucket: "imports", amount: 1 }]);
+  assert.equal(calls.length, 1);
+  assert.match(byName.library_items.description, /stored on the server/);
+  assert.match(byName.library_items.description, /daily imports cap/);
+});
+
+test("library_items download over the daily imports cap returns the refusal and never calls the route", async () => {
+  const refusal = { isError: true, content: [{ type: "text", text: "MCP_CAP_REACHED: Daily imports cap reached" }], structuredContent: { error: "MCP_CAP_REACHED", bucket: "imports" } };
+  const { ctx, calls } = fakeMcpCtx({}, { chargeCap: async () => refusal });
+  const result = await byName.library_items.handler(ctx, { action: "download", source: "pexels", sourceId: "7" });
+  assert.equal(result, refusal);
+  assert.equal(calls.length, 0);
+});
+
+test("library_items other actions never spend an import", async () => {
+  const { ctx, charges } = fakeMcpCtx({ "GET /api/library": LIBRARY, "GET /api/library/categories": { categories: [] } });
+  await byName.library_items.handler(ctx, { action: "list" });
+  await byName.library_items.handler(ctx, { action: "categories" });
+  assert.deepEqual(charges, []);
+});
+
+test("library_items download needs a numeric provider id and a source, and spends nothing when it does not", async () => {
+  const { ctx, calls, charges } = fakeMcpCtx({});
   const noSource = await byName.library_items.handler(ctx, { action: "download", sourceId: "101" });
   assert.equal(noSource.structuredContent.error, "BAD_INPUT");
   const odd = await byName.library_items.handler(ctx, { action: "download", source: "pexels", sourceId: "../etc" });
   assert.equal(odd.structuredContent.error, "BAD_INPUT");
   assert.equal(calls.length, 0);
+  assert.deepEqual(charges, []);
 });
 
 // ---- images_generate --------------------------------------------------------
@@ -255,6 +310,8 @@ test("library_items add, list and remove round-trip through the real routes", as
   const item = listed.structuredContent.items.find((i) => i.id === id);
   assert.ok(item, "the added item is listed");
   assert.deepEqual(item.categories, ["sky", "hope"]);
+  assert.equal(added.structuredContent.categoriesApplied, true);
+  assert.match(item.previewUrl, /^https?:\/\/[^/]+\/outputs\/.*agent-bg\.mp4$/);
   const removed = await client.callTool({ name: "library_items", arguments: { action: "remove", id } });
   assert.deepEqual(removed.structuredContent, { removed: id });
   const after2 = await client.callTool({ name: "library_items", arguments: { action: "list" } });
@@ -291,6 +348,17 @@ test("images_generate through the real route returns the image and spends one im
   assert.match(result.structuredContent.images[0].url, /\/outputs\/genImg\/genvis-.*part-1\.png$/);
   const after2 = await client.callTool({ name: "whoami", arguments: {} });
   assert.equal(after2.structuredContent.caps.images.used, before.structuredContent.caps.images.used + 1);
+});
+
+test("images_generate with count 3 charges three images and returns three", async () => {
+  imagegen._setEnabledImpl(() => true);
+  imagegen._setGenerateImpl(async ({ seriesId, partNumber }) => ({ ok: true, path: `C:/srv/genImg/${seriesId}/part-${partNumber}.png`, publicUrl: `/outputs/genImg/${seriesId}/part-${partNumber}.png` }));
+  const before = await client.callTool({ name: "whoami", arguments: {} });
+  const result = await client.callTool({ name: "images_generate", arguments: { lines: ["One", "Two", "Three"], count: 3 } });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  assert.equal(result.structuredContent.images.length, 3);
+  const after2 = await client.callTool({ name: "whoami", arguments: {} });
+  assert.equal(after2.structuredContent.caps.images.used, before.structuredContent.caps.images.used + 3);
 });
 
 test("images_generate when image generation is off is a tool error", async () => {
