@@ -157,6 +157,8 @@ function lyricSteps(songPath) {
   const path = JSON.stringify(songPath);
   const imports = WEB_ADDRESS.test(songPath) ? " and 1 imports" : "";
   return [
+    "The lyric tools need a plan with the lyric.video feature (every current plan has it). If the lyric tools are not in your tools/list, " +
+      "stop and tell the user their plan does not include lyric videos.",
     `\`whoami\`: check that caps and accountCaps have at least 2 renders${imports} remaining, and that quota.render has 2 left: timing the lyrics and rendering cost ` +
       `one daily render and one plan render quota each${imports ? ", and importing the song one daily imports" : ""}. With fewer, stop before spending anything.`,
     `The song must be a file in your own media folder. If ${path} is a public web address, import it with \`media_import_url\` with { url: ${path}, kind: "audio" } ` +

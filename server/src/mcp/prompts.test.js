@@ -129,7 +129,7 @@ test("a bad optional argument is an error", async () => {
   }
 });
 
-test("every tool a prompt names is a registered tool open to every key", async () => {
+test("every tool a prompt names is a registered tool open to every key, or a plan-feature tool the prompt says it needs", async () => {
   const byName = new Map(catalogue().map((def) => [def.name, def]));
   for (const name of NAMES) {
     for (const args of VARIANTS[name]) {
@@ -138,7 +138,11 @@ test("every tool a prompt names is a registered tool open to every key", async (
       assert.ok(mentioned.length >= 4, `${name} names its tools in code spans`);
       for (const tool of mentioned) {
         assert.ok(byName.has(tool), `${name} names ${tool}, which is not a registered tool`);
-        assert.equal(byName.get(tool).requires, undefined, `${name} needs ${tool}, which some keys do not see`);
+        const requires = byName.get(tool).requires;
+        if (requires === undefined) continue;
+        // A plan-gated tool is allowed only when the prompt names the feature and says what to do without it.
+        assert.ok(requires.startsWith("feature:"), `${name} needs ${tool}, which only ${requires} keys see`);
+        assert.ok(text.includes(`${requires.slice("feature:".length)} feature`), `${name} needs ${tool} (${requires}) without saying so`);
       }
     }
   }
