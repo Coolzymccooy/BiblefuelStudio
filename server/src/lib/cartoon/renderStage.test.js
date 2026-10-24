@@ -206,6 +206,38 @@ describe("cartoon render stage", () => {
     assert.equal(cancelCartoonRender(p.id), false, "nothing left to stop");
   });
 
+  test("a failed re-render keeps the last good film, and leaves no partial file", async () => {
+    const p = filmedCartoon();
+    startCartoonRender(ctx, p.id, { deps: deps() });
+    await until(() => isRenderingCartoon(p.id));
+    const outDir = projectOutputDir(ctx.outputDir, p.id);
+    const name = readProject(ctx.dataDir, p.id).render.file;
+    fs.writeFileSync(path.join(outDir, name), "the good film");
+
+    const failing = deps({
+      ffmpeg: async (args) => {
+        calls.ffmpeg.push(args);
+        if (args.at(-1) === "-") return { ok: true, stderr: LOUDNESS };
+        fs.writeFileSync(args.at(-1), "partial");
+        return args.includes("-c:v") && args.includes("copy") ? { ok: false, stderr: "disk full" } : { ok: true, stderr: "" };
+      },
+    });
+    startCartoonRender(ctx, p.id, { deps: failing });
+    await until(() => isRenderingCartoon(p.id));
+    assert.equal(readProject(ctx.dataDir, p.id).render.status, "error");
+    assert.equal(fs.readFileSync(path.join(outDir, name), "utf8"), "the good film");
+    assert.deepEqual(fs.readdirSync(outDir), [name]);
+  });
+
+  test("a failed duration probe still records a good render, with the planned length", async () => {
+    const p = filmedCartoon();
+    startCartoonRender(ctx, p.id, { deps: deps({ probe: async () => { throw new Error("ffprobe missing"); } }) });
+    await until(() => isRenderingCartoon(p.id));
+    const render = readProject(ctx.dataDir, p.id).render;
+    assert.equal(render.status, "done", JSON.stringify(render));
+    assert.equal(render.durationSec, calls.render[0].inputProps.total);
+  });
+
   test("a render left running by a restart shows as stopped", () => {
     const p = { id: "c0ffee00-0000-4000-8000-000000000001", render: { status: "rendering", progress: 40 } };
     const recovered = recoverInterruptedCartoonRender(p);

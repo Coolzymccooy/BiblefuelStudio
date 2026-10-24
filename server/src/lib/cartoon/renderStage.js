@@ -1,48 +1,27 @@
-import fs from "fs";
 import path from "path";
 import { runFfmpeg } from "../motion/render.js";
 import { probeAudioDurationSec } from "../story/storyRender.js";
-import { runExclusive } from "../heavyJobGate.js";
 import { FONT_DIR } from "../videoFilters.js";
 import { getClip, clipFile, readLibrary } from "../visualLibrary/store.js";
 import { resolveBed } from "../sceneScript/music.js";
 import { bedSectionArgs } from "../sceneScript/sfx.js";
-import { startAssetServer } from "../sceneScript/assetServer.js";
-import { getServeUrl, remotionRender, finishLoudness, FONTS } from "../sceneScript/renderStage.js";
-import { reportRenderFailure } from "../ops/renderFailures.js";
+import { FONTS } from "../sceneScript/renderStage.js";
+import { createRenderLifecycle, ff, getServeUrl, remotionRender } from "../render/lifecycle.js";
 import { readProject, updateProject, projectOutputDir, projectOutputUrl } from "./store.js";
 import { buildCartoonRenderData, filmTimeline } from "./renderData.js";
 import { MAX_FILM_SEC } from "./plan.js";
 
 /**
- * Render a filmed cartoon to the finished video (spec section 7.7), the same
- * way Scene script renders: stage the clips, the music bed (cut to the film's
- * length) and the fonts; serve them from a private local server; render the
- * "Cartoon" composition in headless Chrome; then the shared two-pass loudness
- * finish to -14 LUFS. Renders queue behind other heavy jobs (production has
- * no swap). One render per project at a time; a restart leaves no worker, so
- * a render left running is shown as stopped.
+ * Render a filmed cartoon to the finished video (spec section 7.7): stage the
+ * clips, the music bed (cut to the film's length) and the fonts, then the
+ * render lifecycle shared with Scene script (render/lifecycle.js) renders the
+ * "Cartoon" composition and finishes at -14 LUFS. One render per project at a
+ * time; a restart leaves no worker, so a render left running is shown as
+ * stopped. The last finished film's name is carried in `render.previous` so
+ * the next good render can remove it when the title (and so the name) changed.
  */
 
 export const COMPOSITION_ID = "Cartoon";
-
-const runs = new Map(); // project id -> AbortController
-export const isRenderingCartoon = (id) => runs.has(id);
-
-/** Stop a running render. True when there was one to stop. */
-export function cancelCartoonRender(id) {
-  const run = runs.get(id);
-  if (!run) return false;
-  run.abort();
-  return true;
-}
-
-const defaultDeps = Object.freeze({
-  ffmpeg: runFfmpeg,
-  probe: probeAudioDurationSec,
-  serveUrl: getServeUrl,
-  render: remotionRender,
-});
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
@@ -78,14 +57,8 @@ export function cartoonRenderWarnings(project) {
     .filter(Boolean);
 }
 
-async function ff(deps, args, signal) {
-  const r = await deps.ffmpeg(args, { signal });
-  if (!r.ok) throw new Error(r.error === "cancelled" ? "cancelled" : `ffmpeg failed: ${String(r.stderr || r.error || "").slice(-300)}`);
-}
-
-async function stageAssets(ctx, project, total, stageDir, deps, signal) {
-  fs.rmSync(stageDir, { recursive: true, force: true });
-  fs.mkdirSync(stageDir, { recursive: true });
+/** The clips, the bed cut to the film's length, and the fonts, by public name. */
+async function stageAssets(ctx, project, stageDir, deps, signal) {
   const files = {};
   const names = { clips: {}, bed: null, fonts: {} };
   for (const s of project.shots) {
@@ -98,7 +71,7 @@ async function stageAssets(ctx, project, total, stageDir, deps, signal) {
   const bed = project.music?.bed ? resolveBed(ctx.dataDir, project.music.bed) : null;
   if (bed) {
     const staged = path.join(stageDir, "bed.wav");
-    await ff(deps, bedSectionArgs(bed, staged, { offsetSec: 0, durationSec: total }), signal);
+    await ff(deps, bedSectionArgs(bed, staged, { offsetSec: 0, durationSec: filmTimeline(project).total }), signal);
     names.bed = "bed.wav";
     files["bed.wav"] = staged;
   }
@@ -109,109 +82,31 @@ async function stageAssets(ctx, project, total, stageDir, deps, signal) {
   return { files, names };
 }
 
-/**
- * The last finished video's file name, carried through queued, failed and
- * cancelled states so the next good render can remove it (a new title gives
- * a new name).
- */
-const previousFile = (render) => render?.file || render?.previous || null;
+const lifecycle = createRenderLifecycle({
+  label: "cartoon",
+  store: { readProject, updateProject, projectOutputDir, projectOutputUrl },
+  compositionId: COMPOSITION_ID,
+  fileFallback: "cartoon",
+  stageAssets,
+  buildProps: buildCartoonRenderData,
+  plannedSec: (project) => filmTimeline(project).total,
+  previousOf: (render) => render?.file || render?.previous || null,
+  carryPrevious: true,
+  interrupted: "Interrupted by a server restart. Render again; the clips are kept.",
+  defaultDeps: Object.freeze({ ffmpeg: runFfmpeg, probe: probeAudioDurationSec, serveUrl: getServeUrl, render: remotionRender }),
+});
 
-const slug = (t) => String(t || "cartoon").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || "cartoon";
+export const isRenderingCartoon = lifecycle.isRendering;
 
-const stopIfCancelled = (signal) => { if (signal?.aborted) throw new Error("Render cancelled."); };
-
-async function renderRaw(ctx, id, project, { stageDir, raw }, deps, signal) {
-  const { total } = filmTimeline(project);
-  const { files, names } = await stageAssets(ctx, project, total, stageDir, deps, signal);
-  stopIfCancelled(signal);
-  const server = await startAssetServer(files);
-  let lastWrite = 0;
-  try {
-    const inputProps = buildCartoonRenderData(project, { url: server.url, names });
-    const serveUrl = await deps.serveUrl();
-    stopIfCancelled(signal);
-    await deps.render({
-      serveUrl, inputProps, outputLocation: raw, signal, compositionId: COMPOSITION_ID,
-      onProgress: (p) => {
-        if (Date.now() - lastWrite < 2000) return;
-        lastWrite = Date.now();
-        updateProject(ctx.dataDir, id, (x) => ({ ...x, render: { ...x.render, status: "rendering", progress: Math.round(p * 100) } }));
-      },
-    });
-  } finally {
-    await server.close();
-  }
-  stopIfCancelled(signal);
-  return total;
-}
-
-async function runRender(ctx, id, deps, signal) {
-  const started = Date.now();
-  const project = readProject(ctx.dataDir, id);
-  if (!project) throw new Error("Cartoon not found.");
-  const outDir = projectOutputDir(ctx.outputDir, id);
-  const stageDir = path.join(outDir, "stage");
-  const raw = path.join(stageDir, "raw.mp4");
-  const name = `${slug(project.meta?.title)}-${id.slice(0, 8)}.mp4`;
-  const out = path.join(outDir, name);
-  let total;
-  try {
-    total = await renderRaw(ctx, id, project, { stageDir, raw }, deps, signal);
-    await finishLoudness(deps, raw, out, signal);
-  } finally {
-    // The stage holds a raw render of tens of MB; never leave it behind.
-    fs.rmSync(stageDir, { recursive: true, force: true });
-  }
-  // A renamed title gives a new file name; the old video goes once the new one is safe.
-  const previous = previousFile(project.render);
-  if (previous && previous !== name && /^[a-z0-9-]+\.mp4$/.test(previous)) fs.rmSync(path.join(outDir, previous), { force: true });
-  const durationSec = Number(await deps.probe(out)) || total;
-  return {
-    status: "done", file: name, url: projectOutputUrl(id, name), sizeBytes: fs.statSync(out).size,
-    durationSec, renderSec: Math.round((Date.now() - started) / 1000), finishedAt: Date.now(), error: null, progress: 100,
-  };
-}
+/** Stop a running render. True when there was one to stop. */
+export const cancelCartoonRender = lifecycle.cancel;
 
 /**
  * Start a render in the background. Returns the project marked queued, or
  * null when a render is already running for it (or the project is gone).
  * Callers check cartoonRenderBlockers first.
  */
-export function startCartoonRender(ctx, id, { deps } = {}) {
-  if (runs.has(id)) return null;
-  const marked = updateProject(ctx.dataDir, id, (p) => ({
-    ...p, render: { status: "queued", progress: 0, startedAt: Date.now(), error: null, previous: previousFile(p.render) },
-  }));
-  if (!marked) return null;
-  const controller = new AbortController();
-  runs.set(id, controller);
-  const d = { ...defaultDeps, ...deps };
-  runExclusive(() => {
-    updateProject(ctx.dataDir, id, (p) => ({ ...p, render: { ...p.render, status: "rendering" } }));
-    return runRender(ctx, id, d, controller.signal);
-  }, { signal: controller.signal })
-    .then((render) => updateProject(ctx.dataDir, id, (p) => ({ ...p, render })))
-    .catch((e) => {
-      const cancelled = controller.signal.aborted || /cancel/i.test(String(e?.message));
-      console.warn(`[cartoon] render ${id} ${cancelled ? "cancelled" : "failed"}: ${e?.message || e}`);
-      if (!cancelled) reportRenderFailure("cartoon", { projectId: id, error: e?.message || e });
-      updateProject(ctx.dataDir, id, (p) => ({
-        ...p,
-        render: {
-          status: cancelled ? "cancelled" : "error", error: cancelled ? null : String(e?.message || e).slice(0, 400), progress: 0,
-          previous: previousFile(p.render),
-        },
-      }));
-    })
-    .finally(() => runs.delete(id));
-  return marked;
-}
+export const startCartoonRender = lifecycle.start;
 
 /** After a restart a queued or running render has no worker: show it as stopped. */
-export function recoverInterruptedCartoonRender(project) {
-  if (!["queued", "rendering"].includes(project?.render?.status) || runs.has(project.id)) return project;
-  return {
-    ...project,
-    render: { status: "error", error: "Interrupted by a server restart. Render again; the clips are kept.", progress: 0, previous: previousFile(project.render) },
-  };
-}
+export const recoverInterruptedCartoonRender = lifecycle.recover;
