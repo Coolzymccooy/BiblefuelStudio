@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
 import { fakeMcpCtx } from "../../../test/helpers/fakeMcpCtx.js";
+import { fail } from "../toolResult.js";
 import { _setScopeForTests } from "../mediaPath.js";
 import sceneTools from "./storyScenes.js";
 
@@ -102,6 +103,16 @@ test("story_scene_update regenerate without plan quota is refused before any cha
   assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
   assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage"]);
   assert.equal(chargeCalls.length, 0);
+});
+
+test("story_scene_update regenerate with the daily images cap used up changes nothing", async () => {
+  const fake = fakeMcpCtx({ "GET /api/billing/usage": UNLIMITED_USAGE }, {
+    chargeCap: async () => fail("MCP_CAP_REACHED", "This key has used its daily images."),
+  });
+  const result = await byName.story_scene_update.handler(fake.ctx, { id: "p1", sceneId: "scene-001", prompt: "new", regenerate: true });
+  assert.equal(result.structuredContent.error, "MCP_CAP_REACHED");
+  // Charged before the PATCH, so the prompt is left as it was.
+  assert.deepEqual(routesCalled(fake.calls), ["GET /api/billing/usage"]);
 });
 
 // ---- story_settings ----

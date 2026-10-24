@@ -19,10 +19,18 @@ const viewOf = (ctx, body) => projectView(body?.project || {}, ctx.publicBase);
 
 // ---- story_scene_update ------------------------------------------------------
 
-/** One new picture for the scene (the plan quota already checked): one daily image, given back when none was made. */
+/**
+ * Before any change: the plan quota, then one daily image, so a refused regenerate leaves the scene as it
+ * was. A PATCH or regenerate the route refuses (4xx) has the image given back by the registry.
+ */
+async function chargeRegenerate(ctx) {
+  const outOfQuota = await renderQuotaRefusal(ctx);
+  if (outOfQuota) return outOfQuota;
+  return ctx.chargeCap({ images: 1 });
+}
+
+/** One new picture for the scene (already charged): the image is given back when none was made. */
 async function regenerate(ctx, id, sceneId) {
-  const refused = await ctx.chargeCap({ images: 1 });
-  if (refused) return { refusal: refused };
   const body = await ctx.api.call("POST", `${scenePath(id, sceneId)}/regenerate`);
   if (!body?.sceneOk) await ctx.refundCap({ images: 1 });
   return { body };
@@ -34,7 +42,7 @@ const storySceneUpdate = {
   description:
     "Change one scene of a story project (scene ids from story_project get). prompt replaces the picture prompt (the style is still added at generation); text replaces the scene's caption text. " +
     "regenerate: true makes a new picture from the (new) prompt now and waits for it, about 10 to 60 seconds; costs one daily images, given back when the provider makes none (sceneOk false, sceneError says why). " +
-    "Changing the prompt or text is free; regenerate counts one unit of the plan's render quota and checks it before changing anything (QUOTA_EXCEEDED). Wait until a running images step has finished before regenerating.",
+    "Changing the prompt or text is free; regenerate counts one unit of the plan's render quota; both it and the daily images cap are checked before anything changes (QUOTA_EXCEEDED, MCP_CAP_REACHED), so a refused call leaves the scene as it was. Wait until a running images step has finished before regenerating.",
   inputSchema: {
     id: STORY_ID.describe("The project id."),
     sceneId: SCENE_ID.describe("The scene id, for example scene-001."),
@@ -47,10 +55,9 @@ const storySceneUpdate = {
     if (prompt === undefined && text === undefined && !remake) {
       return fail("BAD_INPUT", "Give prompt, text or regenerate: true.");
     }
-    // Before any change, so a regenerate the plan refuses leaves the scene as it was.
     if (remake) {
-      const outOfQuota = await renderQuotaRefusal(ctx);
-      if (outOfQuota) return outOfQuota;
+      const refused = await chargeRegenerate(ctx);
+      if (refused) return refused;
     }
     let body = null;
     if (prompt !== undefined || text !== undefined) {
@@ -58,7 +65,6 @@ const storySceneUpdate = {
     }
     if (!remake) return ok({ project: viewOf(ctx, body) });
     const made = await regenerate(ctx, id, sceneId);
-    if (made.refusal) return made.refusal;
     return ok({ project: viewOf(ctx, made.body), sceneOk: Boolean(made.body?.sceneOk), sceneError: made.body?.sceneError ?? null });
   },
 };
