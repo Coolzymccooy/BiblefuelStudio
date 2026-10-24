@@ -116,3 +116,18 @@ test("H1: a failure before the first part is queued gives the series' renders ba
     _setSeriesDepsForTests(STUBS);
   }
 });
+
+test("L1: maxParts caps what generate may start; a plan with more parts is refused, nothing spent or queued", async () => {
+  const ctx = freeUser("u_max_parts");
+  enqueued.length = 0;
+  const refused = await request(appFor(ctx)).post("/api/series/generate").send({ ...BODY, maxParts: 2 });
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error, "TOO_MANY_PARTS");
+  assert.equal(refused.body.parts, 3);
+  assert.equal(refused.body.maxParts, 2);
+  assert.equal(enqueued.length, 0);
+  assert.equal(readUsage(ctx.dataDir).counts.render, 0);
+  const fits = await request(appFor(ctx)).post("/api/series/generate").send({ ...BODY, maxParts: 3 });
+  assert.equal(fits.status, 200, JSON.stringify(fits.body));
+  assert.equal(fits.body.jobIds.length, 3);
+});

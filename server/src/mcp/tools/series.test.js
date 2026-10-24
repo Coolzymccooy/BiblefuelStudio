@@ -86,7 +86,7 @@ test("generate charges a render and a publish per part, atomically, then starts 
   const result = await byName.series_generate.handler(ctx, { reference: "Psalm 23", destination: "youtube", privacyStatus: "unlisted" });
   assert.deepEqual(chargeCalls, [{ renders: 3, publishes: 3 }]);
   assert.deepEqual(routesCalled(calls), ["POST /api/series/preview", "GET /api/billing/usage", "POST /api/series/generate"]);
-  assert.deepEqual(calls[2].opts.body, { reference: "Psalm 23", destination: "youtube", privacyStatus: "unlisted" });
+  assert.deepEqual(calls[2].opts.body, { reference: "Psalm 23", destination: "youtube", privacyStatus: "unlisted", maxParts: 3 });
   const data = result.structuredContent;
   assert.equal(data.parts, 3);
   assert.equal(data.seriesId, "series_x");

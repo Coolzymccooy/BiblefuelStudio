@@ -105,7 +105,8 @@ async function generate(ctx, input) {
   const charge = { renders: parts, publishes: parts, ...(input.useGenImage ? { images: parts } : {}) };
   const refused = await ctx.chargeCap(charge);
   if (refused) return tooLongRefusal(refused, parts);
-  const response = await ctx.api.call("POST", "/api/series/generate", { body: pick(input, GENERATE_FIELDS) });
+  // maxParts: the route never starts more parts than were charged, even if its own plan came out longer.
+  const response = await ctx.api.call("POST", "/api/series/generate", { body: { ...pick(input, GENERATE_FIELDS), maxParts: parts } });
   await refundUnstarted(ctx, charge, response);
   const jobIds = Array.isArray(response?.jobIds) ? response.jobIds : [];
   return ok({

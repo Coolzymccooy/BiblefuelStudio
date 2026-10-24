@@ -16,7 +16,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { buildSeriesPlan, buildPartScript, charBudgetFor } from "../lib/series/seriesBuilder.js";
+import { buildSeriesPlan, buildPartScript, charBudgetFor, MAX_PARTS } from "../lib/series/seriesBuilder.js";
 import { lookupVerses, isKnownTranslation } from "../lib/bible/scriptureApi.js";
 import { enqueueCampaignAutoPost, campaignPreconditionError } from "./jobs.js";
 import { appendSeries, listSeriesForUser } from "../lib/series/seriesStore.js";
@@ -90,6 +90,9 @@ export const GenerateSchema = PreviewSchema.extend({
   kineticCaptions: z.boolean().optional(),
   typographyPreset: z.string().optional(),
   captionEnergy: z.enum(["calm", "lively", "wild"]).optional(),
+  // The most parts this request may start (an agent sends the count it was charged for, from a
+  // preview). Unset for the web: the plan decides.
+  maxParts: z.number().int().min(1).max(MAX_PARTS).optional(),
 });
 
 /**
@@ -142,6 +145,15 @@ router.post("/generate", async (req, res) => {
     }
 
     const plan = await planFor(input);
+    if (input.maxParts && plan.segments.length > input.maxParts) {
+      return res.status(409).json({
+        ok: false,
+        error: "TOO_MANY_PARTS",
+        hint: `This passage now makes ${plan.segments.length} parts, more than the ${input.maxParts} asked for. Preview it again.`,
+        parts: plan.segments.length,
+        maxParts: input.maxParts,
+      });
+    }
 
     // What enqueue would refuse for every part (an empty Library) is refused here, before anything is spent.
     const blocked = deps.precondition(jobScope(req.ctx));
