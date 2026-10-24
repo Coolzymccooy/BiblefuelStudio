@@ -431,7 +431,9 @@ router.post("/clone-voice", async (req, res) => {
 router.get("/chatterbox-voices", (req, res) => {
   const dataDir = req?.ctx?.dataDir;
   if (!dataDir) return res.status(500).json({ ok: false, error: "User scope unavailable" });
-  res.json({ ok: true, voices: listChatterboxVoices(dataDir) });
+  // freeTextReference: may this account name a reference file on the bridge
+  // host instead of a saved clone? The owner only (ruling R36).
+  res.json({ ok: true, voices: listChatterboxVoices(dataDir), freeTextReference: isOwnerCtx(req.ctx) });
 });
 
 router.delete("/chatterbox-voices/:id", async (req, res) => {

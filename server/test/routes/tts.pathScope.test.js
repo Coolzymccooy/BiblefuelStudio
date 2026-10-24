@@ -220,6 +220,15 @@ describe("Chatterbox voice ids", () => {
     assert.deepEqual(ttsCalls().map((c) => c.body.audio_prompt_path), ["C:/voices/pastor.wav", "/home/me/voices/pastor.wav"]);
   });
 
+  test("the voices list tells the client whether a free-text reference is allowed", async () => {
+    const owner = await request(appFor(ownerCtx)).get("/api/tts/chatterbox-voices");
+    assert.equal(owner.body.freeTextReference, true);
+    const other = await request(appFor({ ...ctx, plan: "super_admin", isSuperAdmin: true, isOwner: false })).get("/api/tts/chatterbox-voices");
+    assert.equal(other.body.freeTextReference, false);
+    const ids = other.body.voices.map((v) => v.id);
+    assert.ok(ids.includes(myVoice.id) && !ids.includes(theirVoice.id), ids.join(" "));
+  });
+
   test("the owner's saved clones still resolve", async () => {
     const ownerVoice = await addChatterboxVoice(process.env.DATA_DIR, { name: "Owner", refPath: "/bridge/refs/owner.wav" });
     const res = await request(appFor(ownerCtx)).post("/api/tts/chatterbox").send({ text: "Hello there friend", voiceId: ownerVoice.id });
