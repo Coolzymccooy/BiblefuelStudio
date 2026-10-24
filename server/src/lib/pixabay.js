@@ -38,7 +38,13 @@ export async function pixabaySearchVideos(query, perPage = 24) {
   return videos;
 }
 
+// The id names the output file (pixabay-<id>.mp4) and goes into the API query,
+// so only a real (numeric) Pixabay id may get that far: "123/../.." would
+// write elsewhere (#112, same rule as PEXELS_ID).
+const PIXABAY_ID = /^\d+$/;
+
 export async function pixabayDownloadVideoById(id) {
+  if (!PIXABAY_ID.test(String(id ?? ""))) throw new Error("Pixabay video id must be a number");
   const rawKey = (process.env.PIXABAY_API_KEY || "");
   const key = rawKey.replace(/['"]/g, '').trim();
   if (!key) throw new Error("PIXABAY_API_KEY missing");
