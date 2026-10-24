@@ -157,3 +157,20 @@ test("every prompt points at the guide, the job handles and the stops", () => {
 function parseArgs(name, args) {
   return z.object(promptDef(name).argsSchema).parse(args);
 }
+
+// L6: each prompt says what whoami must show before the first paid step.
+test("make_lyric_video asks whoami for 2 renders, and 1 imports only for a web address; lineId comes from lyric_project get", async () => {
+  const local = await getText("make_lyric_video", { songPath: "/outputs/u_user/song.mp3" });
+  const whoamiLine = (text) => text.split("\n").find((line) => line.includes("`whoami`"));
+  assert.match(whoamiLine(local), /at least 2 renders remaining/);
+  assert.doesNotMatch(whoamiLine(local), /imports/);
+  const remote = await getText("make_lyric_video", { songPath: "https://example.com/song.mp3" });
+  assert.match(whoamiLine(remote), /at least 2 renders and 1 imports remaining/);
+  assert.match(local, /lineId: <[^>]*`lyric_project` with \{ action: "get"/);
+});
+
+test("make_ambient_session asks whoami for 1 render as well as the tts and images it plans", async () => {
+  const text = await getText("make_ambient_session", { hours: "3" });
+  const whoamiLine = text.split("\n").find((line) => line.includes("`whoami`"));
+  assert.match(whoamiLine, /at least 1 renders, 12 tts and 12 images remaining/);
+});

@@ -110,8 +110,9 @@ const hoursValue = (text) => (text === undefined ? DEFAULT_AMBIENT_HOURS : Numbe
 function ambientSteps({ theme, targetSec, verses }) {
   const themeArg = theme ? `, theme: ${JSON.stringify(theme)}` : "";
   return [
-    `\`whoami\`. About ${verses} verses will be planned (one every fifteen minutes); each costs one daily tts and one daily images (and the plan's own tts and image quotas), and the render one daily render and one plan render quota. ` +
-      `If caps or accountCaps has fewer than ${verses} tts or images remaining, pass a smaller count to the plan step and tell the user the rest can be added another day.`,
+    `\`whoami\`: check that caps and accountCaps have at least 1 renders, ${verses} tts and ${verses} images remaining. ` +
+      `About ${verses} verses will be planned (one every fifteen minutes); each costs one daily tts and one daily images (and the plan's own tts and image quotas), and the render one daily render and one plan render quota. ` +
+      "With no render left, stop before spending anything. With fewer tts or images, pass a smaller count to the plan step and tell the user the rest can be added another day.",
     `\`ambient_project\` with { action: "create", title: <a short title>${themeArg}, targetSec: ${targetSec} }. Keep the session id. Free.`,
     "`ambient_plan` with { id } (add count when the caps are short). It replaces every verse. One plan scripts quota.",
     "`music_library`: choose one or more tracks for the music bed. Bundled tracks are cleared for use; the user's own uploads need a licence they record in the app. " +
@@ -150,17 +151,21 @@ const makeAmbientSession = {
 
 // ---- make_lyric_video --------------------------------------------------------
 
+const WEB_ADDRESS = /^https?:\/\//i;
+
 function lyricSteps(songPath) {
   const path = JSON.stringify(songPath);
+  const imports = WEB_ADDRESS.test(songPath) ? " and 1 imports" : "";
   return [
-    "`whoami`: timing the lyrics and rendering cost one daily render each (two in all) and one plan render quota each.",
+    `\`whoami\`: check that caps and accountCaps have at least 2 renders${imports} remaining, and that quota.render has 2 left: timing the lyrics and rendering cost ` +
+      `one daily render and one plan render quota each${imports ? ", and importing the song one daily imports" : ""}. With fewer, stop before spending anything.`,
     `The song must be a file in your own media folder. If ${path} is a public web address, import it with \`media_import_url\` with { url: ${path}, kind: "audio" } ` +
       "(one daily imports) and use the file it returns. Otherwise find it with `media_list` with { kind: \"audio\" } (or \"video\": the sound is taken out).",
     "`lyric_project` with { action: \"create\", title: <the song title> }. Keep the song's id. Free.",
     `\`lyric_set_song\` with { id, path: ${path} } (or the imported file). Free.`,
     "Ask the user for the lyrics if you do not have them: never invent or guess lyrics. `lyric_set_lyrics` with { id, sheet: <the lyrics, one sung line per line, " +
       "section headings such as [CHORUS] on their own lines> }. Free.",
-    "`lyric_align` with { id }, then `jobs_wait` with { kind: \"lyric_align\", id } until done. Flagged lines could not be heard: move them with `lyric_line_update` if they are off.",
+    "`lyric_align` with { id }, then `jobs_wait` with { kind: \"lyric_align\", id } until done. Flagged lines could not be heard: move any that are off with `lyric_line_update` with { id, lineId: <the line's id, from `lyric_project` with { action: \"get\", id }>, start: <seconds> }. Free.",
     "Optional: `lyric_background` with { id, path: <a picture or video in your media folder> }. Free.",
     "`lyric_render` with { id }, then `jobs_wait` with { kind: \"lyric_render\", id: <the handle's id>, projectId: <the song's id> } until done (about the song's length). output.path is the video.",
   ];

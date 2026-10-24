@@ -102,3 +102,8 @@ test("Resources says a captioned job of another user answers 403, while other ki
   assert.match(text, /`captioned`[^.]*`HTTP_403`/);
   assert.match(section("## Troubleshooting"), /`HTTP_403`/);
 });
+
+test("the Prompts row for make_lyric_video counts the import a URL costs", () => {
+  const row = section("## Prompts").split(/\r?\n/).find((line) => line.startsWith("| `make_lyric_video`"));
+  assert.match(row, /`imports`/);
+});
