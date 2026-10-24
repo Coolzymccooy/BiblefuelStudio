@@ -68,6 +68,25 @@ export function isSharedTtsFile(absPath) {
   return Boolean(real && sameDir(dir, real));
 }
 
+const SHARED_STOCK_FILE = /^(?:(?:pexels|pixabay)-\d+\.mp4|thumb-(?:pexels|pixabay)-\d+\.jpg)$/i;
+
+/**
+ * A stock clip (or its thumbnail) the Pexels/Pixabay download routes saved
+ * flat in the global output folder: `pexels-<id>.mp4`, `pixabay-<id>.mp4`,
+ * `thumb-<provider>-<id>.jpg`. The downloads write there for every account
+ * and the library item links that global path; the content is public stock
+ * named by its provider id, so it is shared like a tts-* file.
+ *
+ * @param {string} absPath
+ */
+export function isSharedStockFile(absPath) {
+  if (!SHARED_STOCK_FILE.test(path.basename(absPath))) return false;
+  const dir = path.dirname(absPath);
+  if (sameDir(dir, OUTPUT_DIR)) return true;
+  const real = realpathOrNull(OUTPUT_DIR);
+  return Boolean(real && sameDir(dir, real));
+}
+
 /** Where the raw value may point: an /outputs/ alias maps into the caller's folder and, for a shared file, the global one. */
 function candidatesFor(raw, outputDir, allowShared) {
   const match = OUTPUTS_ALIAS.exec(raw.split("\\").join("/"));

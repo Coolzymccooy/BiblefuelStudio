@@ -12,7 +12,7 @@ import { spawn } from 'child_process';
 import { downsamplePeaks, peaksCacheKey, PEAK_BUCKETS } from '../lib/audioPeaks.js';
 import { quota } from '../middleware/quota.js';
 import { brandLogoFor } from '../lib/branding.js';
-import { confineUserPath, isSharedTtsFile, sendUserPathError, UserPathError } from '../lib/userPathScope.js';
+import { confineUserPath, isSharedStockFile, isSharedTtsFile, sendUserPathError, UserPathError } from '../lib/userPathScope.js';
 import { resolveLibraryTrack } from '../lib/musicLibrary.js';
 import { resolveTenantTrack } from '../lib/musicLibraryStore.js';
 import { readLibrary } from '../lib/library.js';
@@ -273,7 +273,8 @@ function resolveMusicRef(raw, dataDir) {
   return null;
 }
 
-const TIMELINE_FILE_SCOPE = { allowShared: isSharedTtsFile };
+// Shared voice files and downloaded Pexels/Pixabay stock (#112).
+const TIMELINE_FILE_SCOPE = { allowShared: (abs) => isSharedTtsFile(abs) || isSharedStockFile(abs) };
 
 /** Does the value name a path or URL rather than a saved library item id? */
 function looksLikeAssetPath(value) {

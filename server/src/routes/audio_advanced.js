@@ -10,7 +10,7 @@ import { brandLogoFor, logoOverlay } from "../lib/branding.js";
 import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
 import { isRemoteUrl } from "../lib/downloadInput.js";
 import { LOCAL_PROTOCOL_GUARD, localInput } from "../lib/videoInputGuard.js";
-import { confineUserPath, isSharedTtsFile, sendUserPathError, UserPathError } from "../lib/userPathScope.js";
+import { confineUserPath, isSharedStockFile, isSharedTtsFile, sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 
 const router = Router();
 
@@ -37,8 +37,8 @@ function frameSizeOf(file, { timeoutMs = 20_000 } = {}) {
 }
 
 // The files a user may name here: their own, or a voice file a TTS provider
-// wrote to the shared output folder (#112).
-const USER_FILE_SCOPE = { allowShared: isSharedTtsFile };
+// wrote to the shared output folder, or downloaded Pexels/Pixabay stock (#112).
+const USER_FILE_SCOPE = { allowShared: (abs) => isSharedTtsFile(abs) || isSharedStockFile(abs) };
 
 /** A file the request names, held to the caller's media folder. Throws a UserPathError. */
 function userFile(ctx, raw) {

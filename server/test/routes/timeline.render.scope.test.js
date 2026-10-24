@@ -40,6 +40,7 @@ before(() => {
   f.theirs = path.join(theirs, "private.mp4");
   f.global = path.join(process.env.OUTPUT_DIR, "owner.mp4");
   f.tts = path.join(process.env.OUTPUT_DIR, "tts-edge-abc.mp3");
+  f.stock = path.join(process.env.OUTPUT_DIR, "pexels-123.mp4");
   for (const file of Object.values(f)) fs.writeFileSync(file, "x");
   try {
     junction = path.join(mine, "escape");
@@ -51,6 +52,7 @@ before(() => {
   fs.writeFileSync(path.join(userDir, "library.json"), JSON.stringify({ items: [
     { id: "501", url: "https://videos.example.com/stock.mp4", previewUrl: "https://videos.example.com/stock.mp4" },
     { id: "502", url: f.theirs, previewUrl: f.theirs },
+    { id: "pexels_123", provider: "pexels", url: f.stock.split(path.sep).join("/"), previewUrl: "/outputs/pexels-123.mp4" },
   ] }));
 });
 
@@ -156,6 +158,16 @@ describe("/api/timeline/render asset scope", () => {
       assert.equal(res.status, 202, `${p}: ${JSON.stringify(res.body)}`);
       await settle();
       assert.equal(renders.length, 1, p);
+    }
+  });
+
+  test("downloaded Pexels/Pixabay stock in the global folder renders, by item and by alias", async () => {
+    for (const p of ["pexels_123", "/outputs/pexels-123.mp4", f.stock]) {
+      renders = [];
+      const res = await render(ctx, p, "video");
+      assert.equal(res.status, 202, `${p}: ${JSON.stringify(res.body)}`);
+      await settle();
+      assert.equal(path.resolve(renderedPath()), path.resolve(fs.realpathSync(f.stock)), p);
     }
   });
 

@@ -5,12 +5,13 @@ import { isInsideDir } from "./pathJail.js";
 import { readLibrary } from "./library.js";
 import { OUTPUT_DIR, isOwnerCtx } from "./paths.js";
 import { resolveOutputAlias } from "./mediaThumb.js";
-import { confineUserPath, isSharedTtsFile, UserPathError } from "./userPathScope.js";
+import { confineUserPath, isSharedStockFile, isSharedTtsFile, UserPathError } from "./userPathScope.js";
 
 /**
  * The path rule for render inputs: /api/render/* and queued render jobs
  * (#112). For anyone but the owner, a local input must be the caller's own
- * file (confineUserPath), a shared tts-* voice file, or a generated image made
+ * file (confineUserPath), a shared tts-* voice file, downloaded Pexels/Pixabay
+ * stock (pexels-<id>.mp4 and the like), or a generated image made
  * for them (genvis-<userId>-*, auto-<userId>) or for a series (series_*).
  * Library refs (`library:`, `mylib:`) resolve through their own stores, a
  * saved library id through the caller's own library (whose local links are
@@ -88,7 +89,7 @@ export function isSharedGeneratedImageDir(dir, userId) {
 /**
  * A local link a saved library item may carry (url, previewUrl, image,
  * files[].link): the caller's own file, or a generated image made for them
- * (#112). Returns its real path, or null for a missing file inside the
+ * (#112), or downloaded stock. Returns its real path, or null for a missing file inside the
  * caller's folder. Throws PATH_OUTSIDE_MEDIA for anything else, a URL
  * included: callers let http(s) stock links through before asking.
  *
@@ -97,7 +98,7 @@ export function isSharedGeneratedImageDir(dir, userId) {
  */
 export function confineLibraryLink(value, ctx) {
   try {
-    return confineUserPath(value, ctx, { allowShared: (abs) => isSharedGeneratedImage(abs, ctx?.userId) });
+    return confineUserPath(value, ctx, { allowShared: (abs) => isSharedStockFile(abs) || isSharedGeneratedImage(abs, ctx?.userId) });
   } catch (err) {
     if (err instanceof UserPathError && err.code === "FILE_NOT_FOUND") return null;
     throw err;
@@ -105,7 +106,7 @@ export function confineLibraryLink(value, ctx) {
 }
 
 function scopeFor(ctx) {
-  return { allowShared: (abs) => isSharedTtsFile(abs) || isSharedGeneratedImage(abs, ctx?.userId) };
+  return { allowShared: (abs) => isSharedTtsFile(abs) || isSharedStockFile(abs) || isSharedGeneratedImage(abs, ctx?.userId) };
 }
 
 function isUnconfined(ctx) {

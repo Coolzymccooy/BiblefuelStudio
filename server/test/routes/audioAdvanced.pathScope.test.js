@@ -53,6 +53,7 @@ before(() => {
   f.tts = tone(path.join(process.env.OUTPUT_DIR, "tts-edge-abc.mp3"));
   f.owner = tone(path.join(process.env.OUTPUT_DIR, "owner.mp3"));
   f.owner2 = tone(path.join(process.env.OUTPUT_DIR, "owner2.mp3"));
+  f.stock = make(path.join(process.env.OUTPUT_DIR, "pixabay-456.mp4"), ["-f", "lavfi", "-i", "color=c=blue:s=64x64:r=10:d=1", "-pix_fmt", "yuv420p"]);
   try {
     junction = path.join(mine, "escape");
     fs.symlinkSync(theirs, junction, "junction");
@@ -62,7 +63,10 @@ before(() => {
   // The caller's saved library: one stock item that points at another
   // tenant's file on disk, which must not become a way round the rule.
   fs.writeFileSync(path.join(userDir, "library.json"), JSON.stringify({
-    items: [{ id: "777", url: f.theirs, previewUrl: f.theirs }],
+    items: [
+      { id: "777", url: f.theirs, previewUrl: f.theirs },
+      { id: "pixabay_456", provider: "pixabay", url: f.stock.split(path.sep).join("/"), previewUrl: "/outputs/pixabay-456.mp4" },
+    ],
   }));
 });
 
@@ -197,6 +201,14 @@ describe("audio-adv still serves the caller's own media", { skip: noFfmpeg }, ()
     const res = await request(appFor(ctx)).post("/api/audio-adv/timeline-preview")
       .send({ backgroundPath: f.bg, clips: [{ path: "/outputs/mine.mp3" }] });
     assert.equal(res.status, 200, JSON.stringify(res.body));
+  });
+
+  test("POST /timeline-preview over a downloaded Pixabay clip in the global folder", async () => {
+    for (const backgroundPath of ["pixabay_456", "/outputs/pixabay-456.mp4"]) {
+      const res = await request(appFor(ctx)).post("/api/audio-adv/timeline-preview")
+        .send({ backgroundPath, clips: [{ path: "/outputs/mine.mp3" }] });
+      assert.equal(res.status, 200, `${backgroundPath}: ${JSON.stringify(res.body)}`);
+    }
   });
 
   test("the owner still merges files in the global output folder", async () => {
