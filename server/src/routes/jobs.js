@@ -108,6 +108,21 @@ function probeAudioDuration(filePath) {
   });
 }
 
+/**
+ * The render's result with `durationSec`, the finished video's real length (#121): a voice
+ * track sets the length, not the durationSec asked for. A failed probe leaves it out.
+ */
+async function withVideoLength(result) {
+  if (!result?.outFile) return result;
+  try {
+    const seconds = await probeAudioDuration(result.outFile);
+    return { ...result, durationSec: Math.round(seconds * 100) / 100 };
+  } catch (err) {
+    console.warn(`[RENDER] could not read the finished video's length: ${err?.message || err}`);
+    return result;
+  }
+}
+
 function clampDuration(value) {
   const n = Number(value || 20);
   if (Number.isNaN(n)) return 20;
@@ -798,7 +813,7 @@ async function executeJob(job) {
   }
 
   if (job.type === "render_video") {
-    return await renderVideoCore(job.payload || {}, job.id);
+    return withVideoLength(await renderVideoCore(job.payload || {}, job.id));
   }
 
   if (job.type === "campaign_auto_post") {

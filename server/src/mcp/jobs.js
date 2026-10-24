@@ -40,7 +40,7 @@ export function clampTimeoutSec(value) {
 function fromJobsRoute(payload, ctx) {
   const job = payload?.job || {};
   const result = job.result && typeof job.result === "object" ? job.result : {};
-  return toHandle(
+  const handle = toHandle(
     {
       kind: "job",
       id: job.id,
@@ -52,6 +52,8 @@ function fromJobsRoute(payload, ctx) {
     },
     ctx,
   );
+  // The finished video's real length (#121): with a voice track it is the voice's, not the durationSec asked for.
+  return Number.isFinite(result.durationSec) ? { ...handle, durationSec: result.durationSec } : handle;
 }
 
 function fromCaptioned(payload, ctx) {

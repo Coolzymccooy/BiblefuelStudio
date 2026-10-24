@@ -374,3 +374,7 @@ test("render_short says a voice track sets the length, so durationSec alone does
   assert.match(description, /as long as the voice/);
   assert.match(inputSchema.durationSec.description, /ignored when there is a voice/i);
 });
+
+test("render_short says the finished handle gives the video's real length as durationSec (#121)", () => {
+  assert.match(byName.render_short.description, /durationSec[^.]*real length/);
+});
