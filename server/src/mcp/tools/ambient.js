@@ -313,11 +313,23 @@ const ambientUpdate = {
 
 // ---- ambient_render / ambient_cancel -----------------------------------------
 
+/** The render leaves out a verse with no audio without a word: refuse until every verse is voiced (or the session is music only). */
+function unvoicedRefusal(project) {
+  if (project.words === "none") return null;
+  const missing = unvoicedCount(project);
+  if (missing === 0) return null;
+  const total = Array.isArray(project.drops) ? project.drops.length : 0;
+  return fail(
+    "UNVOICED_VERSES",
+    `${missing} of ${total} verses are not voiced yet, and the render would leave them out. Run ambient_step voice (and wait for it), or remove those verses with ambient_update section drops.`,
+  );
+}
+
 const ambientRender = {
   name: "ambient_render",
   title: "Render an ambient session",
   description:
-    "Build the music bed and render the session into one video: the pictures, the spoken verses over the music, and the captions. Every movement needs a picture (ambient_step images) and the bed needs music (ambient_update bed); otherwise the call is refused and costs nothing. " +
+    "Build the music bed and render the session into one video: the pictures, the spoken verses over the music, and the captions. Every movement needs a picture (ambient_step images), the bed needs music (ambient_update bed) and every verse must be voiced (UNVOICED_VERSES otherwise; not for music-only sessions); it is refused while a step is still running (SESSION_BUSY). A refused call costs nothing. " +
     "Returns a handle of kind ambient: call jobs_wait with kind ambient and the session id, again and again, until done; output.path is the video, which publish_youtube takes (then ambient_project mark_published). " +
     "Long sessions take a long time: building the bed takes minutes and the render runs at about real time or slower, so a two-hour session can take an hour or more and a ten-hour one many hours. " +
     "A server deploy or restart stops a running render: jobs_wait then reports failed saying so; call ambient_cancel, then ambient_render again (a bed already built is reused). " +
@@ -325,6 +337,9 @@ const ambientRender = {
   inputSchema: { id: AMBIENT_ID.describe("The session id.") },
   routes: ["/api/ambient"],
   async handler(ctx, { id }) {
+    const { project } = await readSession(ctx, id);
+    const notReady = busyRefusal(project) || unvoicedRefusal(project);
+    if (notReady) return notReady;
     const outOfQuota = await renderQuotaRefusal(ctx);
     if (outOfQuota) return outOfQuota;
     const refused = await ctx.chargeCap({ renders: 1 });

@@ -360,7 +360,7 @@ test("a bed the user never cleared sends no licence choice", async () => {
 test("ambient_render charges one daily render after the plan render check and returns an ambient handle", async () => {
   const { ctx, calls, chargeCalls } = ctxWith({ "POST /api/ambient/a1/render": { ok: true, jobId: "rj1" } });
   const result = await byName.ambient_render.handler(ctx, { id: "a1" });
-  assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage", "POST /api/ambient/a1/render"]);
+  assert.deepEqual(routesCalled(calls), ["GET /api/ambient/a1", "GET /api/billing/usage", "POST /api/ambient/a1/render"]);
   assert.deepEqual(chargeCalls, [{ renders: 1 }]);
   assert.deepEqual(result.structuredContent, {
     kind: "ambient", id: "a1", status: "running", percent: null, phase: "assembling", output: null, error: null, jobId: "rj1",
@@ -371,8 +371,31 @@ test("ambient_render without plan quota is refused before any charge", async () 
   const { ctx, calls, chargeCalls } = ctxWith({}, { usageBody: usage({ render: SPENT }) });
   const result = await byName.ambient_render.handler(ctx, { id: "a1" });
   assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
-  assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage"]);
+  assert.deepEqual(routesCalled(calls), ["GET /api/ambient/a1", "GET /api/billing/usage"]);
   assert.equal(chargeCalls.length, 0);
+});
+
+test("ambient_render refuses a busy session (voicing still running) before the quota check, charging nothing", async () => {
+  for (const status of ["voicing", "generating_images", "rendering"]) {
+    const { ctx, calls, chargeCalls } = ctxWith({}, { session: SESSION({ status, drops: [drop("d1")] }) });
+    const result = await byName.ambient_render.handler(ctx, { id: "a1" });
+    assert.equal(result.structuredContent.error, "SESSION_BUSY", status);
+    assert.deepEqual(routesCalled(calls), ["GET /api/ambient/a1"]);
+    assert.equal(chargeCalls.length, 0);
+  }
+});
+
+test("ambient_render refuses verses not yet voiced, unless the session is music only", async () => {
+  const drops = [drop("d1", { status: "done", audioPath: "/a.mp3" }), drop("d2", { status: "error", error: "x" })];
+  const unvoiced = ctxWith({}, { session: SESSION({ status: "ready_to_render", drops }) });
+  const refused = await byName.ambient_render.handler(unvoiced.ctx, { id: "a1" });
+  assert.equal(refused.structuredContent.error, "UNVOICED_VERSES");
+  assert.match(refused.content[0].text, /1 of 2/);
+  assert.equal(unvoiced.chargeCalls.length, 0);
+  const musicOnly = ctxWith({ "POST /api/ambient/a1/render": { ok: true, jobId: "rj2" } }, { session: SESSION({ words: "none", drops }) });
+  const started = await byName.ambient_render.handler(musicOnly.ctx, { id: "a1" });
+  assert.equal(started.structuredContent.kind, "ambient");
+  assert.deepEqual(musicOnly.chargeCalls, [{ renders: 1 }]);
 });
 
 test("ambient_cancel stops a busy session for free", async () => {
