@@ -301,6 +301,18 @@ test("lyric_render is refused without a song, without timing, or while busy, bef
   }
 });
 
+test("lyric_render gives its daily render back when the server is short of space (507), and rethrows", async () => {
+  const full = Object.assign(new Error("The server is short of space right now — try again later."), { name: "ApiError", status: 507, code: "HTTP_507" });
+  const { ctx, chargeCalls, refunds } = ctxWith({ "POST /api/lyric-video/lv_1/render": full });
+  await assert.rejects(() => byName.lyric_render.handler(ctx, { id: "lv_1" }), (err) => err.status === 507);
+  assert.deepEqual(chargeCalls, [{ renders: 1 }]);
+  assert.deepEqual(refunds, [{ bucket: "renders", amount: 1 }]);
+  const broken = Object.assign(new Error("boom"), { name: "ApiError", status: 500, code: "HTTP_500" });
+  const other = ctxWith({ "POST /api/lyric-video/lv_1/render": broken });
+  await assert.rejects(() => byName.lyric_render.handler(other.ctx, { id: "lv_1" }), (err) => err.status === 500);
+  assert.deepEqual(other.refunds, []);
+});
+
 test("lyric_render without plan render quota is refused before any charge", async () => {
   const { ctx, calls, chargeCalls } = ctxWith({}, { usageBody: usage(SPENT) });
   const result = await byName.lyric_render.handler(ctx, { id: "lv_1" });

@@ -240,7 +240,7 @@ const lyricRender = {
     "Render the song into a video: the timed lyrics drawn over the background, with the song as the sound. Needs the song and its timing (lyric_align done); otherwise refused at no cost. " +
     "aspect portrait (default), landscape or square; quality 720p (default) or 1080p; shortsTrim cuts a portrait video to under three minutes for YouTube Shorts (refused when the song cannot be trimmed cleanly). " +
     "Returns a handle of kind lyric_render with the render's job id as id and the song's id as projectId: call jobs_wait with kind lyric_render, that id AND projectId. output.path is the video for publish_youtube (lyric_project publish_draft gives a title and description). " +
-    "Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up). Takes about the song's length; one render per account at a time, and a server deploy stops it. It never posts anywhere. lyric_project cancel_render stops it.",
+    "Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up); the daily render is given back when the server is short of space. Takes about the song's length; one render per account at a time, and a server deploy stops it. It never posts anywhere. lyric_project cancel_render stops it.",
   inputSchema: {
     id: LYRIC_ID.describe("The song's project id."),
     aspect: z.enum(LYRIC_ASPECTS).optional().describe("portrait (default), landscape or square."),
@@ -255,7 +255,14 @@ const lyricRender = {
     if (outOfQuota) return outOfQuota;
     const capped = await ctx.chargeCap({ renders: 1 });
     if (capped) return capped;
-    const response = await ctx.api.call("POST", `${projectPath(id)}/render`, { body: defined({ aspect, quality, shortsTrim }) });
+    let response;
+    try {
+      response = await ctx.api.call("POST", `${projectPath(id)}/render`, { body: defined({ aspect, quality, shortsTrim }) });
+    } catch (err) {
+      // 507: the server is short of space, so nothing was made. The registry gives back only 4xx refusals.
+      if (err?.name === "ApiError" && err.status === 507) await ctx.refundCap({ renders: 1 });
+      throw err;
+    }
     return ok(renderStarted(response?.jobId, id));
   },
 };
