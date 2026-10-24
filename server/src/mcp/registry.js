@@ -9,6 +9,7 @@ import { fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "./toolResult.js";
 import { lacksPublishConsent } from "./autoPublish.js";
 import { planAllows } from "../middleware/featureGate.js";
 import { registerJobResource } from "./resources.js";
+import { registerPrompts } from "./prompts.js";
 
 export { PUBLISH_NOT_ALLOWED_MESSAGE };
 
@@ -263,5 +264,6 @@ export function buildServer(ctx) {
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: readGuide() }] }),
   );
   registerJobResource(server, ctx);
+  registerPrompts(server);
   return server;
 }
