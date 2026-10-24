@@ -7,6 +7,7 @@
  * connected it points to Settings rather than starting a second connect flow.
  */
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Check, Music2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
@@ -90,13 +91,13 @@ export function TikTokPostPanel({ videoUrl, caption, title }: Props) {
       {status === 'failed' && <p className="text-help">Your TikTok connection could not be checked. Refresh the page to try again.</p>}
       {status !== null && status !== 'failed' && !status.connected && (
         <p className="text-help">
-          No TikTok is connected yet. <a href={SETTINGS_PATH} className="underline hover:text-bf-cream">Connect TikTok in Settings</a>, then come back to post this film.
+          No TikTok is connected yet. <Link to={SETTINGS_PATH} className="underline hover:text-bf-cream">Connect TikTok in Settings</Link>, then come back to post this film.
         </p>
       )}
       {connected && (
         <>
           <p className="text-help">
-            Posts the film with the caption above to {status.username ? `@${status.username}` : 'your TikTok'}, straight away.
+            Posts the film publicly with the caption above to {status.username ? `@${status.username}` : 'your TikTok'}, straight away.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="secondary" onClick={() => { void post(); }} isLoading={posting} disabled={posting || posted}>

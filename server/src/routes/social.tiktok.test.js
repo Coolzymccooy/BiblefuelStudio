@@ -34,13 +34,15 @@ const { withUserScope } = await import("../middleware/userScope.js");
 const socialModule = await import("./social.js");
 const socialRouter = socialModule.default;
 const { tiktokConnectCallback, _resetOwnKeyLimit } = socialModule;
-const { _setZernioFetch } = await import("../lib/social/zernioConnect.js");
+const { _setZernioFetch, _failClosedZernioFetch, zernioFetch } = await import("../lib/social/zernioConnect.js");
 const { readSocialStore, writeSocialStore } = await import("../lib/socialStore.js");
 const { resolveScopeDirs } = await import("../lib/paths.js");
 const { signOAuthState, requireAuth } = await import("../auth.js");
 
 after(() => { fs.rmSync(tmpRoot, { recursive: true, force: true }); });
-afterEach(() => _setZernioFetch(null));
+// Fail closed: a test that forgets to stub Zernio gets a loud error, never the real zernio.com.
+_failClosedZernioFetch();
+afterEach(() => _failClosedZernioFetch());
 
 const owner = { sub: "owner-sub", email: OWNER_EMAIL };
 const admin = { sub: "admin2-sub", email: ADMIN_EMAIL };
@@ -306,14 +308,20 @@ describe("POST /post destination=tiktok", () => {
     assert.equal(sent.length, 0);
   });
 
-  test("a post TikTok rejects comes back as an error with Zernio's reason", async () => {
+  test("a post TikTok rejects gives the user a plain sentence, and the detail goes to the server log", async (t) => {
+    const logged = t.mock.method(console, "error", () => {});
     connectAdmin();
     stubPosts([207, { post: { _id: "post_2", status: "failed", platforms: [{ platform: "tiktok", status: "failed", errorMessage: "Video is too short" }] } }]);
     const res = await request(app(admin)).post("/api/social/post")
       .send({ destination: "tiktok", caption: "c", videoUrl: "/outputs/a.mp4" })
       .expect(400);
     assert.equal(res.body.ok, false);
-    assert.match(res.body.error, /Video is too short/);
+    assert.equal(res.body.error, "TikTok didn't accept the post. Try again in a minute.");
+    assert.ok(logged.mock.calls.some((c) => c.arguments.join(" ").includes("Video is too short")), "the detail is logged");
+  });
+
+  test("a forgotten Zernio stub fails loudly instead of reaching zernio.com", async () => {
+    await assert.rejects(zernioFetch("https://zernio.com/api/v1/posts"), /zernio fetch not stubbed in test/);
   });
 });
 

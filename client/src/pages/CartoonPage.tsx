@@ -97,10 +97,12 @@ function StepPanel({ step, project, month, seedance, onSaved, onScriptSaved, onG
  * Delete the cartoon, after a confirm. Off while a step runs; the server's BUSY answer is shown if one starts meanwhile.
  * A PAID_NOT_SAVED refusal (a paid clip not yet downloaded) stays beside the button, since it tells the user what to do first.
  */
-function DeleteCartoon({ project }: { project: CartoonProject }) {
+export function DeleteCartoon({ project }: { project: CartoonProject }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  // A refusal is about the project as it was; once it changes (the clip fetched, say), the line would be stale.
+  useEffect(() => { setRefused(null); }, [project]);
   const running = Object.values(project.running ?? {}).some(Boolean);
   const remove = async () => {
     if (!window.confirm('Delete this cartoon? Its clips stay in your visual library.')) return;

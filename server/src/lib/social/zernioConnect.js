@@ -21,6 +21,11 @@ export function _setZernioFetch(fn) {
   fetchImpl = fn || defaultFetch;
 }
 
+/** Test seam: make every Zernio request throw, so a test that forgets to stub one fails loudly. */
+export function _failClosedZernioFetch() {
+  fetchImpl = async (url) => { throw new Error(`zernio fetch not stubbed in test: ${url}`); };
+}
+
 /** Every Zernio request goes through here, so the test seam covers posting too. */
 export function zernioFetch(...args) {
   return fetchImpl(...args);

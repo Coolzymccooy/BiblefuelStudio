@@ -156,7 +156,7 @@ export function RenderSharePanel({
             )
           ) : (
             <div className="text-[10px] text-content-secondary bg-white/[0.04] border border-white/10 rounded-md px-2 py-1">
-              Direct API requires OAuth setup
+              {postDestination === 'tiktok' ? 'Posts to the TikTok account connected in Settings' : 'Direct API requires OAuth setup'}
             </div>
           )}
           {!(postDestination === 'youtube' && youtubePanel) && (

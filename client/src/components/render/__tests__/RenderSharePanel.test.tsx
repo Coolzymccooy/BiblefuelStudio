@@ -74,8 +74,8 @@ describe('RenderSharePanel', () => {
     expect(screen.getByRole('option', { name: 'YouTube Public' })).toBeInTheDocument();
   });
 
-  it('warns that direct Instagram/TikTok posting needs OAuth', () => {
-    setup({ postDestination: 'tiktok' });
+  it('warns that direct Instagram posting needs OAuth', () => {
+    setup({ postDestination: 'instagram' });
     expect(screen.getByText(/requires OAuth setup/i)).toBeInTheDocument();
   });
 
@@ -89,5 +89,10 @@ describe('RenderSharePanel', () => {
   it('guards against double-taps while a share is in flight', () => {
     setup({ isSharing: true });
     expect(screen.getByRole('button', { name: /sharing/i })).toBeDisabled();
+  });
+  it('TikTok (Direct) says it posts to the TikTok connected in Settings', () => {
+    setup({ postDestination: 'tiktok' });
+    expect(screen.getByText('Posts to the TikTok account connected in Settings')).toBeInTheDocument();
+    expect(screen.queryByText(/requires OAuth setup/)).not.toBeInTheDocument();
   });
 });

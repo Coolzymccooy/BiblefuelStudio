@@ -425,9 +425,11 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
  * none of their Make or Zapier webhooks, which the "webhook" destination
  * would also fire (the operator's Make scenario uploads to YouTube). Posted
  * now, falling back to a Creator Inbox draft at capacity, exactly as the
- * webhook destination's TikTok leg does. A failure throws, so the caller
- * sees Zernio's reason.
+ * webhook destination's TikTok leg does. A failure is logged with Zernio's
+ * reason and throws a plain sentence for the user.
  */
+const TIKTOK_POST_FAILED = "TikTok didn't accept the post. Try again in a minute.";
+
 async function postToTikTok({ caption, videoUrl, title }, req, store) {
   const target = tiktokTargetFor(req?.ctx, store);
   if (!target) throw new Error("Connect TikTok in Settings first, then post again.");
@@ -436,7 +438,14 @@ async function postToTikTok({ caption, videoUrl, title }, req, store) {
     throw new Error(`videoUrl must be absolute or resolvable: ${videoUrl}`);
   }
   const resolvedTitle = String(title || "").trim().slice(0, 100) || deriveCleanTitle(caption);
-  const zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle, accountId: target.accountId, apiKey: target.apiKey });
+  let zernio;
+  try {
+    zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle, accountId: target.accountId, apiKey: target.apiKey });
+  } catch (e) {
+    // The vendor's wording and status code are for the log; the user gets a plain sentence.
+    console.error("[SOCIAL] TikTok post failed:", e?.message || e);
+    throw new Error(TIKTOK_POST_FAILED);
+  }
   const draft = zernio.deliveredAsDraft === true;
   return { ok: true, partial: false, results: [{ destination: "tiktok", ok: true, error: "", draft }], videoUrl: mediaUrl, title: resolvedTitle, zernio };
 }

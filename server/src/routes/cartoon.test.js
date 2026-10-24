@@ -736,7 +736,7 @@ describe("/api/cartoon", () => {
   test("delete waits while a paid clip can still be fetched free, on the shot or kept on remake", async () => {
     const paid = (startedAt) => ({ status: "error", taskId: "task-paid", chargedTaskId: "task-paid", startedAt, seconds: 4, prompt: "p", error: "not downloaded" });
     const withClip = (id, clip) => updateProject(ctx().dataDir, id, (p) => ({ ...p, shots: p.shots.map((s, i) => (i === 0 ? { ...s, clip } : s)) }));
-    const sentence = "A clip you paid for hasn't finished downloading. Open Film and press Re-make to fetch it free, then delete.";
+    const sentence = "A clip you paid for hasn't finished downloading. Open Film and press Retry or Re-make to fetch it free, then delete.";
 
     const failed = (await create()).body.project.id;
     withClip(failed, paid(Date.now()));

@@ -348,7 +348,7 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     }
     // A paid clip not yet downloaded lives only on this project; deleting it now loses a clip the user paid for.
     if (project.shots.some((shot) => fetchesAgain(shot))) {
-      return fail(res, 409, "PAID_NOT_SAVED", "A clip you paid for hasn't finished downloading. Open Film and press Re-make to fetch it free, then delete.");
+      return fail(res, 409, "PAID_NOT_SAVED", "A clip you paid for hasn't finished downloading. Open Film and press Retry or Re-make to fetch it free, then delete.");
     }
     // The visual library keeps its own copies of the clips.
     deleteProject(req.ctx.dataDir, req.ctx.outputDir, project.id);

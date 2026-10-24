@@ -20,7 +20,7 @@ import { ApiError } from '../../../lib/apiError';
 import { toastError } from '../../../lib/errors';
 import { useAuth } from '../../../hooks/useAuth';
 import type { CartoonProject } from '../../../lib/cartoonTypes';
-import { CartoonPage } from '../../../pages/CartoonPage';
+import { CartoonPage, DeleteCartoon } from '../../../pages/CartoonPage';
 
 function project(over: Partial<CartoonProject> = {}): CartoonProject {
   return {
@@ -96,7 +96,7 @@ describe('CartoonPage', () => {
   });
 
   it('Delete refused for a paid clip still downloading shows why, beside the button', async () => {
-    const sentence = "A clip you paid for hasn't finished downloading. Open Film and press Re-make to fetch it free, then delete.";
+    const sentence = "A clip you paid for hasn't finished downloading. Open Film and press Retry or Re-make to fetch it free, then delete.";
     vi.mocked(cartoonApi.remove).mockRejectedValue(new ApiError(sentence, 'PAID_NOT_SAVED', {}, 409));
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderPage();
@@ -105,6 +105,20 @@ describe('CartoonPage', () => {
     expect(toastError).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Delete cartoon' })).toBeEnabled();
     expect(screen.queryByText('All scene scripts list')).not.toBeInTheDocument();
+  });
+
+  it('the refusal line clears once the project changes, e.g. the clip is fetched', async () => {
+    vi.mocked(cartoonApi.remove).mockRejectedValue(new ApiError("A clip you paid for hasn't finished downloading.", 'PAID_NOT_SAVED', {}, 409));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const before = project();
+    const { rerender } = render(<MemoryRouter><DeleteCartoon project={before} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete cartoon' }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    rerender(<MemoryRouter><DeleteCartoon project={before} /></MemoryRouter>);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    const fetched = project({ shots: [{ ...before.shots[0], clip: { status: 'done', url: '/outputs/c.mp4' } }] as CartoonProject['shots'] });
+    rerender(<MemoryRouter><DeleteCartoon project={fetched} /></MemoryRouter>);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('moving to another step scrolls to the top of that step', async () => {
