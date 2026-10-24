@@ -4,7 +4,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createProject, readProject, updateProject, projectOutputDir } from "./store.js";
-import { cartoonFromScript } from "./model.js";
+import { cartoonFromScript, estimateFilm } from "./model.js";
+import { cartoonRenderBlockers } from "./renderStage.js";
 import { startFilm, isFilming, cancelFilm, resumeFilm, filmLedgerKey, lastFrameOf } from "./filmStage.js";
 import { readLibrary } from "../visualLibrary/store.js";
 import { readLedger, reserveSpend, estimateTokens, usdForTokens } from "../videoGen/spend.js";
@@ -508,5 +509,168 @@ describe("cartoon film stage", () => {
     assert.equal(await lastFrameOf(good, "clip.mp4", out), out);
     const broken = { ffmpeg: async () => { throw new Error("spawn failed"); } };
     assert.equal(await lastFrameOf(broken, "clip.mp4", out), null);
+  });
+
+  /** A project whose every shot has a done clip, as after a first full film run. */
+  async function filmed() {
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    startFilm(ctx, project.id, { ledgerDir, deps: fakeDeps().deps });
+    await settle(project.id);
+    return readProject(ctx.dataDir, project.id);
+  }
+
+  /** The shot kept its earlier paid clip after a re-make that made nothing, and says why. */
+  function assertKeptEarlier(before, shotId, why) {
+    const after = readProject(ctx.dataDir, before.id);
+    const was = before.shots.find((s) => s.id === shotId).clip;
+    const clip = after.shots.find((s) => s.id === shotId).clip;
+    assert.equal(clip.status, "done", `${shotId} is still done`);
+    assert.equal(clip.libraryId, was.libraryId, `${shotId} kept the clip it had`);
+    assert.equal(clip.url, was.url);
+    assert.match(clip.remakeError, why);
+    assert.equal(estimateFilm(after).clips, 0, "nothing needs ordering again");
+    const clipBlockers = cartoonRenderBlockers(ctx, after).filter((b) => /clip/.test(b));
+    assert.deepEqual(clipBlockers, [], "every shot still has a clip to render");
+    return after;
+  }
+
+  test("a refused re-make keeps the earlier clip and says why", async () => {
+    const before = await filmed();
+    const refusing = fakeDeps({ submit: async () => ({ ok: false, code: "PERSON_REFUSED", error: "real person" }) });
+    startFilm(ctx, before.id, { only: ["sh1"], ledgerDir, deps: refusing.deps });
+    await settle(before.id);
+    const after = assertKeptEarlier(before, "sh1", /real person/);
+    assert.equal(after.spentUsd, before.spentUsd, "nothing more was paid");
+    assert.deepEqual(readLedger(ledgerDir).reservations, {});
+  });
+
+  test("a re-make that BytePlus fails keeps the earlier clip, and the reservation is released", async () => {
+    const before = await filmed();
+    const failing = fakeDeps({ wait: async () => ({ ok: false, code: "FAILED", error: "internal error" }) });
+    startFilm(ctx, before.id, { only: ["sh3"], ledgerDir, deps: failing.deps });
+    await settle(before.id);
+    assertKeptEarlier(before, "sh3", /did not return this clip/);
+    const ledger = readLedger(ledgerDir);
+    assert.deepEqual(ledger.reservations, {});
+    assert.equal(ledger.clips, 4, "the failed re-make was not charged");
+  });
+
+  test("a re-make refused at the monthly cap keeps the earlier clip", async () => {
+    const before = await filmed();
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = String(readLedger(ledgerDir).settledUsd + 0.01);
+    startFilm(ctx, before.id, { only: ["sh1"], ledgerDir, deps: fakeDeps().deps });
+    await settle(before.id);
+    assertKeptEarlier(before, "sh1", /./);
+  });
+
+  test("a stopped re-make keeps the earlier clip", async () => {
+    const before = await filmed();
+    const { deps, calls } = fakeDeps();
+    startFilm(ctx, before.id, { only: ["sh1"], ledgerDir, deps });
+    cancelFilm(before.id);
+    await settle(before.id);
+    assertKeptEarlier(before, "sh1", /Stopped/);
+    assert.equal(calls.submit.length, 0);
+  });
+
+  test("a re-make cut off by a restart before it was ordered keeps the earlier clip", async () => {
+    const before = await filmed();
+    const done = before.shots[0].clip;
+    const stuck = updateProject(ctx.dataDir, before.id, (p) => ({
+      ...p,
+      shots: p.shots.map((s, i) => (i === 0 ? { ...s, clip: { status: "queued", taskId: null, seconds: 4, prompt: "p", previous: done } } : s)),
+    }));
+    await resumeFilm(ctx, [stuck], { ledgerDir, deps: fakeDeps().deps });
+    assertKeptEarlier(before, "sh1", /restart/);
+  });
+
+  test("a re-make paid for but not downloaded keeps the earlier clip and is fetched later at no cost", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const before = await filmed();
+    const { deps } = fakeDeps();
+    startFilm(ctx, before.id, { only: ["sh1"], ledgerDir, deps: { ...deps, download: async () => { throw new Error("socket hang up"); } } });
+    await settle(before.id);
+    const kept = assertKeptEarlier(before, "sh1", /paid for but could not be downloaded/);
+    assert.ok(kept.spentUsd > before.spentUsd, "the re-make was paid for");
+    const estimate = estimateFilm(kept, ["sh1"]);
+    assert.equal(estimate.clips, 0);
+    assert.equal(estimate.refetch, 1);
+    assert.equal(estimate.usd, 0);
+
+    const again = fakeDeps();
+    assert.ok(startFilm(ctx, before.id, { only: ["sh1"], ledgerDir, deps: again.deps }));
+    await settle(before.id);
+    const fetched = readProject(ctx.dataDir, before.id);
+    assert.equal(again.calls.submit.length, 0, "fetched again, never ordered again");
+    assert.equal(fetched.shots[0].clip.status, "done");
+    assert.notEqual(fetched.shots[0].clip.libraryId, before.shots[0].clip.libraryId);
+    assert.equal(fetched.shots[0].clip.previous.libraryId, before.shots[0].clip.libraryId);
+    assert.equal(fetched.shots[0].clip.remakeError, undefined);
+    assert.equal(fetched.spentUsd, kept.spentUsd, "fetching it cost nothing");
+    assert.equal(readLedger(ledgerDir).clips, 5);
+  });
+
+  test("a paid clip that failed to download is priced at $0", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    const { deps } = fakeDeps();
+    startFilm(ctx, project.id, { only: ["sh1"], ledgerDir, deps: { ...deps, download: async () => { throw new Error("socket hang up"); } } });
+    await settle(project.id);
+    const failed = readProject(ctx.dataDir, project.id);
+    assert.equal(failed.shots[0].clip.status, "error");
+    const all = estimateFilm(failed);
+    assert.equal(all.refetch, 1);
+    assert.equal(all.clips, 3, "only the three unmade shots are priced");
+    assert.equal(estimateFilm(failed, ["sh1"]).usd, 0);
+  });
+
+  test("a re-wait that ends in a definite failure orders anew next time", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    const { deps } = fakeDeps();
+    startFilm(ctx, project.id, { only: ["sh1"], ledgerDir, deps: { ...deps, download: async () => { throw new Error("socket hang up"); } } });
+    await settle(project.id);
+    assert.equal(estimateFilm(readProject(ctx.dataDir, project.id), ["sh1"]).refetch, 1);
+
+    const dead = fakeDeps({ wait: async () => ({ ok: false, code: "NO_VIDEO", error: "BytePlus finished the clip but sent no video." }) });
+    startFilm(ctx, project.id, { only: ["sh1"], ledgerDir, deps: dead.deps });
+    await settle(project.id);
+    assert.equal(dead.calls.submit.length, 0, "the first Retry waits on the paid task again");
+    const failed = readProject(ctx.dataDir, project.id);
+    assert.equal(failed.shots[0].clip.status, "error");
+    assert.equal(failed.shots[0].clip.refetchable, false);
+    assert.equal(estimateFilm(failed, ["sh1"]).clips, 1, "the next Retry is a new, priced order");
+
+    const fresh = fakeDeps();
+    startFilm(ctx, project.id, { only: ["sh1"], ledgerDir, deps: fresh.deps });
+    await settle(project.id);
+    assert.equal(fresh.calls.submit.length, 1);
+    assert.equal(readProject(ctx.dataDir, project.id).shots[0].clip.status, "done");
+  });
+
+  test("a refused fresh shot names the portraits to make again", async () => {
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    const { deps } = fakeDeps({ submit: async () => ({ ok: false, code: "PERSON_REFUSED", error: "real person" }) });
+    startFilm(ctx, project.id, { only: ["sh1"], ledgerDir, deps });
+    await settle(project.id);
+    assert.equal(
+      readProject(ctx.dataDir, project.id).shots[0].clip.error,
+      "BytePlus thinks one of these portraits shows a real person: Eli and Pip. Make them again.",
+    );
+  });
+
+  test("a speech check that throws stores a fixed sentence, never the error's text", async () => {
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    const { deps } = fakeDeps();
+    const throwing = { ...deps, transcribe: async () => { throw new Error("ENOENT: no such file C:\\tmp\\cartoon-speech-1.wav"); } };
+    startFilm(ctx, project.id, { only: ["sh1"], ledgerDir, deps: throwing });
+    await settle(project.id);
+    const { speech } = readProject(ctx.dataDir, project.id).shots[0].clip;
+    assert.deepEqual(speech, { ok: null, error: "The speech check could not run." });
   });
 });

@@ -282,6 +282,81 @@ describe("/api/cartoon", () => {
     assert.equal(readProject(ctx().dataDir, id).shots[0].clip.status, "done");
   });
 
+  test("a free re-fetch of a paid clip passes the cap and the benchmark, and orders nothing", async () => {
+    process.env.SCENE_SCRIPT_BENCHMARK_USD = "0.01";
+    try {
+      const id = await readyCartoon();
+      updateProject(ctx().dataDir, id, (p) => ({
+        ...p,
+        spentUsd: 1,
+        shots: p.shots.map((s, i) => (i === 0
+          ? { ...s, clip: { status: "error", taskId: "task-paid", chargedTaskId: "task-paid", startedAt: Date.now(), seconds: 4, prompt: "p", error: "not downloaded" } }
+          : s)),
+      }));
+      const project = readProject(ctx().dataDir, id);
+      assert.equal(estimateFilm(project, ["sh1"]).usd, 0);
+      assert.equal(estimateFilm(project, ["sh1"]).refetch, 1);
+      capAbove(0);
+      const before = submitted;
+      const r = await request(app).post(`/api/cartoon/${id}/film`).send({ only: ["sh1"] });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      await until(() => isFilming(id));
+      assert.equal(submitted, before, "nothing was ordered");
+      assert.equal(readProject(ctx().dataDir, id).shots[0].clip.status, "done");
+    } finally {
+      delete process.env.SCENE_SCRIPT_BENCHMARK_USD;
+    }
+  });
+
+  test("Start over: a locked cartoon's script makes a new cartoon, and the old one keeps its clips", async () => {
+    const id = (await create()).body.project.id;
+    updateProject(ctx().dataDir, id, (p) => ({
+      ...p, shots: p.shots.map((s, i) => (i === 0 ? { ...s, clip: { status: "done", taskId: "task-old", libraryId: "lib-1", url: "/x.mp4" } } : s)),
+    }));
+    const old = (await request(app).get(`/api/cartoon/${id}`)).body.project;
+    assert.equal((await request(app).patch(`/api/cartoon/${id}`).send({ markdown: old.source.markdown })).body.code, "LOCKED");
+    const fresh = await request(app).post("/api/cartoon").send({ markdown: old.source.markdown });
+    assert.equal(fresh.status, 201, JSON.stringify(fresh.body));
+    assert.notEqual(fresh.body.project.id, id);
+    assert.ok(fresh.body.project.shots.every((s) => s.clip === null));
+    assert.equal(readProject(ctx().dataDir, id).shots[0].clip.libraryId, "lib-1", "the old cartoon is untouched");
+  });
+
+  test("a portrait drawn in the old style can't be approved until it is made again", async () => {
+    const id = await readyCartoon();
+    const before = readProject(ctx().dataDir, id);
+    assert.equal(before.cast.Eli.portrait.style, "family3d", "a portrait records the style it was drawn in");
+    const styled = await request(app).patch(`/api/cartoon/${id}`).send({ style: "Claymation" });
+    assert.equal(styled.status, 200);
+
+    const refused = await request(app).post(`/api/cartoon/${id}/cast/Eli/approve`);
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.code, "STYLE_CHANGED");
+    assert.equal(refused.body.error, "This portrait was drawn in the old style. Make it again first.");
+    assert.equal(readProject(ctx().dataDir, id).cast.Eli.approved, false);
+
+    await makePortraits(id, ["Eli"]);
+    assert.equal(readProject(ctx().dataDir, id).cast.Eli.portrait.style, "clay");
+    assert.equal((await request(app).post(`/api/cartoon/${id}/cast/Eli/approve`)).status, 200);
+
+    // Approved in the old style, as before this rule: still not ready to film.
+    updateProject(ctx().dataDir, id, (p) => ({ ...p, cast: { ...p.cast, Pip: { ...p.cast.Pip, approved: true } } }));
+    const shots = await request(app).post(`/api/cartoon/${id}/shots/approve`);
+    assert.equal(shots.status, 409);
+    assert.equal(shots.body.code, "CAST_NOT_READY");
+    assert.deepEqual(shots.body.waiting, ["Pip"]);
+    updateProject(ctx().dataDir, id, (p) => ({ ...p, shotListApproved: true }));
+    const film = await request(app).post(`/api/cartoon/${id}/film`).send({ confirmOverBenchmark: true });
+    assert.equal(film.body.code, "CAST_NOT_READY");
+
+    // A portrait with no recorded style counts as drawn in the current one.
+    updateProject(ctx().dataDir, id, (p) => {
+      const { style: _style, ...portrait } = p.cast.Pip.portrait;
+      return { ...p, cast: { ...p.cast, Pip: { ...p.cast.Pip, approved: false, portrait } } };
+    });
+    assert.equal((await request(app).post(`/api/cartoon/${id}/cast/Pip/approve`)).status, 200);
+  });
+
   test("the film re-checks the cast even when the shot list says approved", async () => {
     const id = (await create()).body.project.id;
     updateProject(ctx().dataDir, id, (p) => ({ ...p, shotListApproved: true }));
@@ -644,5 +719,33 @@ describe("/api/cartoon", () => {
     assert.match(readProject(owner.dataDir, a.id).shots[0].clip.error, /restart/);
     assert.match(readProject(user.dataDir, b.id).shots[0].clip.error, /restart/);
     assert.equal(readProject(user.dataDir, b.id).shots[1].clip.status, "done");
+  });
+
+  test("restart recovery marks every context's cartoons running before it waits on any clip", async () => {
+    const base = path.join(root, "resume-all");
+    const owner = { dataDir: base, outputDir: path.join(base, "outputs-owner") };
+    const user = { dataDir: path.join(base, "users", "u2"), outputDir: path.join(base, "users", "u2", "outputs") };
+    const generating = (c, taskId) => {
+      const p = createProject(c.dataDir, cartoonFromScript(SCRIPT));
+      return updateProject(c.dataDir, p.id, (x) => ({ ...x, shots: x.shots.map((s, i) => (i === 0 ? { ...s, clip: { status: "generating", taskId, seconds: 4, prompt: "p" } } : s)) }));
+    };
+    const a = generating(owner, "task-a");
+    const b = generating(user, "task-b");
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const deps = {
+      wait: async (t) => { await gate; return { ok: true, videoUrl: `https://example.com/${t}.mp4`, tokens: 100000 }; },
+      download: async (_u, f) => fs.writeFileSync(f, "mp4"),
+      ffmpeg: async (args) => { fs.writeFileSync(args.at(-1), "x"); return { ok: true }; },
+      probe: async () => 4,
+      transcribe: async () => ({ ok: true, text: "" }),
+      windows: async () => [],
+    };
+    const resumed = resumeCartoonFilms({ ledgerDir: path.join(root, "ledger"), dataDir: base, outputDir: owner.outputDir, deps });
+    assert.equal(isFilming(a.id), true, "the owner's cartoon is claimed");
+    assert.equal(isFilming(b.id), true, "the user's cartoon is claimed before the owner's clip arrives");
+    release();
+    assert.equal(await resumed, 2);
+    assert.equal(isFilming(b.id), false);
   });
 });

@@ -65,11 +65,11 @@ function openAiKey() {
   return !raw || raw.startsWith("your-") ? "" : raw;
 }
 
-/** An error message safe to show: never carries the API key. */
-function safeMessage(err, key) {
-  const text = String(err?.message || err || "failed");
-  return key ? text.split(key).join("[key]") : text;
-}
+/**
+ * What a thrown error becomes on the clip, which the page shows: one fixed
+ * sentence. An error's own text can carry the API key or a temp file path.
+ */
+const CHECK_FAILED = "The speech check could not run.";
 
 /**
  * What the clip says, as text. Extracts a 16 kHz mono WAV to a temp file (always
@@ -104,7 +104,8 @@ export async function transcribeClip(file, { ffmpeg = runFfmpeg, fetchImpl = glo
     const body = await res.json();
     return { ok: true, text: String(body?.text || "").trim() };
   } catch (err) {
-    return { ok: false, error: safeMessage(err, key) };
+    console.warn(`[cartoon] speech check failed: ${String(err?.message || err).split(key).join("[key]")}`);
+    return { ok: false, error: CHECK_FAILED };
   } finally {
     try { fs.rmSync(wav, { force: true }); } catch { /* nothing left to clean */ }
   }

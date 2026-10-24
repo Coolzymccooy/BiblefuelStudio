@@ -132,6 +132,22 @@ test("transcribeClip sends the WAV to gpt-4o-transcribe and removes the temp fil
   });
 });
 
+test("a thrown error becomes one fixed sentence, never its own text or a server path", async () => {
+  await withKey("sk-test-secret", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "speech-test-"));
+    const cases = {
+      noWav: { ffmpeg: async () => ({ ok: true }), fetchImpl: async () => { throw new Error("must not run"); } },
+      ffmpegThrows: { ffmpeg: async () => { throw new Error(`ENOENT: ${path.join(tmpDir, "x.wav")}`); }, fetchImpl: async () => { throw new Error("no"); } },
+      networkError: { ffmpeg: wavWriter([]), fetchImpl: async () => { throw new Error(`connect ECONNRESET ${tmpDir}`); } },
+    };
+    for (const [name, deps] of Object.entries(cases)) {
+      const r = await transcribeClip("clip.mp4", { ...deps, tmpDir });
+      assert.deepEqual(r, { ok: false, error: "The speech check could not run." }, name);
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
 test("transcribeClip never throws and never leaks the key, and always cleans up", async () => {
   await withKey("sk-test-secret", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "speech-test-"));

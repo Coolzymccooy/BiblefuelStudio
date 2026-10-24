@@ -131,7 +131,8 @@ export async function makePortrait(ctx, project, name, deps = {}) {
     ctx,
     current.id,
     name,
-    () => ({ ...drawn.kept, status: "done", error: null }),
+    // The style it was drawn in: after a style change it must be made again before approval.
+    () => ({ ...drawn.kept, status: "done", error: null, style: marked.meta?.style ?? null }),
     { member: { approved: false } },
   );
 }

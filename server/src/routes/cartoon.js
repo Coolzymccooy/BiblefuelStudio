@@ -22,7 +22,7 @@ import {
 import { listShelf, shelve, fromShelf, removeFromShelf } from "../lib/cartoon/shelf.js";
 import {
   applyEdit, rescript, scriptDraft, fits, tooLongSentence, checkOf, isLocked,
-  ownMember, isPlainName, unreadyCast, listNames,
+  ownMember, isPlainName, unreadyCast, listNames, drawnInOldStyle,
 } from "../lib/cartoon/edits.js";
 
 /**
@@ -44,6 +44,7 @@ const VERSE_TIMEOUT_MS = 10_000;
 const MAX_ONLY = 20;
 const INTERRUPTED_PORTRAIT = "Interrupted by a restart. Make it again.";
 const NOT_FOUND = "Cartoon not found.";
+const OLD_STYLE = "This portrait was drawn in the old style. Make it again first.";
 
 const fail = (res, status, code, error, extra = {}) => res.status(status).json({ ok: false, code, error, ...extra });
 const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : undefined);
@@ -396,9 +397,16 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     const member = ownMember(project, name);
     if (!member) return fail(res, 404, "NOT_FOUND", "No character with that name.");
     if (member.portrait?.status !== "done" || !member.portrait.url) return fail(res, 409, "NO_PORTRAIT", `Make ${name}'s portrait first.`);
-    const saved = updateProject(req.ctx.dataDir, project.id, (p) => (ownMember(p, name)?.portrait?.status === "done"
-      ? { ...p, cast: { ...p.cast, [name]: { ...p.cast[name], approved: true } } }
-      : null));
+    if (drawnInOldStyle(member, project.meta?.style)) return fail(res, 409, "STYLE_CHANGED", OLD_STYLE);
+    let oldStyle = false;
+    const saved = updateProject(req.ctx.dataDir, project.id, (p) => {
+      const current = ownMember(p, name);
+      if (current?.portrait?.status !== "done") return null;
+      // Checked again inside the write: the style may have changed since the read.
+      if (drawnInOldStyle(current, p.meta?.style)) { oldStyle = true; return null; }
+      return { ...p, cast: { ...p.cast, [name]: { ...current, approved: true } } };
+    });
+    if (oldStyle) return fail(res, 409, "STYLE_CHANGED", OLD_STYLE);
     if (!saved) return fail(res, 409, "NO_PORTRAIT", `Make ${name}'s portrait first.`);
     return res.json({ ok: true, project: view(saved, req.ctx) });
   }));
@@ -447,12 +455,14 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     if (isFilming(project.id)) return fail(res, 409, "RUNNING", "The film is already being made.");
     const only = onlyOf(req.body);
     const est = estimateFilm(project, only);
-    if (!est.clips) return fail(res, 400, "NOTHING_TO_ORDER", "Every shot already has a clip.");
+    if (!est.clips && !est.refetch) return fail(res, 400, "NOTHING_TO_ORDER", "Every shot already has a clip.");
+    // Fetching clips already paid for costs nothing, so neither the cap nor the benchmark applies.
+    const paysNothing = est.clips === 0;
     // The whole remaining film, plus any paid re-make of a done shot, must fit the monthly cap,
     // so a film is never left half-made (spec section 7.6).
-    const budget = wouldExceedCap(ledgerDir, budgetUsd(project, only));
+    const budget = paysNothing ? { exceeded: false } : wouldExceedCap(ledgerDir, budgetUsd(project, only));
     if (budget.exceeded) return fail(res, 409, "BUDGET", budget.error);
-    if (est.overBenchmark && req.body?.confirmOverBenchmark !== true) {
+    if (!paysNothing && est.overBenchmark && req.body?.confirmOverBenchmark !== true) {
       return fail(res, 409, "OVER_BENCHMARK", `This cartoon would cost about $${est.totalUsd.toFixed(2)}, above the $${est.benchmarkUsd} benchmark. Confirm to go ahead.`, { estimate: est });
     }
     const started = startFilm(req.ctx, project.id, { only, ledgerDir, deps: deps.film });
@@ -501,11 +511,15 @@ function cartoonContexts(dataDir, outputDir) {
   return out;
 }
 
-/** After a restart: collect clips ordered before it and end shots that were never ordered. */
+/**
+ * After a restart: collect clips ordered before it and end shots that were
+ * never ordered. Every context is started before any collect is awaited:
+ * resumeFilm marks a context's cartoons running synchronously, so no cartoon
+ * waits unclaimed (where a film start or a delete could slip in) while another
+ * user's clips are still arriving.
+ */
 export async function resumeCartoonFilms({ ledgerDir = DATA_DIR, dataDir = DATA_DIR, outputDir = OUTPUT_DIR, deps } = {}) {
-  let count = 0;
-  for (const ctx of cartoonContexts(dataDir, outputDir)) {
-    count += await resumeFilm(ctx, listProjects(ctx.dataDir), { ledgerDir, deps });
-  }
-  return count;
+  const runs = cartoonContexts(dataDir, outputDir).map((ctx) => resumeFilm(ctx, listProjects(ctx.dataDir), { ledgerDir, deps }));
+  const counts = await Promise.all(runs);
+  return counts.reduce((sum, n) => sum + n, 0);
 }

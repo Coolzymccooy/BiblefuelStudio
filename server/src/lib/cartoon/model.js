@@ -5,7 +5,7 @@ import { styleId } from "./styles.js";
 import { suggestBed } from "../sceneScript/music.js";
 import { estimateTokens, usdForTokens } from "../videoGen/spend.js";
 import { SEEDANCE_MODELS, seedanceRatio } from "../videoGen/providers/seedance.js";
-import { benchmarkUsd } from "../sceneScript/shotStage.js";
+import { benchmarkUsd, canRefetch } from "../sceneScript/shotStage.js";
 
 /**
  * The stored cartoon project (spec section 7.4) and what ordering it would
@@ -89,15 +89,34 @@ export function cartoonFromScript(markdown, { now = new Date() } = {}) {
   };
 }
 
+/** A failed clip that was paid for and can still be fetched; a re-wait that ended in a definite failure set `refetchable: false`. */
+const clipCanRefetch = (clip, now) => Boolean(clip) && clip.refetchable !== false && canRefetch({ clip }, now);
+
+/**
+ * Whether ordering this shot again only fetches a clip already paid for, at no
+ * cost (as Human mode's estimate does): a paid clip whose download failed, or,
+ * on a done shot, a paid re-make whose download failed (kept on `clip.remake`).
+ */
+export function fetchesAgain(shot, now = Date.now()) {
+  const clip = shot?.clip;
+  if (clip?.status === "done") return Boolean(clip.remake) && clipCanRefetch({ ...clip.remake, status: "error" }, now);
+  return clipCanRefetch(clip, now);
+}
+
 /** The shots an order would cover: the named ones, else every shot without a finished clip. */
 function shotsToOrder(project, only) {
   const wanted = Array.isArray(only) && only.length ? new Set(only) : null;
   return project.shots.filter((shot) => (wanted ? wanted.has(shot.id) : shot.clip?.status !== "done"));
 }
 
-/** What ordering would cost: the clips still to make, the portraits still to draw, and the spend so far. */
+/**
+ * What ordering would cost: the clips still to make, the portraits still to
+ * draw, and the spend so far. A shot that only fetches a paid clip again is
+ * counted in `refetch` and costs nothing.
+ */
 export function estimateFilm(project, only) {
-  const shots = shotsToOrder(project, only);
+  const picked = shotsToOrder(project, only);
+  const shots = picked.filter((shot) => !fetchesAgain(shot));
   const ratio = seedanceRatio(project.meta?.aspect);
   const seconds = shots.reduce((sum, shot) => sum + shot.seconds, 0);
   const tokens = shots.reduce((sum, shot) => sum + estimateTokens({ durationSec: shot.seconds, ratio, resolution: CLIP_RESOLUTION }), 0);
@@ -108,6 +127,7 @@ export function estimateFilm(project, only) {
   const totalUsd = spentUsd + usd;
   return {
     clips: shots.length,
+    refetch: picked.length - shots.length,
     seconds,
     usd,
     images,
@@ -116,6 +136,6 @@ export function estimateFilm(project, only) {
     totalUsd,
     benchmarkUsd: benchmark,
     overBenchmark: totalUsd > benchmark + 1e-9,
-    shotIds: shots.map((shot) => shot.id),
+    shotIds: picked.map((shot) => shot.id),
   };
 }

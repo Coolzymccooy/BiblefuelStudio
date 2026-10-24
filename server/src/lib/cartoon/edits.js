@@ -12,8 +12,9 @@ import { isBedRef } from "../sceneScript/music.js";
  * What an edit invalidates:
  *  - a changed look drops that character's portrait and approval (the picture
  *    shows the old look);
- *  - a changed style keeps the portraits but un-approves them all (they were
- *    drawn in the old style);
+ *  - a changed style keeps the portraits but un-approves them all; each
+ *    portrait records the style it was drawn in, and one drawn in an older
+ *    style can't be approved or filmed until it is made again;
  *  - any change to shots, looks, style or the script needs the shot list
  *    approved again.
  *
@@ -50,9 +51,19 @@ export function listNames(names) {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
-/** A character is ready to film once a finished portrait of them is approved. */
-export function portraitReady(member) {
-  return Boolean(member?.approved && member.portrait?.status === "done" && member.portrait.url);
+/**
+ * Whether a portrait was drawn in an earlier style than the film's. A portrait
+ * records the style it was drawn in; one without a record (made before styles
+ * were recorded) counts as drawn in the current style.
+ */
+export function drawnInOldStyle(member, style) {
+  const drawn = member?.portrait?.style;
+  return typeof drawn === "string" && drawn !== "" && drawn !== style;
+}
+
+/** A character is ready to film once a finished portrait of them, in the film's style, is approved. */
+export function portraitReady(member, style) {
+  return Boolean(member?.approved && member.portrait?.status === "done" && member.portrait.url && !drawnInOldStyle(member, style));
 }
 
 /** Every character in the script (the cast, which includes every speaker) without an approved portrait. */
@@ -60,7 +71,7 @@ export function unreadyCast(project) {
   const cast = project?.cast || {};
   const names = new Set(Object.keys(cast));
   for (const shot of project?.shots || []) if (shot.speaker) names.add(shot.speaker);
-  return [...names].filter((name) => !portraitReady(ownMember(project, name)));
+  return [...names].filter((name) => !portraitReady(ownMember(project, name), project?.meta?.style));
 }
 
 /** Whether a clip was ever ordered for any shot: then the lines are locked. */

@@ -10,8 +10,10 @@ import { readProject, updateProject, projectOutputDir, projectOutputUrl } from "
  * same face.
  *
  * The shelf is one JSON file per user (ctx.dataDir/cartoon-cast.json) and its
- * pictures live in that user's output folder (cartoon-cast/<id>.png), so
- * tenants never see each other's characters.
+ * pictures live in that user's output folder (cartoon-cast/<id>/portrait.png),
+ * so tenants never see each other's characters. The id is a folder of its own
+ * because per-user outputs only serve a nested path through an unguessable
+ * folder; a super admin who is not the owner could not see a flat file.
  *
  * Pictures are always COPIED, never linked: shelving copies the project's
  * portrait onto the shelf, and pulling copies the shelf picture into the
@@ -26,6 +28,7 @@ import { readProject, updateProject, projectOutputDir, projectOutputUrl } from "
 
 const SHELF_FILE = "cartoon-cast.json";
 const PICTURE_DIR = "cartoon-cast";
+const PICTURE_NAME = "portrait.png";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const UNPLAIN_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -38,7 +41,18 @@ function shelfFile(ctx) {
 }
 
 function pictureFile(ctx, id) {
+  return path.join(ctx.outputDir, PICTURE_DIR, id, PICTURE_NAME);
+}
+
+/** Where shelves saved before the per-id folder kept their pictures. */
+function legacyPictureFile(ctx, id) {
   return path.join(ctx.outputDir, PICTURE_DIR, `${id}.png`);
+}
+
+/** The character's picture on disk, in either layout, or null. */
+function savedPicture(ctx, id) {
+  if (!UUID_RE.test(id)) return null;
+  return [pictureFile(ctx, id), legacyPictureFile(ctx, id)].find((f) => fs.existsSync(f)) || null;
 }
 
 /** The saved characters; a missing or damaged shelf file reads as empty. */
@@ -107,13 +121,13 @@ export function shelve(ctx, project, name) {
     look: member.look || "",
     voice: member.voice || "",
     style: current.meta?.style ?? null,
-    portraitUrl: `/outputs/${PICTURE_DIR}/${id}.png`,
+    portraitUrl: `/outputs/${PICTURE_DIR}/${id}/${PICTURE_NAME}`,
     createdAt: Date.now(),
   };
   try {
     saveShelf(ctx, [...listShelf(ctx), character]);
   } catch (err) {
-    fs.rmSync(target, { force: true });
+    fs.rmSync(path.dirname(target), { recursive: true, force: true });
     throw err;
   }
   return character;
@@ -131,7 +145,9 @@ function plainName(value) {
  * the cartoon's pictures/ folder. A cast member with the same name is
  * overwritten (look, voice, portrait); otherwise one is added. Returns the
  * updated project. `styleMismatch` is true when the cartoon's style differs
- * from the one the character was made in.
+ * from the one the character was made in. The picture is taken into this
+ * cartoon as drawn in its style (`portrait.style`), so a later change of the
+ * cartoon's style asks for it to be made again, like any other portrait.
  *
  * @param {{ dataDir: string, outputDir: string }} ctx
  * @param {{ id: string }} project
@@ -142,8 +158,8 @@ export function fromShelf(ctx, project, characterId, asName) {
   const character = listShelf(ctx).find((c) => c.id === characterId);
   if (!character) throw fail("NOT_FOUND", "No character on the shelf with that id.");
   const name = plainName(asName ?? character.name);
-  const source = UUID_RE.test(character.id) ? pictureFile(ctx, character.id) : null;
-  if (!source || !fs.existsSync(source)) throw fail("INVALID", `The saved picture for ${character.name} is missing.`);
+  const source = savedPicture(ctx, character.id);
+  if (!source) throw fail("INVALID", `The saved picture for ${character.name} is missing.`);
 
   const updated = updateProject(ctx.dataDir, project?.id, (p) => {
     const attempt = (p.pictureCount || 0) + 1;
@@ -157,7 +173,7 @@ export function fromShelf(ctx, project, characterId, asName) {
       name,
       look: character.look,
       voice: character.voice,
-      portrait: { file: `pictures/${fileName}`, url: projectOutputUrl(p.id, "pictures", fileName), status: "done", error: null },
+      portrait: { file: `pictures/${fileName}`, url: projectOutputUrl(p.id, "pictures", fileName), status: "done", error: null, style: p.meta?.style ?? null },
       approved: true,
       shelfId: character.id,
       styleMismatch: (character.style ?? null) !== (p.meta?.style ?? null),
@@ -178,7 +194,10 @@ export function removeFromShelf(ctx, characterId) {
   if (!character) return false;
   saveShelf(ctx, rows.filter((c) => c.id !== characterId));
   if (UUID_RE.test(character.id)) {
-    try { fs.rmSync(pictureFile(ctx, character.id), { force: true }); } catch { /* best effort */ }
+    try {
+      fs.rmSync(path.dirname(pictureFile(ctx, character.id)), { recursive: true, force: true });
+      fs.rmSync(legacyPictureFile(ctx, character.id), { force: true });
+    } catch { /* best effort */ }
   }
   return true;
 }

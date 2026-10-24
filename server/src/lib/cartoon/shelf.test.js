@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { createProject, readProject, projectOutputDir } from "./store.js";
 import { listShelf, shelve, fromShelf, removeFromShelf } from "./shelf.js";
+import { outputSegments } from "../perUserOutputs.js";
 
 const MARY = { name: "Mary", look: "a young woman in a blue cloak", voice: "warm and soft", approved: true, shelfId: null };
 
@@ -39,9 +40,11 @@ test("a shelved character comes back approved in a new cartoon with the same por
     assert.equal(saved.look, MARY.look);
     assert.equal(saved.voice, MARY.voice);
     assert.equal(saved.style, "storybook");
-    assert.equal(saved.portraitUrl, `/outputs/cartoon-cast/${saved.id}.png`);
+    assert.equal(saved.portraitUrl, `/outputs/cartoon-cast/${saved.id}/portrait.png`);
+    // The id is a folder of its own, so per-user outputs serve the picture to any admin, not only the owner.
+    assert.deepEqual(outputSegments(saved.portraitUrl.replace(/^\/outputs\//, "")), ["cartoon-cast", saved.id, "portrait.png"]);
     assert.equal(typeof saved.createdAt, "number");
-    assert.equal(fs.readFileSync(path.join(ctx.outputDir, "cartoon-cast", `${saved.id}.png`), "utf8"), "mary-face");
+    assert.equal(fs.readFileSync(path.join(ctx.outputDir, "cartoon-cast", saved.id, "portrait.png"), "utf8"), "mary-face");
     assert.deepEqual(listShelf(ctx), [saved]);
 
     const fresh = createProject(ctx.dataDir, { meta: { title: "Next", style: "storybook" }, cast: {}, pictureCount: 0 });
@@ -103,6 +106,8 @@ test("a character from another style is allowed but marked", () => {
     const out = fromShelf(ctx, other, saved.id);
     assert.equal(out.cast.Mary.styleMismatch, true);
     assert.equal(out.cast.Mary.approved, true);
+    // Taken into this film as its own: a later change of the film's style asks for it to be made again.
+    assert.equal(out.cast.Mary.portrait.style, "clay");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -148,6 +153,23 @@ test("fromShelf refuses unplain names and unknown characters", () => {
   }
 });
 
+test("a character shelved before the per-id folder still comes back", () => {
+  const { root, ctx } = setup();
+  try {
+    const id = "0b9a6f0e-6f6c-4a39-9a7e-2f1f8e3c1d22";
+    fs.mkdirSync(path.join(ctx.outputDir, "cartoon-cast"), { recursive: true });
+    fs.writeFileSync(path.join(ctx.outputDir, "cartoon-cast", `${id}.png`), "old-face");
+    fs.writeFileSync(path.join(ctx.dataDir, "cartoon-cast.json"), JSON.stringify([{ id, name: "Mary", look: "x", voice: "y", style: "storybook", portraitUrl: `/outputs/cartoon-cast/${id}.png`, createdAt: 1 }]));
+    const target = createProject(ctx.dataDir, { meta: { title: "Next", style: "storybook" }, cast: {}, pictureCount: 0 });
+    const out = fromShelf(ctx, target, id);
+    assert.equal(fs.readFileSync(path.join(projectOutputDir(ctx.outputDir, target.id), out.cast.Mary.portrait.file), "utf8"), "old-face");
+    assert.equal(removeFromShelf(ctx, id), true);
+    assert.equal(fs.existsSync(path.join(ctx.outputDir, "cartoon-cast", `${id}.png`)), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("removing a character deletes its record and picture but not copies already in cartoons", () => {
   const { root, ctx, project } = setup();
   try {
@@ -157,7 +179,7 @@ test("removing a character deletes its record and picture but not copies already
 
     assert.equal(removeFromShelf(ctx, saved.id), true);
     assert.deepEqual(listShelf(ctx), []);
-    assert.equal(fs.existsSync(path.join(ctx.outputDir, "cartoon-cast", `${saved.id}.png`)), false);
+    assert.equal(fs.existsSync(path.join(ctx.outputDir, "cartoon-cast", saved.id)), false);
     assert.equal(fs.existsSync(path.join(projectOutputDir(ctx.outputDir, target.id), out.cast.Mary.portrait.file)), true);
     assert.equal(removeFromShelf(ctx, saved.id), false);
     assert.throws(() => fromShelf(ctx, target, saved.id), /No character on the shelf/);
