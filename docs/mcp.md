@@ -12,6 +12,7 @@ BibleFuel runs a Model Context Protocol (MCP) server. An agent connects to one U
 - Identity: the agent acts as you. It gets your plan, your quotas and your files, and nothing more.
 - Rate limit: 120 requests per minute per key. Past that you get HTTP 429 with `RATE_LIMITED`.
 - Guide: this document is also the MCP resource `biblefuel://guide`, so an agent can read it before its first call.
+- Instructions: when an agent connects, the server sends a short paragraph of instructions (call `whoami` first, use `bible_lookup` for verse text, wait for jobs with `jobs_wait`, read this guide for the pipelines). Most clients hand it to the model before its first call.
 
 ## Get a key
 
@@ -86,7 +87,7 @@ A success looks like this (`whoami`, shortened):
 A failure has `isError: true`. The text block reads `CODE: message`, and `structuredContent` holds the same as an object:
 
 ```json
-{ "error": "MCP_CAP_REACHED", "message": "Daily renders cap reached for this agent (10 of 10).", "bucket": "renders", "scope": "key", "used": 10, "limit": 10, "resetsAt": "2026-10-24T00:00:00.000Z" }
+{ "error": "MCP_CAP_REACHED", "message": "Daily renders cap reached for this agent (10 of 10).", "bucket": "renders", "scope": "key", "used": 10, "limit": 10, "needed": 1, "resetsAt": "2026-10-24T00:00:00.000Z" }
 ```
 
 Branch on the `CODE`, not on the message. Errors that come from the app's own routes also carry `hint` (what to do) and `status` (the HTTP status).
@@ -511,7 +512,7 @@ Two limits apply, and the lower one wins.
 | `publishes` | Publishing calls, a schedule created, and a render that the user's auto-publish will post | 3 |
 | `imports` | Files stored on the server from a URL: `media_import_url` and `library_items` `download` | 20 |
 
-A call that would cross a cap is refused before anything runs, so nothing is spent. When the app itself refuses a call that was charged (an HTTP 4xx answer, such as `QUOTA_EXCEEDED`, a bad input or an account that is not connected), the caps it spent are given back on the key and the account, except `imports`: an import attempt always counts. A server error (5xx) or a dropped connection keeps the charge, because the work may have started. A cap refusal's error is `MCP_CAP_REACHED` with `bucket`, `scope`, `used`, `limit` and `resetsAt` (an ISO time, the next midnight UTC). `scope` is `key` when this key's own cap is reached, and `user` when your account's shared cap is reached across all your agents. Stop, tell the user, and retry after `resetsAt`.
+A call that would cross a cap is refused before anything runs, so nothing is spent. When the app itself refuses a call that was charged (an HTTP 4xx answer, such as `QUOTA_EXCEEDED`, a bad input or an account that is not connected), the caps it spent are given back on the key and the account, except `imports`: an import attempt always counts. A server error (5xx) or a dropped connection keeps the charge, because the work may have started. A cap refusal's error is `MCP_CAP_REACHED` with `bucket`, `scope`, `used`, `limit`, `needed` (what the call asked for) and `resetsAt` (an ISO time, the next midnight UTC). A call can be refused with some of the cap left, when it needs more than that: `render_short` with `autoBackground` needs four `images`, so one left is not enough. `scope` is `key` when this key's own cap is reached, and `user` when your account's shared cap is reached across all your agents. Stop, tell the user, and retry after `resetsAt`.
 
 `whoami` returns `caps` (this key) and `accountCaps` (all your keys together), each with `used`, `limit` and `remaining` for each bucket. Read it before starting a long plan. The server operator sets the ceilings with `MCP_DAILY_RENDERS`, `MCP_DAILY_AI_VIDEO_USD`, `MCP_DAILY_IMAGES`, `MCP_DAILY_TTS`, `MCP_DAILY_PUBLISHES` and `MCP_DAILY_IMPORTS`. The key owner can set lower numbers for one key under **Daily limits** on **Settings, Connected agents**.
 

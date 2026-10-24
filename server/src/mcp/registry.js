@@ -10,6 +10,7 @@ import { lacksPublishConsent } from "./autoPublish.js";
 import { planAllows } from "../middleware/featureGate.js";
 import { registerJobResource } from "./resources.js";
 import { registerPrompts } from "./prompts.js";
+import { SERVER_INSTRUCTIONS } from "./instructions.js";
 
 export { PUBLISH_NOT_ALLOWED_MESSAGE };
 
@@ -104,6 +105,19 @@ function allowed(def, ctx) {
 }
 
 /**
+ * The refusal text. When some of the cap is left but less than the call needs (four images for
+ * autoBackground, one left), "reached" misleads: say what the call needs and what is left.
+ */
+function capMessage({ bucket, scope, used, limit, needed }) {
+  const whose = scope === "user" ? "your account across all agents" : "this agent";
+  const left = limit - used;
+  if (left > 0 && needed > left) {
+    return `Daily ${bucket} cap: this call needs ${needed} but ${whose} has ${left} left (${used} of ${limit} used).`;
+  }
+  return `Daily ${bucket} cap reached for ${whose} (${used} of ${limit}).`;
+}
+
+/**
  * Spends every bucket in `amounts` at once (zero amounts skipped); returns null on success or the
  * MCP_CAP_REACHED tool error. A refusal spends nothing.
  */
@@ -113,12 +127,13 @@ async function chargeBuckets(ctx, amounts, charged) {
   const outcome = await chargeAll(ctx.subjectId, ctx.agentKey, Object.fromEntries(due));
   if (!outcome.ok) {
     const { bucket, scope, used, limit, resetsAt } = outcome;
-    const whose = scope === "user" ? "your account across all agents" : "this agent";
-    return fail("MCP_CAP_REACHED", `Daily ${bucket} cap reached for ${whose} (${used} of ${limit}).`, {
+    const needed = amounts[bucket];
+    return fail("MCP_CAP_REACHED", capMessage({ bucket, scope, used, limit, needed }), {
       bucket,
       scope,
       used,
       limit,
+      needed,
       resetsAt,
     });
   }
@@ -248,7 +263,7 @@ function readGuide() {
 
 /** @param {McpCtx} ctx */
 export function buildServer(ctx) {
-  const server = new McpServer(SERVER_INFO);
+  const server = new McpServer(SERVER_INFO, { instructions: SERVER_INSTRUCTIONS });
   for (const def of catalogue()) {
     if (!allowed(def, ctx)) continue;
     server.registerTool(
