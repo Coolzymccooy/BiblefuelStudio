@@ -119,6 +119,33 @@ describe('AgentActivityTab', () => {
     vi.unstubAllGlobals();
   });
 
+  it('ignores a slow earlier response that arrives after a newer one', async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    const first = new Promise((resolve) => { resolveFirst = resolve; });
+    const STALE = {
+      ...BODY,
+      rows: [{ ...BODY.rows[0], tool: 'stale_tool', keyName: 'Stale key' }],
+      counts: { byTool: { stale_tool: { calls: 1, errors: 0 } }, byUser: {}, emails: {} },
+      total: 1,
+    };
+    getSpy.mockReturnValueOnce(first as never);
+    const { rerender } = render(<AgentActivityTab users={USERS} reloadToken={0} />);
+
+    // The page's Refresh button bumps reloadToken while the first load is still out.
+    rerender(<AgentActivityTab users={USERS} reloadToken={1} />);
+    const rows = await screen.findByRole('table', { name: 'Newest agent calls' });
+    expect(within(rows).getByText('Hermes laptop')).toBeTruthy();
+
+    resolveFirst({ ok: true, status: 200, data: STALE });
+    await first;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const after = screen.getByRole('table', { name: 'Newest agent calls' });
+    expect(within(after).queryByText('Stale key')).toBeNull();
+    expect(within(after).getByText('Hermes laptop')).toBeTruthy();
+    expect(screen.getByText('Showing the newest 2 of 17 calls')).toBeTruthy();
+  });
+
   it('shows the error and the empty state', async () => {
     getSpy.mockResolvedValueOnce({ ok: false, status: 400, error: 'RANGE_TOO_LONG', data: { hint: 'Pick at most 31 days.' } });
     render(<AgentActivityTab users={USERS} reloadToken={0} />);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Bot, Download, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Card } from '../ui/Card';
@@ -41,17 +41,25 @@ export function AgentActivityTab({ users, reloadToken }: AgentActivityTabProps) 
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
+  // Only the newest load may write state: a slow earlier response must not overwrite a newer one.
+  const latestRequest = useRef(0);
+  useEffect(() => () => { latestRequest.current += 1; }, []);
+
   const load = useCallback(async (filters: AdminActivityFilters) => {
+    latestRequest.current += 1;
+    const requestId = latestRequest.current;
+    const isCurrent = () => requestId === latestRequest.current;
     setLoading(true);
     setError(null);
     try {
       const next = await fetchAdminActivity(filters);
+      if (!isCurrent()) return;
       setData(next);
       setKnownTools((prev) => [...new Set([...prev, ...Object.keys(next.counts.byTool)])].sort());
     } catch (err) {
-      setError((err as Error).message || 'Could not load agent activity');
+      if (isCurrent()) setError((err as Error).message || 'Could not load agent activity');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, []);
 
