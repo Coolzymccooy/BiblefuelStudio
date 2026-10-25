@@ -74,7 +74,7 @@ import { createVisualLibraryRouter, resumeLibraryRerolls } from "./src/routes/vi
 import { isSeedanceConfigured } from "./src/lib/videoGen/providers/seedance.js";
 import { hasLibass } from "./src/lib/kinetic/capability.js";
 import { initErrorTracking, captureError, captureMessage } from "./src/lib/ops/errorTracking.js";
-import { configureAlerts, alert } from "./src/lib/ops/alerts.js";
+import { configureAlerts, alert, alertEmailsEnabled } from "./src/lib/ops/alerts.js";
 import { onRenderFailure } from "./src/lib/ops/renderFailures.js";
 import { createMaintenance, backupsEnabled } from "./src/lib/ops/maintenance.js";
 import { bucketTarget, folderTarget } from "./src/lib/ops/backup.js";
@@ -245,9 +245,10 @@ const emailTransport = createEmailTransport({
 const sendEmail = (req) => sendEmailViaTransport(emailTransport, req);
 
 // Alerts go to OPS_ALERT_EMAIL, else the owner. Every render failure is one.
+// Only production emails them; a dev machine logs them (ALERT_EMAILS=on to test the email).
 const firstEmail = (v) => String(v || "").split(",").map((x) => x.trim()).find(Boolean) || "";
 configureAlerts({
-  sendEmail: process.env.RESEND_API_KEY ? sendEmail : null,
+  sendEmail: process.env.RESEND_API_KEY && alertEmailsEnabled() ? sendEmail : null,
   to: firstEmail(process.env.OPS_ALERT_EMAIL) || firstEmail(process.env.OWNER_EMAIL) || firstEmail(process.env.SUPER_ADMIN_EMAIL),
   captureMessage,
 });
