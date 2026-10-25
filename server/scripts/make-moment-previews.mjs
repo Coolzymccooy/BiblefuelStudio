@@ -1,9 +1,11 @@
-// Renders the four Moments style previews with the real motion engine:
-// client/public/moments/previews/<style>.mp4 (360x640, ~6 s, silent, looping).
+// Renders the Moments style previews with the real engines:
+// client/public/moments/previews/<style>.mp4 (360x640, silent, looping). Classic
+// styles use the motion engine (~6 s); Showcase styles use the MomentShowcase
+// composition (~12 s, so a few templates show).
 // The "photos" are generated, textured stills (a colour gradient, a grid, bold
 // boxes and a big numeral), so no personal pictures are shipped in this public
 // repo and the camera moves (push, pan, punch, shake) are visible in a preview.
-// Run from server/: node scripts/make-moment-previews.mjs
+// Run from server/: node scripts/make-moment-previews.mjs [--only id,id]
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +16,10 @@ import { directMoment } from "../src/lib/motion/director.js";
 import { beatGridOf } from "../src/lib/motion/cuts.js";
 import { validatePlan } from "../src/lib/motion/plan.js";
 import { renderPlan, runFfmpeg } from "../src/lib/motion/render.js";
+import { directShowcase } from "../src/lib/showcase/director.js";
+import { validateShowcasePlan } from "../src/lib/showcase/plan.js";
+import { stageImageArgs } from "../src/lib/showcase/stage.js";
+import { renderShowcase } from "../src/lib/showcase/render.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.resolve(here, "../../client/public/moments/previews");
@@ -27,6 +33,16 @@ const STYLES = {
   hype: { energy: 0.95, period: 0.43, seed: 3 },
   gallery: { energy: 0.5, period: 0.6, seed: 7 },
 };
+const SHOWCASE_LENGTH = 12;
+const SHOWCASE = {
+  fellowship: { energy: 0.6, period: 0.6, seed: 5 },
+  scrapbook: { energy: 0.35, period: 0.7, seed: 2 },
+  partyPop: { energy: 0.8, period: 0.5, seed: 9 },
+  premiere: { energy: 0.45, period: 0.65, seed: 4 },
+};
+const onlyArg = process.argv.indexOf("--only");
+const only = onlyArg >= 0 ? new Set(String(process.argv[onlyArg + 1] || "").split(",").filter(Boolean)) : null;
+const wanted = (id) => !only || only.has(id);
 
 // Mixed shapes, like a real camera roll: tall phone shots and wide ones.
 const STILLS = [
@@ -60,6 +76,16 @@ async function run(args) {
   if (!r.ok) throw new Error(r.stderr || r.error);
 }
 
+/** Encode to the temp dir; only a file that passes the size check reaches the repo. */
+async function publishPreview(style, full) {
+  const small = path.join(work, `${style}-preview.mp4`);
+  await run(["-v", "error", "-y", "-i", full, "-an", "-vf", "scale=360:640", "-c:v", "libx264", "-crf", "30", "-preset", "slow", "-pix_fmt", "yuv420p", "-movflags", "+faststart", small]);
+  const bytes = fs.statSync(small).size;
+  if (bytes > MAX_BYTES) throw new Error(`${style}.mp4 is ${bytes} bytes, over the ${MAX_BYTES} limit`);
+  fs.copyFileSync(small, path.join(outDir, `${style}.mp4`));
+  console.log(`wrote ${style}.mp4 (${Math.round(bytes / 1024)} KB)`);
+}
+
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "moment-previews-"));
 try {
   fs.mkdirSync(outDir, { recursive: true });
@@ -76,6 +102,7 @@ try {
   }
   const shapes = photos.map((p) => p.shape);
   for (const [style, { energy, period, seed }] of Object.entries(STYLES)) {
+    if (!wanted(style)) continue;
     const beats = [];
     for (let t = period; t < LENGTH; t += period) beats.push(Math.round(t * 1000) / 1000);
     const grid = beatGridOf({ beats, downbeats: beats.map((_, i) => i).filter((i) => i % 4 === 0), strong: [4, 8], period });
@@ -89,13 +116,38 @@ try {
     const full = path.join(work, `${style}-full.mp4`);
     const r = await renderPlan({ plan, workImages: photos.map((p) => p.file), song: null, voice: null, workDir, out: full });
     if (!r.ok) throw new Error(`${style}: ${r.error} ${r.detail || ""}`);
-    // Encode to the temp dir; only a file that passes the size check reaches the repo.
-    const small = path.join(work, `${style}-preview.mp4`);
-    await run(["-v", "error", "-y", "-i", full, "-an", "-vf", "scale=360:640", "-c:v", "libx264", "-crf", "30", "-preset", "slow", "-pix_fmt", "yuv420p", "-movflags", "+faststart", small]);
-    const bytes = fs.statSync(small).size;
-    if (bytes > MAX_BYTES) throw new Error(`${style}.mp4 is ${bytes} bytes, over the ${MAX_BYTES} limit`);
-    fs.copyFileSync(small, path.join(outDir, `${style}.mp4`));
-    console.log(`wrote ${style}.mp4 (${Math.round(bytes / 1024)} KB)`);
+    await publishPreview(style, full);
+  }
+
+  // Showcase: more stills (several show at once), staged as cards and blurs the way a render stages them.
+  const staged = [];
+  for (let i = 0; i < 12; i += 1) {
+    const { w, h, c0, c1, box } = STILLS[i % STILLS.length];
+    const src = path.join(work, `sc-src-${i}.png`);
+    await run(["-v", "error", "-y", "-f", "lavfi", "-i", `gradients=s=${w}x${h}:c0=${c0}:c1=${c1}:x0=0:y0=0:x1=${w}:y1=${h}:d=1`,
+      "-vf", textureFilter(i, box), "-frames:v", "1", src]);
+    const card = path.join(work, `sc-card-${i}.jpg`);
+    const blur = path.join(work, `sc-blur-${i}.jpg`);
+    const st = stageImageArgs({ src, card, blur, width: w, height: h, orientation: 1, frame: "tall" });
+    await run(st.card);
+    await run(st.blur);
+    staged.push({ card, blur, shape: st.shape });
+  }
+  for (const [style, { energy, period, seed }] of Object.entries(SHOWCASE)) {
+    if (!wanted(style)) continue;
+    const marks = [];
+    for (let t = period; t < SHOWCASE_LENGTH; t += period) marks.push({ t: Math.round(t * 1000) / 1000, downbeat: marks.length % 4 === 3, strong: false });
+    const { plan } = directShowcase({
+      photos: staged.map((p) => ({ shape: p.shape })), heroIndex: 0, grid: { kind: "beats", marks, period }, title: "Your title",
+      statements: ["Your words here", "Made with BibleFuel"], styleId: style, energy, lengthSec: SHOWCASE_LENGTH, seed, shape: "tall", details: {},
+    });
+    const checked = validateShowcasePlan(plan, { photoCount: staged.length });
+    if (!checked.ok) throw new Error(`${style}: invalid plan: ${checked.errors.join("; ")}`);
+    const workDir = fs.mkdtempSync(path.join(work, `${style}-`));
+    const full = path.join(work, `${style}-full.mp4`);
+    const r = await renderShowcase({ plan, images: staged, song: null, voice: null, workDir, out: full });
+    if (!r.ok) throw new Error(`${style}: ${r.error} ${r.detail || ""}`);
+    await publishPreview(style, full);
   }
 } finally {
   fs.rmSync(work, { recursive: true, force: true });
