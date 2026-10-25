@@ -528,3 +528,87 @@ test("a Moment with too many photos for 15 s notes the dropped ones and suggests
   assert.equal(done.render.status, "done", JSON.stringify(done.render));
   assert.match(done.render.notes.join(" "), /\d+ photos? didn't fit 15 s\. Try 30 s\?/);
 });
+
+// ---- Showcase styles ------------------------------------------------------------
+
+function showcaseEngine(seen) {
+  _setEngineForTest({
+    renderPlan: async () => { throw new Error("a Showcase Moment must not use the classic engine"); },
+    renderShowcase: async (opts) => {
+      seen.push(opts);
+      assert.ok(fs.existsSync(opts.workDir));
+      opts.onProgress({ stage: "shots", fraction: 0.5 });
+      opts.onProgress({ stage: "finish", fraction: 1 });
+      fs.writeFileSync(opts.out, "mp4");
+      return { ok: true, file: opts.out };
+    },
+  });
+}
+const showcaseMoment = (over = {}) => moment({ style: "fellowship", lengthSec: 30, shape: "wide", ...over });
+
+test("a Showcase Moment stages a card and a blur per photo and renders with the Showcase engine", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  const p = showcaseMoment({ details: { date: "21 November" } });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 30 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(done.render.percent, 100);
+  assert.equal(calls.prepare, 8, "two staged images per photo");
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].plan.kind, "showcase");
+  assert.equal(seen[0].plan.shape, "wide");
+  assert.equal(seen[0].plan.scenes.at(-1).template, "invite");
+  assert.equal(seen[0].images.length, 4);
+  assert.ok(seen[0].images.every((im) => im.card && im.blur && ["tall", "wide"].includes(im.shape)));
+  assert.equal(done.plan.kind, "showcase", "the plan is saved");
+  assert.ok(!fs.existsSync(seen[0].workDir), "the work dir is removed");
+});
+
+test("a classic Moment still renders with the classic engine", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  _setEngineForTest({ renderPlan: async (opts) => { fs.writeFileSync(opts.out, "mp4"); return { ok: true, file: opts.out }; } });
+  const p = moment();
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  assert.equal(readProject(ctx.dataDir, p.projectId).render.status, "done");
+  assert.equal(seen.length, 0);
+});
+
+test("a song shorter than a Showcase Moment shortens the Moment, and says so", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  _setEngineForTest({ decode: async () => Buffer.alloc(11025 * 2 * 31) }); // a song of about 30.9 s
+  const p = showcaseMoment({ lengthSec: 60 });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 60 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(seen[0].plan.durationSec, 30);
+  assert.ok(done.render.notes.includes("Your song is 30 s, so this Moment is 30 s."), JSON.stringify(done.render.notes));
+});
+
+test("photos that don't fit a Showcase Moment offer its next length", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  const p = showcaseMoment({ photos: Array.from({ length: 100 }, () => photo()) });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 30 }).jobId, {});
+  const notes = readProject(ctx.dataDir, p.projectId).render.notes.join(" ");
+  assert.match(notes, /photos didn't fit 30 s\. Try 60 s\?/);
+});
+
+test("cancelling a Showcase render records Cancelled and removes the work dir", async () => {
+  const seen = [];
+  _setEngineForTest({
+    renderShowcase: (opts) => new Promise((resolve) => {
+      seen.push(opts);
+      opts.signal.addEventListener("abort", () => resolve({ ok: false, error: "cancelled" }), { once: true });
+      setTimeout(() => cancelMomentRender(p.projectId), 10);
+    }),
+  });
+  const p = showcaseMoment();
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 30 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "error");
+  assert.equal(done.render.error, "Cancelled.");
+  assert.ok(!fs.existsSync(seen[0].workDir));
+});

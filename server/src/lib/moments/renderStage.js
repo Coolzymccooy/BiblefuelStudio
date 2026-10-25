@@ -6,7 +6,11 @@ import { readProject, writeProject, withHistory, MIN_PHOTOS } from "./projectSto
 import { resolvePhoto, resolveSong } from "./photos.js";
 import { songGrid, voiceGrid } from "./beatCache.js";
 import { statementLimit } from "./occasions.js";
-import { CLASSIC_LENGTHS } from "../motion/styles.js";
+import { CLASSIC_LENGTHS, isShowcase, lengthsFor } from "../motion/styles.js";
+import { directShowcase } from "../showcase/director.js";
+import { validateShowcasePlan } from "../showcase/plan.js";
+import { stageImageArgs } from "../showcase/stage.js";
+import { renderShowcase as realRenderShowcase } from "../showcase/render.js";
 import { orientationOf, workImageArgs } from "../motion/prepare.js";
 import { directMoment } from "../motion/director.js";
 import { validatePlan } from "../motion/plan.js";
@@ -25,13 +29,17 @@ import { resolveOwnUpload } from "../ambient/movementImage.js";
 export const VOICE_NAME = /^moment-vo-[0-9a-f-]{36}\.mp3$/i;
 export const OUTPUT_NAME = /^moment-[0-9a-f-]{36}\.mp4$/i;
 export const STAGES = Object.freeze({ prepare: [0, 10], analyse: [10, 20], shots: [20, 75], join: [75, 85], finish: [85, 100] });
+/** A Showcase render has no join: the picture is one Remotion pass ("shots"), then the finish. */
+export const SHOWCASE_STAGES = Object.freeze({ prepare: [0, 10], analyse: [10, 20], shots: [20, 80], finish: [80, 100] });
 const VOICE_SLACK_SEC = 0.05;
+const SONG_SHORT_SLACK_SEC = 1;
 const VOICE_UNREADABLE_NOTE = "The voiceover couldn't be read, so this Moment has no voice. Make it again.";
 const VOICE_MISSING_NOTE = "The voiceover was missing, so this Moment has no voice. Make it again to add it back.";
 
-let engine = { runFfmpeg: realRunFfmpeg, renderPlan: realRenderPlan, decode: decodePcm };
+const REAL_ENGINE = Object.freeze({ runFfmpeg: realRunFfmpeg, renderPlan: realRenderPlan, renderShowcase: realRenderShowcase, decode: decodePcm });
+let engine = { ...REAL_ENGINE };
 export function _setEngineForTest(over) { engine = { ...engine, ...over }; }
-export function _resetEngineForTest() { engine = { runFfmpeg: realRunFfmpeg, renderPlan: realRenderPlan, decode: decodePcm }; }
+export function _resetEngineForTest() { engine = { ...REAL_ENGINE }; }
 
 const controllers = new Map();
 export function cancelMomentRender(projectId) {
@@ -50,12 +58,12 @@ export function droppedNote(dropped, lengthSec, lengths = CLASSIC_LENGTHS) {
   return next ? `${base} Try ${next} s?` : base;
 }
 
-function progressWriter(ctx, projectId, jobId) {
+function progressWriter(ctx, projectId, jobId, stages = STAGES) {
   let lastWritten = -1;
   // Best-effort: the engine calls this from a stream "data" handler, so nothing may escape.
   return (stage, fraction) => {
     try {
-      const [a, b] = STAGES[stage];
+      const [a, b] = stages[stage];
       // 100% only once the finish stage reports fraction 1 (the file is in place);
       // rounding a running 0.99 must not show 100 while the move is still pending.
       const raw = Math.round(a + (b - a) * Math.min(1, Math.max(0, fraction)));
@@ -98,6 +106,32 @@ async function preparePhotos(ctx, project, workDir, signal) {
   return { usable, notes };
 }
 
+/** Showcase photos: an upright card and a frame-shaped blur each (showcase/stage.js). */
+async function prepareShowcasePhotos(ctx, project, workDir, signal) {
+  const items = readLibrary(ctx.dataDir)?.items || [];
+  const frame = project.shape === "wide" ? "wide" : "tall";
+  const usable = [];
+  const notes = [];
+  for (let i = 0; i < project.photos.length; i += 1) {
+    if (signal.aborted) throw new StageError("Cancelled.");
+    const r = resolvePhoto(ctx, project.photos[i].ref, { items });
+    if (!r.ok) { notes.push(`Photo ${i + 1} was skipped: ${r.error}`); continue; }
+    const card = path.join(workDir, `card-${i}.jpg`);
+    const blur = path.join(workDir, `blur-${i}.jpg`);
+    const staged = stageImageArgs({ src: r.file, card, blur, width: r.width, height: r.height, orientation: orientationOf(r.file), frame });
+    let readable = true;
+    for (const args of [staged.card, staged.blur]) {
+      const ran = await engine.runFfmpeg(args, { signal });
+      if (!ran.ok && (signal.aborted || ran.error === "cancelled")) throw new StageError("Cancelled.");
+      if (!ran.ok) { readable = false; break; }
+    }
+    if (!readable) { notes.push(`Photo ${i + 1} was skipped: it could not be read.`); continue; }
+    usable.push({ index: i, card, blur, shape: staged.shape });
+  }
+  if (usable.length < MIN_PHOTOS) throw new StageError("Need at least 3 readable photos. Add more photos and try again.");
+  return { usable, notes };
+}
+
 /**
  * The files the sound needs, checked up front so a song that is gone fails
  * before any photo work. A song that is gone is fatal; a voiceover that is gone
@@ -120,7 +154,7 @@ function throwIfCancelled(signal) {
 }
 
 async function timing(ctx, project, sound, signal) {
-  const lengthSec = project.lengthSec;
+  let lengthSec = project.lengthSec;
   const notes = [];
   if (sound.voiceMissing) notes.push(VOICE_MISSING_NOTE);
 
@@ -149,9 +183,16 @@ async function timing(ctx, project, sound, signal) {
       throwIfCancelled(signal);
       throw err;
     }
-    return { grid: g.grid, song: { file: sound.songFile, startSec: g.windowStartSec }, voice, notes };
+    // A Showcase Moment can outlast its song: rather than run on in silence, it ends with the song.
+    // Under a second short is left alone (the finish pads it), so a 29.9 s song still makes 30 s.
+    const songLeft = Math.floor(g.durationSec - g.windowStartSec);
+    if (isShowcase(project.style) && songLeft > 0 && g.durationSec - g.windowStartSec < lengthSec - SONG_SHORT_SLACK_SEC) {
+      lengthSec = songLeft;
+      notes.push(`Your song is ${songLeft} s, so this Moment is ${songLeft} s.`);
+    }
+    return { grid: g.grid, song: { file: sound.songFile, startSec: g.windowStartSec }, voice, notes, lengthSec };
   }
-  return { grid: voiceGridResult || pulseGrid(lengthSec), song: null, voice, notes };
+  return { grid: voiceGridResult || pulseGrid(lengthSec), song: null, voice, notes, lengthSec };
 }
 
 /** The stored project, or a StageError if it has been deleted since the render began. */
@@ -224,10 +265,95 @@ function recordFailure(ctx, projectId, jobId, err) {
   }
 }
 
+/** Saves the plan to the project (unless a newer render owns it). */
+function savePlan(ctx, projectId, jobId, plan) {
+  const live = liveProject(ctx, projectId);
+  if (ownsRender(live, jobId)) writeProject(ctx.dataDir, { ...live, plan });
+}
+
+/** The engine's failure as the message the project shows. */
+function engineFailure(projectId, result) {
+  if (result.detail) console.error(`[moments] render ${projectId} failed: ${result.detail}`);
+  return new StageError(result.error === "cancelled" ? "Cancelled." : result.error);
+}
+
+/** A classic Moment: one photo per shot through the ffmpeg shot engine. */
+async function makeClassic({ ctx, project, projectId, jobId, sound, workDir, out, signal, progress }) {
+  const { usable, notes } = await preparePhotos(ctx, project, workDir, signal);
+  progress("prepare", 1);
+  const timed = await timing(ctx, project, sound, signal);
+  notes.push(...timed.notes);
+  const { grid, song, voice } = timed;
+  const heroAt = usable.findIndex((u) => u.index === project.heroIndex);
+  const { plan, dropped } = directMoment({
+    photos: usable.map((u) => ({ shape: u.shape })),
+    heroIndex: heroAt >= 0 ? heroAt : 0,
+    grid,
+    title: project.title,
+    statements: project.statements.slice(0, statementLimit(project.lengthSec)),
+    styleId: project.style,
+    energy: project.energy,
+    lengthSec: project.lengthSec,
+    seed: project.seed,
+  });
+  const checked = validatePlan(plan, { photoCount: usable.length, shapes: usable.map((u) => u.shape) });
+  if (!checked.ok) {
+    console.error(`[moments] invalid plan for ${projectId}: ${checked.errors.join("; ")}`);
+    throw new StageError("Couldn't plan this Moment. Try Shuffle or a different length.");
+  }
+  if (dropped) notes.push(droppedNote(dropped, project.lengthSec));
+  savePlan(ctx, projectId, jobId, plan);
+  progress("analyse", 1);
+
+  const result = await engine.renderPlan({
+    plan, workImages: usable.map((u) => u.file), song, voice, workDir, out, signal,
+    onProgress: ({ stage, fraction }) => progress(stage, fraction),
+  });
+  if (!result.ok) throw engineFailure(projectId, result);
+  return { plan, notes };
+}
+
+/** A Showcase Moment: several photos per scene through the MomentShowcase composition. */
+async function makeShowcase({ ctx, project, projectId, jobId, sound, workDir, out, signal, progress }) {
+  const { usable, notes } = await prepareShowcasePhotos(ctx, project, workDir, signal);
+  progress("prepare", 1);
+  const timed = await timing(ctx, project, sound, signal);
+  notes.push(...timed.notes);
+  const { grid, song, voice, lengthSec } = timed;
+  const heroAt = usable.findIndex((u) => u.index === project.heroIndex);
+  const { plan, dropped } = directShowcase({
+    photos: usable.map((u) => ({ shape: u.shape })),
+    heroIndex: heroAt >= 0 ? heroAt : 0,
+    grid,
+    title: project.title,
+    statements: project.statements,
+    styleId: project.style,
+    energy: project.energy,
+    lengthSec,
+    seed: project.seed,
+    shape: project.shape === "wide" ? "wide" : "tall",
+    details: project.details,
+  });
+  const checked = validateShowcasePlan(plan, { photoCount: usable.length });
+  if (!checked.ok) {
+    console.error(`[moments] invalid Showcase plan for ${projectId}: ${checked.errors.join("; ")}`);
+    throw new StageError("Couldn't plan this Moment. Try Shuffle or a different length.");
+  }
+  if (dropped) notes.push(droppedNote(dropped, lengthSec, lengthsFor(project.style)));
+  savePlan(ctx, projectId, jobId, plan);
+  progress("analyse", 1);
+
+  const result = await engine.renderShowcase({
+    plan, images: usable.map(({ card, blur, shape }) => ({ card, blur, shape })), song, voice, workDir, out, signal,
+    onProgress: ({ stage, fraction }) => progress(stage, fraction),
+  });
+  if (!result.ok) throw engineFailure(projectId, result);
+  return { plan, notes };
+}
+
 export async function momentRenderStage(ctx, projectId, jobId, { seed, signal } = {}) {
   const controller = new AbortController();
   const unlink = linkSignal(signal, controller);
-  const progress = progressWriter(ctx, projectId, jobId);
   let workDir;
   try {
     // Cancelled while it waited its turn: record that and do nothing else (and never
@@ -238,55 +364,16 @@ export async function momentRenderStage(ctx, projectId, jobId, { seed, signal } 
 
     let project = readProject(ctx.dataDir, projectId);
     if (!project) throw new StageError("This Moment no longer exists.");
+    const progress = progressWriter(ctx, projectId, jobId, isShowcase(project.style) ? SHOWCASE_STAGES : STAGES);
     if (Number.isInteger(seed) && ownsRender(project, jobId)) project = writeProject(ctx.dataDir, { ...project, seed });
     try { markRunning(jobId); } catch { /* job gone */ }
     progress("prepare", 0);
 
     const sound = resolveSound(ctx, project);
-    const { usable, notes } = await preparePhotos(ctx, project, workDir, controller.signal);
-    progress("prepare", 1);
-    const timed = await timing(ctx, project, sound, controller.signal);
-    notes.push(...timed.notes);
-    const { grid, song, voice } = timed;
-    const heroAt = usable.findIndex((u) => u.index === project.heroIndex);
-    const { plan, dropped } = directMoment({
-      photos: usable.map((u) => ({ shape: u.shape })),
-      heroIndex: heroAt >= 0 ? heroAt : 0,
-      grid,
-      title: project.title,
-      statements: project.statements.slice(0, statementLimit(project.lengthSec)),
-      styleId: project.style,
-      energy: project.energy,
-      lengthSec: project.lengthSec,
-      seed: project.seed,
-    });
-    const checked = validatePlan(plan, { photoCount: usable.length, shapes: usable.map((u) => u.shape) });
-    if (!checked.ok) {
-      console.error(`[moments] invalid plan for ${projectId}: ${checked.errors.join("; ")}`);
-      throw new StageError("Couldn't plan this Moment. Try Shuffle or a different length.");
-    }
-    if (dropped) notes.push(droppedNote(dropped, project.lengthSec));
-    const withPlan = liveProject(ctx, projectId);
-    if (ownsRender(withPlan, jobId)) writeProject(ctx.dataDir, { ...withPlan, plan });
-    progress("analyse", 1);
-
+    const make = isShowcase(project.style) ? makeShowcase : makeClassic;
     const name = `moment-${crypto.randomUUID()}.mp4`;
     const out = path.join(ctx.outputDir, name);
-    const result = await engine.renderPlan({
-      plan,
-      workImages: usable.map((u) => u.file),
-      song,
-      voice,
-      workDir,
-      out,
-      signal: controller.signal,
-      onProgress: ({ stage, fraction }) => progress(stage, fraction),
-    });
-    if (!result.ok) {
-      if (result.detail) console.error(`[moments] render ${projectId} failed: ${result.detail}`);
-      throw new StageError(result.error === "cancelled" ? "Cancelled." : result.error);
-    }
-
+    const { plan, notes } = await make({ ctx, project, projectId, jobId, sound, workDir, out, signal: controller.signal, progress });
     recordDone(ctx, projectId, jobId, { name, out, plan, notes });
   } catch (err) {
     recordFailure(ctx, projectId, jobId, err);
