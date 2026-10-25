@@ -39,6 +39,8 @@ export const MomentShowcase: React.FC<ShowcaseProps> = (props) => {
         const from = Math.round(scene.start * fps);
         const frames = Math.max(1, Math.round(scene.end * fps) - from);
         const Template = TEMPLATES[scene.template];
+        // The server validates every plan; a template this build doesn't know shows the backdrop, not a crash.
+        if (!Template) return null;
         return (
           <Sequence key={index} from={from} durationInFrames={frames} premountFor={fps}>
             <Template scene={scene} index={index} frames={frames} beat={beat} shape={shape} w={w} h={h} palette={palette} images={images} invite={invite} />

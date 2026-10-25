@@ -22,6 +22,8 @@ export interface MomentRender {
   file?: string;
   error?: string;
   notes?: string[];
+  /** The finished video's shape; renders made before shapes existed have none (tall). */
+  shape?: MomentShape;
 }
 
 export interface MomentHistoryEntry {

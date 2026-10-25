@@ -68,7 +68,7 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy, commit
     const family = style.family ?? 'classic';
     const fit: MomentPatch = {};
     const length = fitLength(project.lengthSec, lengthsOf(meta, family));
-    if (length !== project.lengthSec) fit.lengthSec = length;
+    if (length !== undefined && length !== project.lengthSec) fit.lengthSec = length;
     if (family === 'classic' && project.shape === 'wide') fit.shape = 'tall';
     if (!Number.isFinite(style.energy)) {
       await save({ style: style.id, ...fit });
@@ -151,8 +151,8 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy, commit
     <div className="space-y-4">
       {groups.map((group) => (
         <div key={group.family ?? 'all'} className="space-y-2">
-          {group.family && <div className={fieldLabelCls}>{FAMILY_HEADINGS[group.family]}</div>}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {group.family && <div id={`style-family-${group.family}`} className={fieldLabelCls}>{FAMILY_HEADINGS[group.family]}</div>}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" role={group.family ? 'group' : undefined} aria-labelledby={group.family ? `style-family-${group.family}` : undefined}>
             {group.styles.map(renderCard)}
           </div>
         </div>

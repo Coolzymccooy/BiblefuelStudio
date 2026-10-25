@@ -63,6 +63,7 @@ test("prepare → analyse → direct → render → history, with progress by st
   assert.match(done.render.file, /^\/outputs\/moment-[0-9a-f-]{36}\.mp4$/);
   assert.equal(done.history.length, 1);
   assert.equal(done.history[0].seed, 9);
+  assert.equal(done.render.shape, "tall");
   assert.equal(calls.prepare, 4, "one working image per photo");
   assert.ok(done.plan && done.plan.shots.length > 0, "the plan is saved");
   assert.equal(getJob(job.jobId).status, "done");
@@ -562,6 +563,8 @@ test("a Showcase Moment stages a card and a blur per photo and renders with the 
   assert.equal(seen[0].images.length, 4);
   assert.ok(seen[0].images.every((im) => im.card && im.blur && ["tall", "wide"].includes(im.shape)));
   assert.equal(done.plan.kind, "showcase", "the plan is saved");
+  assert.equal(done.render.shape, "wide", "the video records its own shape");
+  assert.equal(done.history[0].shape, "wide");
   assert.ok(!fs.existsSync(seen[0].workDir), "the work dir is removed");
 });
 

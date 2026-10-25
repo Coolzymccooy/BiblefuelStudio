@@ -212,8 +212,10 @@ function recordDone(ctx, projectId, jobId, { name, out, plan, notes }) {
     const live = liveProject(ctx, projectId);
     if (!ownsRender(live, jobId)) throw new StageError("This Moment was changed while it was being made. Make it again.");
     const file = `/outputs/${name}`;
-    const entry = { jobId, file, createdAt: Date.now(), seed: plan.seed, notes };
-    const next = withHistory({ ...live, render: { jobId, status: "done", percent: 100, stage: "done", file, notes } }, entry);
+    // The video's own shape, so the player frames it right even after the project's shape changes.
+    const shape = plan.shape === "wide" ? "wide" : "tall";
+    const entry = { jobId, file, createdAt: Date.now(), seed: plan.seed, notes, shape };
+    const next = withHistory({ ...live, render: { jobId, status: "done", percent: 100, stage: "done", file, notes, shape } }, entry);
     writeProject(ctx.dataDir, next);
     dropped = [...(live.history || []), entry].filter((h) => !next.history.includes(h));
   } catch (err) {

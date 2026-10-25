@@ -288,6 +288,7 @@ describe('MomentsStyleStep', () => {
       expect(heading.compareDocumentPosition(fellowship) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(heading.compareDocumentPosition(glow) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
       expect(screen.getByText('Classic · one photo at a time')).toBeInTheDocument();
+      expect(screen.getByRole('group', { name: 'Showcase · many photos at once' })).toContainElement(fellowship);
     });
 
     it('offer a shape; classic styles do not', () => {
