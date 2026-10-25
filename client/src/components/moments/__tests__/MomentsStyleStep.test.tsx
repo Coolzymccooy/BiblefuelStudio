@@ -262,4 +262,78 @@ describe('MomentsStyleStep', () => {
     expect(screen.getByRole('button', { name: '30 s' })).toBeDisabled();
     expect(screen.getByLabelText(/energy/i)).toBeDisabled();
   });
+
+  describe('Showcase styles', () => {
+    const SHOWCASE_META = {
+      ...META,
+      styles: [
+        ...META.styles.map((s) => ({ ...s, family: 'classic' as const })),
+        { id: 'fellowship' as const, label: 'Fellowship', description: 'Many photos', energy: 0.6, family: 'showcase' as const },
+        { id: 'scrapbook' as const, label: 'Scrapbook', description: 'Paper', energy: 0.35, family: 'showcase' as const },
+        { id: 'partyPop' as const, label: 'Party pop', description: 'Colour', energy: 0.8, family: 'showcase' as const },
+        { id: 'premiere' as const, label: 'Premiere', description: 'Cinema', energy: 0.45, family: 'showcase' as const },
+      ],
+      lengths: [15, 30, 60, 90, 120, 180],
+      lengthsByFamily: { classic: [15, 30, 60], showcase: [30, 60, 90, 120, 180] },
+      shapes: ['tall', 'wide'] as ('tall' | 'wide')[],
+    };
+    const sprops = (over = {}) => ({ ...props(over), meta: SHOWCASE_META });
+    const lengthButtons = () => screen.getAllByRole('button').filter((b) => b.closest('[aria-label="Length"]')).map((b) => b.textContent);
+
+    it('sit under their own heading, after the classic styles', () => {
+      render(<MomentsStyleStep {...sprops()} />);
+      const heading = screen.getByText('Showcase · many photos at once');
+      const fellowship = screen.getByRole('button', { name: /^fellowship/i });
+      const glow = screen.getByRole('button', { name: /^glow/i });
+      expect(heading.compareDocumentPosition(fellowship) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(heading.compareDocumentPosition(glow) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+      expect(screen.getByText('Classic · one photo at a time')).toBeInTheDocument();
+    });
+
+    it('offer a shape; classic styles do not', () => {
+      const { unmount } = render(<MomentsStyleStep {...sprops({ style: 'premiere', lengthSec: 60 })} />);
+      const group = screen.getByRole('group', { name: 'Shape' });
+      expect(group).toHaveTextContent('Portrait 9:16');
+      expect(group).toHaveTextContent('Widescreen 16:9');
+      expect(screen.getByRole('button', { name: 'Portrait 9:16' })).toHaveAttribute('aria-pressed', 'true');
+      unmount();
+      render(<MomentsStyleStep {...sprops({ style: 'glow' })} />);
+      expect(screen.queryByRole('group', { name: 'Shape' })).toBeNull();
+    });
+
+    it('picking Widescreen saves the wide shape', async () => {
+      const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
+      render(<MomentsStyleStep {...sprops({ style: 'premiere', lengthSec: 60 })} />);
+      await userEvent.click(screen.getByRole('button', { name: 'Widescreen 16:9' }));
+      expect(update).toHaveBeenCalledWith('m1', { shape: 'wide' });
+    });
+
+    it("Length lists the picked style's own lengths", () => {
+      const { unmount } = render(<MomentsStyleStep {...sprops({ style: 'glow' })} />);
+      expect(lengthButtons()).toEqual(['15 s', '30 s', '60 s']);
+      unmount();
+      render(<MomentsStyleStep {...sprops({ style: 'premiere', lengthSec: 60 })} />);
+      expect(lengthButtons()).toEqual(['30 s', '60 s', '90 s', '120 s', '180 s']);
+    });
+
+    it('picking a classic style from a long widescreen Moment brings length and shape back in one save', async () => {
+      const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment({ style: 'glow' }));
+      render(<MomentsStyleStep {...sprops({ style: 'premiere', lengthSec: 120, shape: 'wide' })} />);
+      await userEvent.click(screen.getByRole('button', { name: /^glow/i }));
+      expect(update).toHaveBeenCalledWith('m1', { style: 'glow', energy: 0.2, lengthSec: 60, shape: 'tall' });
+    });
+
+    it('picking a Showcase style lifts a 15 s Moment to 30 s', async () => {
+      const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment({ style: 'fellowship' }));
+      render(<MomentsStyleStep {...sprops({ style: 'glow', lengthSec: 15 })} />);
+      await userEvent.click(screen.getByRole('button', { name: /^fellowship/i }));
+      expect(update).toHaveBeenCalledWith('m1', { style: 'fellowship', energy: 0.6, lengthSec: 30 });
+    });
+
+    it('older meta without families keeps one grid and the old lengths', () => {
+      render(<MomentsStyleStep {...props()} />);
+      expect(screen.queryByText('Showcase · many photos at once')).toBeNull();
+      expect(lengthButtons()).toEqual(['15 s', '30 s', '60 s']);
+    });
+  });
 });

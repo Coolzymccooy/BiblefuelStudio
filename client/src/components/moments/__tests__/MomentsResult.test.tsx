@@ -106,4 +106,13 @@ describe('MomentsResult', () => {
     expect(links[0]).toHaveAttribute('href', expect.stringContaining('moment-a.mp4'));
     expect(links[0]).toHaveTextContent(/version 1/i);
   });
+
+  it('plays a widescreen Moment in a 16:9 frame and a portrait one in 9:16', () => {
+    const done = { jobId: 'j', status: 'done' as const, percent: 100, stage: 'done', file: '/outputs/moment-x.mp4' };
+    const { unmount } = render(<MomentsResult project={mkMoment({ shape: 'wide', render: done })} {...handlers()} />);
+    expect(document.querySelector('video')!.className).toMatch(/aspect-video/);
+    unmount();
+    render(<MomentsResult project={mkMoment({ render: done })} {...handlers()} />);
+    expect(document.querySelector('video')!.className).toMatch(/aspect-\[9\/16\]/);
+  });
 });
