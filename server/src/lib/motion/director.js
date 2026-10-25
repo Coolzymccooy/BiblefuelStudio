@@ -102,7 +102,7 @@ function chooseOverlays({ style, role, move, energy, capabilities, strongOk, pre
 
 export const TITLE_MAX = 40;
 export const STATEMENT_MAX = 60;
-export const STATEMENT_LIMITS = Object.freeze({ 15: 3, 30: 5, 60: 8 });
+export const STATEMENT_LIMITS = Object.freeze({ 15: 3, 30: 5, 60: 8, 90: 10, 120: 12, 180: 16 });
 const MIN_STATEMENTS = 3;
 /** The title stays up at least this long (to the end of the shot it falls in). */
 const TITLE_MIN_SEC = 2.5;

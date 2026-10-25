@@ -4,7 +4,7 @@ import { ok, fail, withoutOk } from "../toolResult.js";
 import { resolveMediaInput, resolveOwnMediaInput } from "../mediaPath.js";
 import { planQuotaRefusal, renderQuotaRefusal } from "../planQuota.js";
 import {
-  MOMENT_ID, MOMENT_OCCASIONS, MOMENT_STYLES, MOMENT_LENGTHS, MOMENT_DETAIL_FIELDS, MIN_PHOTOS, MAX_PHOTOS, SCRIPT_MAX,
+  MOMENT_ID, MOMENT_OCCASIONS, MOMENT_STYLES, MOMENT_LENGTHS, MOMENT_SHAPES, MOMENT_DETAIL_FIELDS, MIN_PHOTOS, MAX_PHOTOS, SCRIPT_MAX,
   PHOTO_UPLOAD_NAME, projectView, summaryView, isRendering, renderStarted,
 } from "../momentsView.js";
 
@@ -81,7 +81,7 @@ async function soundPatch(ctx, input) {
 }
 
 async function updateBody(ctx, input) {
-  const { occasion, title, details, statements, heroIndex, style, energy, lengthSec, seed } = input;
+  const { occasion, title, details, statements, heroIndex, style, energy, lengthSec, shape, seed } = input;
   let photos;
   if (input.photos) {
     const checked = await photoRefs(ctx, input.photos);
@@ -90,7 +90,7 @@ async function updateBody(ctx, input) {
   }
   const sound = await soundPatch(ctx, input);
   if (sound.refusal) return sound;
-  const body = defined({ occasion, title, details, statements, heroIndex, style, energy, lengthSec, seed, photos, sound: sound.sound });
+  const body = defined({ occasion, title, details, statements, heroIndex, style, energy, lengthSec, shape, seed, photos, sound: sound.sound });
   if (Object.keys(body).length === 0) return { refusal: fail("BAD_INPUT", "moments_project update needs at least one field to change.") };
   return { body };
 }
@@ -145,7 +145,7 @@ const momentsProject = {
     "Moments: short photo videos (15, 30 or 60 seconds) for birthdays, weddings, sermons and church events, with moving titles and lines over the photos, set to a song and an optional voiceover. " +
     "action meta: the occasions (each with its detail fields), styles, lengths, limits and your image library (libraryImages, usable as photos). list: your Moments, newest first. get { id }: one Moment with its words, photos, song, voiceover, past videos and (after a render) a moments job handle. " +
     "create { occasion }: a new Moment with that occasion's style, energy and song. delete { id }. " +
-    `update { id, ... }: change any of occasion, title, details { name, milestone, eventTitle, date, venue, verse }, statements (the lines shown, at most 8), photos (the WHOLE list, ${MIN_PHOTOS} to ${MAX_PHOTOS}: each { path } of an image imported with media_import_url kind image, or { libraryId }), heroIndex, style, energy (0 to 1), lengthSec, seed, song ({ ref } from music_library, or { path } of an audio file in your own media folder: your uploads, imports and renders; null for none) and removeVoiceover. Paths outside your media folder and URLs are refused. Refused while rendering. ` +
+    `update { id, ... }: change any of occasion, title, details { name, milestone, eventTitle, date, venue, verse }, statements (the lines shown, at most 16; a Moment uses 3 for 15 s up to 16 for 180 s), photos (the WHOLE list, ${MIN_PHOTOS} to ${MAX_PHOTOS}: each { path } of an image imported with media_import_url kind image, or { libraryId }), heroIndex, style, energy (0 to 1), lengthSec, shape, seed, song ({ ref } from music_library, or { path } of an audio file in your own media folder: your uploads, imports and renders; null for none) and removeVoiceover. Paths outside your media folder and URLs are refused. Refused while rendering. ` +
     "Pipeline: create, update (photos, details), moments_step statements (then update with the lines you like), optionally moments_step voiceover, moments_render, jobs_wait (kind moments). " + FREE_NOTE,
   inputSchema: {
     action: z.enum(["list", "get", "create", "update", "delete", "meta"]).describe("list, get, create, update, delete or meta."),
@@ -153,12 +153,13 @@ const momentsProject = {
     occasion: z.enum(MOMENT_OCCASIONS).optional().describe("create (required) or update: what the Moment is for."),
     title: z.string().max(40).optional().describe("update: the big title (at most 40 characters)."),
     details: z.record(z.enum(MOMENT_DETAIL_FIELDS), z.string().max(80)).optional().describe("update: the occasion's details, for example { name: \"Ada\", milestone: \"40 years\" }."),
-    statements: z.array(z.string().trim().min(1).max(60)).max(8).optional().describe("update: the lines shown, in order (each at most 60 characters)."),
+    statements: z.array(z.string().trim().min(1).max(60)).max(16).optional().describe("update: the lines shown, in order (each at most 60 characters)."),
     photos: z.array(photoSchema).max(MAX_PHOTOS).optional().describe("update: every photo, in order."),
     heroIndex: z.number().int().min(0).max(MAX_PHOTOS - 1).optional().describe("update: which photo is the hero (0-based)."),
-    style: z.enum(MOMENT_STYLES).optional().describe("update: glow, celebrate, hype or gallery."),
+    style: z.enum(MOMENT_STYLES).optional().describe("update: a classic style, one photo at a time (glow, celebrate, hype, gallery), or a Showcase style, several photos per scene through polaroids, grids and splits (fellowship, scrapbook, partyPop, premiere)."),
     energy: z.number().min(0).max(1).optional().describe("update: how lively the motion is, 0 to 1."),
-    lengthSec: z.union(MOMENT_LENGTHS.map((n) => z.literal(n))).optional().describe("update: 15, 30 or 60 seconds."),
+    lengthSec: z.union(MOMENT_LENGTHS.map((n) => z.literal(n))).optional().describe("update: classic styles 15, 30 or 60 seconds; Showcase styles 30, 60, 90, 120 or 180."),
+    shape: z.enum(MOMENT_SHAPES).optional().describe("update: tall (9:16, phones) or wide (16:9, church screens and YouTube). Showcase styles only; classic styles are always tall."),
     seed: z.number().int().min(0).max(2147483647).optional().describe("update: the choreography seed."),
     song: songSchema.nullable().optional().describe("update: the song, or null for none."),
     removeVoiceover: z.boolean().optional().describe("update: true removes the voiceover."),

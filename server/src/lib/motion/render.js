@@ -91,10 +91,10 @@ export function finishProgressReader(durationSec, emit) {
 }
 
 const DETAIL_CAP = 2000;
-const tail = (s) => String(s || "").trim().split("\n").slice(-8).join("\n").slice(-DETAIL_CAP);
+export const tail = (s) => String(s || "").trim().split("\n").slice(-8).join("\n").slice(-DETAIL_CAP);
 
 /** Moves a finished file into place. rename is atomic; across devices it is copy then unlink. */
-function moveInto(from, to) {
+export function moveInto(from, to) {
   try {
     fs.renameSync(from, to);
   } catch (err) {

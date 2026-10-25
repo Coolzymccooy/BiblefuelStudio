@@ -60,12 +60,12 @@ const bad = [
   ["an unknown style", { style: "disco" }, /style/],
   ["a length of 20", { lengthSec: 20 }, /length/],
   ["a 41-character title", { title: "x".repeat(41) }, /title/],
-  ["nine statements", { statements: Array(9).fill("x") }, /statements/],
+  ["seventeen statements", { statements: Array(17).fill("x") }, /16 statements/],
   ["a 61-character statement", { statements: ["x".repeat(61)] }, /statement/],
   ["an empty statement", { statements: ["ok", "  "] }, /statement/],
   ["an unknown detail", { details: { password: "x" } }, /detail/],
   ["an 81-character detail", { details: { name: "x".repeat(81) } }, /name/],
-  ["21 photos", { photos: Array(21).fill({ ref: { kind: "upload", path: "p" }, url: "u", width: 1, height: 1 }) }, /20 photos/],
+  ["101 photos", { photos: Array(101).fill({ ref: { kind: "upload", path: "p" }, url: "u", width: 1, height: 1 }) }, /100 photos/],
   ["a hero outside the photos", { heroIndex: 3 }, /hero/],
   ["a negative window", { sound: { song: { ref: "library:hopeful", windowStartSec: -1 } } }, /window/],
   ["an object as the title", { title: { a: 1 } }, /title/],
@@ -182,4 +182,52 @@ test("applyUpdate on a deep-frozen project and body does not throw and leaves th
   const r = applyUpdate(p, body);
   assert.equal(r.ok, true, r.error);
   assert.equal(JSON.stringify(p) + JSON.stringify(body), before);
+});
+
+// ---- Showcase: shape and per-family lengths ------------------------------------
+
+test("a new Moment is portrait", () => {
+  assert.equal(createProject(dir, { occasion: "birthday" }).shape, "tall");
+});
+
+test("a Showcase style keeps the shape it is given; a classic style is always portrait", () => {
+  const p = createProject(dir, { occasion: "event" });
+  const wide = applyUpdate(p, { style: "premiere", lengthSec: 120, shape: "wide" });
+  assert.equal(wide.ok, true, wide.error);
+  assert.equal(wide.project.shape, "wide");
+  assert.equal(wide.project.lengthSec, 120);
+  const classic = applyUpdate(p, { style: "glow", shape: "wide" });
+  assert.equal(classic.ok, true);
+  assert.equal(classic.project.shape, "tall");
+  assert.match(applyUpdate(p, { style: "premiere", shape: "square" }).error, /shape/);
+});
+
+test("switching to a classic style brings a long, wide Showcase Moment back to 60 s portrait", () => {
+  const p = applyUpdate(createProject(dir, { occasion: "event" }), { style: "premiere", lengthSec: 120, shape: "wide" }).project;
+  const r = applyUpdate(p, { style: "glow" });
+  assert.equal(r.ok, true);
+  assert.equal(r.project.lengthSec, 60);
+  assert.equal(r.project.shape, "tall");
+});
+
+test("an older client asking a classic style for 120 s gets 60 s, not an error", () => {
+  const p = applyUpdate(createProject(dir, { occasion: "event" }), { style: "glow" }).project;
+  const r = applyUpdate(p, { lengthSec: 120 });
+  assert.equal(r.ok, true);
+  assert.equal(r.project.lengthSec, 60);
+});
+
+test("a Showcase style refuses 15 s, and lifts a 15 s Moment to 30 s when picked", () => {
+  const p = createProject(dir, { occasion: "event" });
+  const refused = applyUpdate(p, { style: "fellowship", lengthSec: 15 });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error, "the length must be 30, 60, 90, 120 or 180 seconds");
+  const lifted = applyUpdate({ ...p, lengthSec: 15 }, { style: "fellowship" });
+  assert.equal(lifted.ok, true);
+  assert.equal(lifted.project.lengthSec, 30);
+});
+
+test("a Moment holds up to 100 photos", () => {
+  const photo = { ref: { kind: "upload", path: "p" }, url: "u", width: 1, height: 1 };
+  assert.equal(applyUpdate(createProject(dir, { occasion: "event" }), { photos: Array(100).fill(photo) }).ok, true);
 });

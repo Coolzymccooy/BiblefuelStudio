@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getEffect } from "./effects/index.js";
-import { STYLE_IDS } from "./styles.js";
+import { CLASSIC_IDS } from "./styles.js";
 
 /**
  * The motion plan: the one contract between the director, the renderer and
@@ -22,7 +22,7 @@ const shotSchema = z.object({
   overlays: z.array(z.object({ id: z.string() })).max(2),
   anchor: z.object({ x: unit, y: unit }),
 });
-const captionSchema = z.object({
+export const captionSchema = z.object({
   text: z.string().trim().min(1).max(60),
   start: z.number().min(0),
   end: z.number().positive(),
@@ -38,7 +38,7 @@ const planSchema = z.object({
   fps: z.literal(OUTPUT.fps),
   durationSec: z.number().positive().max(61),
   seed: z.number().int().min(0),
-  style: z.enum(STYLE_IDS),
+  style: z.enum(CLASSIC_IDS),
   energy: unit,
   shots: z.array(shotSchema).min(1).max(240),
   captions: z.array(captionSchema).max(9),

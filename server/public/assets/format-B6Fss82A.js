@@ -1,0 +1,1 @@
+const n=r=>`$${(Math.round((Number(r)||0)*100)/100).toFixed(2)}`;function e(r){if(r==null||!Number.isFinite(r))return"–";const t=Math.max(0,Math.round(r));return`${Math.floor(t/60)}:${String(t%60).padStart(2,"0")}`}const a={narration:"",scripture:"Scripture",reference:"Reference",chant:"Chant"};export{e as c,a as k,n as m};

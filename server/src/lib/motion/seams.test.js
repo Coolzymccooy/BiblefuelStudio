@@ -7,7 +7,7 @@ import { shotGraph } from "./shotArgs.js";
 import { finishArgs } from "./finish.js";
 import { FFMPEG_51_FILTERS } from "./effects/index.js";
 import { filterNames } from "./testkit.js";
-import { STYLE_IDS } from "./styles.js";
+import { CLASSIC_IDS } from "./styles.js";
 
 /**
  * The guard between the director and the renderer: whatever plan the director
@@ -84,7 +84,7 @@ test("every plan the director makes builds shot and finish graphs on ffmpeg 5.1 
   let shotGraphs = 0;
   const problems = [];
   for (const seed of [3, 11, 42]) {
-    for (const styleId of STYLE_IDS) {
+    for (const styleId of CLASSIC_IDS) {
       for (const energy of [0.1, 0.5, 0.95]) {
         for (const lengthSec of [15, 30]) {
           for (const [mixName, shapes] of Object.entries(MIXES)) {

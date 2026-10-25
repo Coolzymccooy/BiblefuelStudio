@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { SHOWCASE_LENGTHS } from "../motion/styles.js";
 import { momentRenderStage, cancelMomentRender, droppedNote, _setEngineForTest, _resetEngineForTest, STAGES } from "./renderStage.js";
 import { createProject, readProject, writeProject } from "./projectStore.js";
 import { createJob, getJob, cancelJob } from "../renderJobs.js";
@@ -62,6 +63,7 @@ test("prepare → analyse → direct → render → history, with progress by st
   assert.match(done.render.file, /^\/outputs\/moment-[0-9a-f-]{36}\.mp4$/);
   assert.equal(done.history.length, 1);
   assert.equal(done.history[0].seed, 9);
+  assert.equal(done.render.shape, "tall");
   assert.equal(calls.prepare, 4, "one working image per photo");
   assert.ok(done.plan && done.plan.shots.length > 0, "the plan is saved");
   assert.equal(getJob(job.jobId).status, "done");
@@ -516,6 +518,8 @@ test("droppedNote suggests the next longer length, and nothing at 60 s", () => {
   assert.equal(droppedNote(4, 15), "4 photos didn't fit 15 s. Try 30 s?");
   assert.equal(droppedNote(1, 30), "1 photo didn't fit 30 s. Try 60 s?");
   assert.equal(droppedNote(2, 60), "2 photos didn't fit 60 s.");
+  assert.equal(droppedNote(3, 60, SHOWCASE_LENGTHS), "3 photos didn't fit 60 s. Try 90 s?");
+  assert.equal(droppedNote(3, 180, SHOWCASE_LENGTHS), "3 photos didn't fit 180 s.");
 });
 
 test("a Moment with too many photos for 15 s notes the dropped ones and suggests 30 s", async () => {
@@ -524,4 +528,111 @@ test("a Moment with too many photos for 15 s notes the dropped ones and suggests
   const done = readProject(ctx.dataDir, p.projectId);
   assert.equal(done.render.status, "done", JSON.stringify(done.render));
   assert.match(done.render.notes.join(" "), /\d+ photos? didn't fit 15 s\. Try 30 s\?/);
+});
+
+// ---- Showcase styles ------------------------------------------------------------
+
+function showcaseEngine(seen) {
+  _setEngineForTest({
+    renderPlan: async () => { throw new Error("a Showcase Moment must not use the classic engine"); },
+    renderShowcase: async (opts) => {
+      seen.push(opts);
+      assert.ok(fs.existsSync(opts.workDir));
+      opts.onProgress({ stage: "shots", fraction: 0.5 });
+      opts.onProgress({ stage: "finish", fraction: 1 });
+      fs.writeFileSync(opts.out, "mp4");
+      return { ok: true, file: opts.out };
+    },
+  });
+}
+const showcaseMoment = (over = {}) => moment({ style: "fellowship", lengthSec: 30, shape: "wide", ...over });
+
+test("a Showcase Moment stages a card and a blur per photo and renders with the Showcase engine", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  const p = showcaseMoment({ details: { date: "21 November" } });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 30 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(done.render.percent, 100);
+  assert.equal(calls.prepare, 8, "two staged images per photo");
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].plan.kind, "showcase");
+  assert.equal(seen[0].plan.shape, "wide");
+  assert.equal(seen[0].plan.scenes.at(-1).template, "invite");
+  assert.equal(seen[0].images.length, 4);
+  assert.ok(seen[0].images.every((im) => im.card && im.blur && ["tall", "wide"].includes(im.shape)));
+  assert.equal(done.plan.kind, "showcase", "the plan is saved");
+  assert.equal(done.render.shape, "wide", "the video records its own shape");
+  assert.equal(done.history[0].shape, "wide");
+  assert.ok(!fs.existsSync(seen[0].workDir), "the work dir is removed");
+});
+
+test("a classic Moment still renders with the classic engine", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  _setEngineForTest({ renderPlan: async (opts) => { fs.writeFileSync(opts.out, "mp4"); return { ok: true, file: opts.out }; } });
+  const p = moment();
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  assert.equal(readProject(ctx.dataDir, p.projectId).render.status, "done");
+  assert.equal(seen.length, 0);
+});
+
+test("a song shorter than a Showcase Moment shortens the Moment, and says so", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  _setEngineForTest({ decode: async () => Buffer.alloc(11025 * 2 * 31) }); // a song of about 30.9 s
+  const p = showcaseMoment({ lengthSec: 60 });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 60 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(seen[0].plan.durationSec, 30);
+  assert.ok(done.render.notes.includes("Your song is 30 s, so this Moment is 30 s."), JSON.stringify(done.render.notes));
+});
+
+test("photos that don't fit a Showcase Moment offer its next length", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  const p = showcaseMoment({ photos: Array.from({ length: 100 }, () => photo()) });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 30 }).jobId, {});
+  const notes = readProject(ctx.dataDir, p.projectId).render.notes.join(" ");
+  assert.match(notes, /photos didn't fit 30 s\. Try 60 s\?/);
+});
+
+test("cancelling a Showcase render records Cancelled and removes the work dir", async () => {
+  const seen = [];
+  _setEngineForTest({
+    renderShowcase: (opts) => new Promise((resolve) => {
+      seen.push(opts);
+      opts.signal.addEventListener("abort", () => resolve({ ok: false, error: "cancelled" }), { once: true });
+      setTimeout(() => cancelMomentRender(p.projectId), 10);
+    }),
+  });
+  const p = showcaseMoment();
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 30 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "error");
+  assert.equal(done.render.error, "Cancelled.");
+  assert.ok(!fs.existsSync(seen[0].workDir));
+});
+
+test("a very short song never shrinks a Showcase Moment below 15 s", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  _setEngineForTest({ decode: async () => Buffer.alloc(11025 * 2 * 9) }); // a song of about 9 s
+  const p = showcaseMoment({ lengthSec: 30 });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 30 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(seen[0].plan.durationSec, 15);
+  assert.ok(done.render.notes.includes("Your song is 8 s, so this Moment is 15 s, the shortest it can be, and ends without music."), JSON.stringify(done.render.notes));
+});
+
+test("a classic Moment prepares at most 20 photos and says how to show them all", async () => {
+  const p = moment({ photos: Array.from({ length: 25 }, () => photo()) });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(calls.prepare, 20);
+  assert.ok(done.render.notes.some((n) => /Classic styles use up to 20 photos/.test(n)), JSON.stringify(done.render.notes));
 });

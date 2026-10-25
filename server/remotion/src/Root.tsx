@@ -4,6 +4,8 @@ import { SceneScriptVideo } from "./SceneScriptVideo";
 import { CartoonVideo } from "./CartoonVideo";
 import type { RenderData } from "./types";
 import type { CartoonRenderData } from "./cartoonTypes";
+import { MomentShowcase } from "./showcase/MomentShowcase";
+import type { ShowcaseProps } from "./showcase/types";
 
 // Only used when opening the composition in Remotion Studio; real renders
 // always pass a full RenderData as inputProps.
@@ -19,6 +21,12 @@ const CARTOON_SAMPLE: CartoonRenderData = {
   shots: [], captions: [], captionsOn: true, bed: null,
   endCard: { from: 2.5, to: 5.5, reference: "Luke 15:4", text: "Sample", brand: "BibleFuel Studio" },
   fonts: {},
+};
+
+const SHOWCASE_SAMPLE: ShowcaseProps = {
+  fps: 30, w: 1080, h: 1920, durationSec: 4, shape: "tall", beatSec: 0.6,
+  scenes: [], flashes: [], invite: null, letterbox: false, images: [], fonts: {},
+  palette: { backdrop: "dark", card: "#F7F1E3", accent: "#E8B04B", ink: "#1A1208" },
 };
 
 export const Root: React.FC = () => (
@@ -47,6 +55,19 @@ export const Root: React.FC = () => (
       calculateMetadata={({ props }) => {
         const p = props as unknown as CartoonRenderData;
         return { durationInFrames: Math.max(1, Math.round(p.total * p.fps)), fps: p.fps, width: p.width, height: p.height };
+      }}
+    />
+    <Composition
+      id="MomentShowcase"
+      component={MomentShowcase as unknown as React.FC<Record<string, unknown>>}
+      defaultProps={SHOWCASE_SAMPLE as unknown as Record<string, unknown>}
+      durationInFrames={Math.round(SHOWCASE_SAMPLE.durationSec * SHOWCASE_SAMPLE.fps)}
+      fps={SHOWCASE_SAMPLE.fps}
+      width={SHOWCASE_SAMPLE.w}
+      height={SHOWCASE_SAMPLE.h}
+      calculateMetadata={({ props }) => {
+        const p = props as unknown as ShowcaseProps;
+        return { durationInFrames: Math.max(1, Math.round(p.durationSec * p.fps)), fps: p.fps, width: p.w, height: p.h };
       }}
     />
   </>

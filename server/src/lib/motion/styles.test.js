@@ -1,11 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { STYLES, STYLE_IDS, resolveStyle, captionEnergyFor } from "./styles.js";
-import { getEffect } from "./effects/index.js";
+import {
+  STYLES, STYLE_IDS, CLASSIC_IDS, SHOWCASE_IDS, TEMPLATE_IDS, CLASSIC_LENGTHS, SHOWCASE_LENGTHS,
+  resolveStyle, captionEnergyFor, isShowcase, familyOf, lengthsFor,
+} from "./styles.js";
+import { getEffect, FFMPEG_51_FILTERS } from "./effects/index.js";
 import { isStudioLook } from "../kinetic/looks.js";
 
-test("the four launch styles, in order", () => {
-  assert.deepEqual(STYLE_IDS, ["glow", "celebrate", "hype", "gallery"]);
+test("the four classic styles, then the four Showcase styles, in order", () => {
+  assert.deepEqual(CLASSIC_IDS, ["glow", "celebrate", "hype", "gallery"]);
+  assert.deepEqual(SHOWCASE_IDS, ["fellowship", "scrapbook", "partyPop", "premiere"]);
+  assert.deepEqual(STYLE_IDS, [...CLASSIC_IDS, ...SHOWCASE_IDS]);
 });
 
 test("each style has a natural Energy that matches its feel", () => {
@@ -18,7 +23,7 @@ test("each style has a natural Energy that matches its feel", () => {
 });
 
 test("every palette entry names an existing effect of the right kind", () => {
-  for (const s of Object.values(STYLES)) {
+  for (const s of Object.values(STYLES).filter((x) => x.family === "classic")) {
     for (const [kind, palette] of [["move", s.moves], ["entrance", s.entrances], ["overlay", s.overlays]]) {
       for (const [id, weight] of Object.entries(palette)) {
         assert.equal(getEffect(id)?.kind, kind, `${s.id}: ${id}`);
@@ -49,4 +54,35 @@ test("unknown style ids fall back to celebrate, ignoring the prototype chain", (
   assert.equal(resolveStyle("nope").id, "celebrate");
   assert.equal(resolveStyle("constructor").id, "celebrate");
   assert.equal(resolveStyle("glow").id, "glow");
+});
+
+test("Showcase styles use only known templates, a real caption look and 5.1 grade filters", () => {
+  for (const id of SHOWCASE_IDS) {
+    const s = STYLES[id];
+    assert.equal(s.family, "showcase");
+    assert.ok(isStudioLook(s.look), `${id} look`);
+    const entries = Object.entries(s.templates);
+    assert.ok(entries.length >= 4, `${id} has a few templates`);
+    for (const [t, w] of entries) {
+      assert.ok(TEMPLATE_IDS.includes(t), `${id}: ${t}`);
+      assert.ok(w > 0);
+    }
+    for (const f of s.grade.split(",")) assert.ok(FFMPEG_51_FILTERS.has(f.split("=")[0]), `${id} grade ${f}`);
+    assert.ok(["blur", "paper", "colour", "dark"].includes(s.palette.backdrop));
+    if (s.palette.backdrop === "colour") assert.ok(s.palette.blocks.length >= 4);
+    assert.ok(s.energy >= 0 && s.energy <= 1);
+  }
+});
+
+test("families and their lengths", () => {
+  assert.equal(isShowcase("partyPop"), true);
+  assert.equal(isShowcase("hype"), false);
+  assert.equal(isShowcase("constructor"), false);
+  assert.equal(familyOf("premiere"), "showcase");
+  assert.equal(familyOf("glow"), "classic");
+  assert.deepEqual(CLASSIC_LENGTHS, [15, 30, 60]);
+  assert.deepEqual(SHOWCASE_LENGTHS, [30, 60, 90, 120, 180]);
+  assert.deepEqual(lengthsFor("glow"), [15, 30, 60]);
+  assert.deepEqual(lengthsFor("premiere"), [30, 60, 90, 120, 180]);
+  assert.deepEqual(lengthsFor("nope"), [15, 30, 60]);
 });

@@ -1,4 +1,8 @@
-export type MomentStyle = 'glow' | 'celebrate' | 'hype' | 'gallery';
+export type MomentStyle = 'glow' | 'celebrate' | 'hype' | 'gallery' | 'fellowship' | 'scrapbook' | 'partyPop' | 'premiere';
+/** Classic styles show one photo at a time; Showcase styles several per scene. */
+export type MomentStyleFamily = 'classic' | 'showcase';
+/** tall is 9:16 (phones); wide is 16:9 (church screens, YouTube). Only Showcase styles draw wide. */
+export type MomentShape = 'tall' | 'wide';
 export type DetailField = 'name' | 'milestone' | 'eventTitle' | 'date' | 'venue' | 'verse';
 
 export type PhotoRef = { kind: 'upload'; path: string } | { kind: 'library'; id: string };
@@ -18,6 +22,8 @@ export interface MomentRender {
   file?: string;
   error?: string;
   notes?: string[];
+  /** The finished video's shape; renders made before shapes existed have none (tall). */
+  shape?: MomentShape;
 }
 
 export interface MomentHistoryEntry {
@@ -45,6 +51,8 @@ export interface MomentProject {
   style: MomentStyle;
   energy: number;
   lengthSec: number;
+  /** Missing on Moments saved before shapes existed: those are tall. */
+  shape?: MomentShape;
   seed: number;
   render: MomentRender | null;
   history: MomentHistoryEntry[];
@@ -72,8 +80,11 @@ export interface MomentOccasion {
 export interface MomentMeta {
   occasions: MomentOccasion[];
   /** `energy` is the style's natural level (0..1): picking the style moves the slider there. */
-  styles: Array<{ id: MomentStyle; label: string; description: string; energy: number }>;
+  styles: Array<{ id: MomentStyle; label: string; description: string; energy: number; family?: MomentStyleFamily }>;
   lengths: number[];
+  /** Each family's own lengths; older servers send only `lengths`. */
+  lengthsByFamily?: Record<MomentStyleFamily, number[]>;
+  shapes?: MomentShape[];
   limits: {
     statements: Record<string, number>;
     maxStatements: number;
@@ -117,6 +128,7 @@ export interface MomentPatch {
   title?: string;
   statements?: string[];
   style?: MomentStyle;
+  shape?: MomentShape;
   energy?: number;
   lengthSec?: number;
   seed?: number;

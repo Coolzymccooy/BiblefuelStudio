@@ -382,6 +382,6 @@ test("the title stays up for 2.5 s of shots, even when high Energy cuts every ha
 test("the word limits are exported for the server to share", () => {
   assert.equal(TITLE_MAX, 40);
   assert.equal(STATEMENT_MAX, 60);
-  assert.deepEqual(STATEMENT_LIMITS, { 15: 3, 30: 5, 60: 8 });
+  assert.deepEqual(STATEMENT_LIMITS, { 15: 3, 30: 5, 60: 8, 90: 10, 120: 12, 180: 16 });
   assert.ok(Object.isFrozen(STATEMENT_LIMITS));
 });
