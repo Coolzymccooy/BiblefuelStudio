@@ -16,6 +16,7 @@ export const MOMENT_ID = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, "a Mom
 export const MOMENT_OCCASIONS = ["birthday", "anniversary", "wedding", "sermon", "event", "thanksgiving", "memorial", "fun"];
 export const MOMENT_STYLES = ["glow", "celebrate", "hype", "gallery", "fellowship", "scrapbook", "partyPop", "premiere"];
 export const MOMENT_LENGTHS = [15, 30, 60, 90, 120, 180];
+export const MOMENT_SHAPES = ["tall", "wide"];
 export const MOMENT_DETAIL_FIELDS = ["name", "milestone", "eventTitle", "date", "venue", "verse"];
 export const MIN_PHOTOS = 3;
 export const MAX_PHOTOS = 100;
@@ -63,6 +64,7 @@ export function projectView(project, publicBase) {
     style: project.style ?? null,
     energy: project.energy ?? null,
     lengthSec: project.lengthSec ?? null,
+    shape: project.shape ?? "tall",
     seed: project.seed ?? null,
     song: sound.song ?? null,
     voiceover: voiceoverView(sound.voiceover, publicBase),

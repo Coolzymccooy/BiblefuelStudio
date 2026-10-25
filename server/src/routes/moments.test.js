@@ -77,6 +77,9 @@ test("GET /meta lists occasions, styles, lengths and limits", async () => {
   assert.equal(r.body.limits.maxStatements, 16);
   assert.equal(r.body.limits.maxPhotos, 100);
   assert.equal(r.body.limits.scriptMax, 1200);
+  assert.deepEqual(r.body.styles.map((s) => s.family), ["classic", "classic", "classic", "classic", "showcase", "showcase", "showcase", "showcase"]);
+  assert.deepEqual(r.body.lengthsByFamily, { classic: [15, 30, 60], showcase: [30, 60, 90, 120, 180] });
+  assert.deepEqual(r.body.shapes, ["tall", "wide"]);
   const birthday = r.body.occasions.find((o) => o.id === "birthday");
   assert.deepEqual(birthday.fields, ["name", "milestone"]);
   assert.equal(birthday.style, "celebrate");

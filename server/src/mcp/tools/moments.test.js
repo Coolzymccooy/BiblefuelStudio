@@ -147,6 +147,13 @@ test("moments_project update maps photos, song and voiceover removal onto the ro
   });
 });
 
+test("moments_project update passes a Showcase style, a long length and the shape through", async () => {
+  const { ctx, calls } = ctxWith({ "PUT /api/moments/m-1": { ok: true, project: MOMENT() } });
+  const result = await byName.moments_project.handler(ctx, { action: "update", id: "m-1", style: "premiere", lengthSec: 120, shape: "wide" });
+  assert.ok(!result.isError, JSON.stringify(result.structuredContent));
+  assert.deepEqual(calls[0].opts.body, { style: "premiere", lengthSec: 120, shape: "wide" });
+});
+
 test("moments_project update passes a library song ref through and clears the song with null", async () => {
   const { ctx, calls } = ctxWith({ "PUT /api/moments/m-1": { ok: true, project: MOMENT() } });
   await byName.moments_project.handler(ctx, { action: "update", id: "m-1", song: { ref: "library:hopeful" } });

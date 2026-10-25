@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { STYLE_IDS } from "../motion/styles.js";
+import { STYLE_IDS, SHOWCASE_LENGTHS, isShowcase, lengthsFor } from "../motion/styles.js";
 import { normaliseSeed } from "../kinetic/renderCaptions.js";
 import {
-  resolveOccasion, LENGTHS, TITLE_MAX, STATEMENT_MAX, DETAIL_MAX, MAX_STATEMENTS, DETAIL_FIELDS,
+  resolveOccasion, TITLE_MAX, STATEMENT_MAX, DETAIL_MAX, MAX_STATEMENTS, DETAIL_FIELDS,
 } from "./occasions.js";
 
 /**
@@ -43,6 +43,7 @@ export function createProject(baseDir, { occasion }) {
     style: occ.style,
     energy: occ.energy,
     lengthSec: 15,
+    shape: "tall",
     seed: normaliseSeed(undefined),
     plan: null,
     render: null,
@@ -185,7 +186,16 @@ function checkSound(current, sound) {
   return { value: next };
 }
 
-/** The project with `body`'s fields applied, or the first problem found. */
+const SHAPES = Object.freeze(["tall", "wide"]);
+const listOf = (xs) => `${xs.slice(0, -1).join(", ")} or ${xs.at(-1)}`;
+/** The longest of `lengths` at or under `sec`, else the shortest: a style change never leaves a length it can't make. */
+function fitLength(sec, lengths) {
+  if (lengths.includes(sec)) return sec;
+  const under = lengths.filter((l) => l <= sec);
+  return under.length ? under.at(-1) : lengths[0];
+}
+
+/** The project with `body`'s fields applied, or the first problem found. Style is settled before length and shape. */
 export function applyUpdate(project, body = {}) {
   const next = { ...project };
   const fail = (error) => ({ ok: false, error });
@@ -226,9 +236,19 @@ export function applyUpdate(project, body = {}) {
   }
   if ("energy" in body) next.energy = Math.min(1, Math.max(0, Number(body.energy) || 0));
   if ("lengthSec" in body) {
-    if (!LENGTHS.includes(body.lengthSec)) return fail("the length must be 15, 30 or 60 seconds");
+    const lengths = lengthsFor(next.style);
+    // An older client may still ask a classic style for a Showcase length: that is clamped below, not refused.
+    const clampable = !isShowcase(next.style) && SHOWCASE_LENGTHS.includes(body.lengthSec);
+    if (!lengths.includes(body.lengthSec) && !clampable) return fail(`the length must be ${listOf(lengths)} seconds`);
     next.lengthSec = body.lengthSec;
   }
+  next.lengthSec = fitLength(next.lengthSec, lengthsFor(next.style));
+  if ("shape" in body) {
+    if (!SHAPES.includes(body.shape)) return fail("the shape must be tall or wide");
+    next.shape = body.shape;
+  }
+  // Only Showcase styles draw widescreen; every other style is portrait.
+  next.shape = isShowcase(next.style) && next.shape === "wide" ? "wide" : "tall";
   if ("seed" in body) next.seed = normaliseSeed(body.seed);
   if ("sound" in body) {
     const r = checkSound(project.sound, body.sound);

@@ -8,7 +8,7 @@ import { createJob, persistJob, markError, getJob, cancelJob, gcJobs } from "../
 import { refineScript } from "../lib/story/scriptRefine.js";
 import { cleanSpeakableText } from "../lib/speakableScript.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
-import { STYLES } from "../lib/motion/styles.js";
+import { STYLES, CLASSIC_LENGTHS, SHOWCASE_LENGTHS } from "../lib/motion/styles.js";
 import { normaliseSeed } from "../lib/kinetic/renderCaptions.js";
 import {
   OCCASIONS, LENGTHS, STATEMENT_LIMIT, TITLE_MAX, STATEMENT_MAX, DETAIL_MAX, MAX_STATEMENTS, resolveOccasion,
@@ -85,8 +85,10 @@ router.get("/meta", (_req, res) => {
   res.json({
     ok: true,
     occasions: Object.values(OCCASIONS).map(({ id, label, church, fields, style, energy, song }) => ({ id, label, church, fields, style, energy, song })),
-    styles: Object.values(STYLES).map(({ id, label, description, energy }) => ({ id, label, description, energy })),
+    styles: Object.values(STYLES).map(({ id, label, description, energy, family }) => ({ id, label, description, energy, family })),
     lengths: LENGTHS,
+    lengthsByFamily: { classic: CLASSIC_LENGTHS, showcase: SHOWCASE_LENGTHS },
+    shapes: ["tall", "wide"],
     limits: {
       statements: STATEMENT_LIMIT, maxStatements: MAX_STATEMENTS, title: TITLE_MAX, statement: STATEMENT_MAX,
       detail: DETAIL_MAX, minPhotos: MIN_PHOTOS, maxPhotos: MAX_PHOTOS, scriptMax: SCRIPT_MAX,
