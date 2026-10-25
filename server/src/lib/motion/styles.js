@@ -122,7 +122,7 @@ const SHOWCASE = Object.freeze({
     description: "Cinematic recap: letterbox, film strip and spotlight, made for the big screen.",
     look: "studio-clean-white",
     grade: "eq=contrast=1.08:saturation=0.95",
-    templates: Object.freeze({ single: 3, filmstrip: 2, spotlight: 2, triptych: 2, split: 1 }),
+    templates: Object.freeze({ single: 3, filmstrip: 1, spotlight: 2, triptych: 3, split: 2 }),
     palette: Object.freeze({ backdrop: "dark", card: "#F5F5F0", accent: "#D4AF37", ink: "#0B0B0C" }),
     flashes: false,
     letterbox: true,

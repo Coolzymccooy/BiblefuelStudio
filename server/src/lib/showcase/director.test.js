@@ -48,7 +48,7 @@ test("every photo once, in order, hero first, when they fit", () => {
 test("lots of photos for the time favour dense templates before dropping any", () => {
   const share = (n) => {
     const { plan, dropped } = directShowcase(base({ photos: photos(n), lengthSec: 30 }));
-    const dense = plan.scenes.filter((s) => ["grid", "filmstrip"].includes(s.template)).length;
+    const dense = plan.scenes.filter((s) => ["grid", "triptych"].includes(s.template)).length;
     return { share: dense / plan.scenes.length, dropped, used: new Set(shown(plan)).size };
   };
   const few = share(12);
@@ -125,6 +125,20 @@ test("captions: the title opens, the last statement sits on the closing scene", 
   const last = plan.captions.at(-1);
   assert.equal(last.text, "Three");
   assert.ok(last.start >= closing.start && last.start < closing.end);
+});
+
+test("a line clears a few seconds after it is shown, so a long Moment never holds one line for ages", () => {
+  const { plan } = directShowcase(base({ lengthSec: 120, photos: photos(60) }));
+  plan.captions.slice(0, -1).forEach((c, i) => assert.ok(c.holdUntil <= c.end + 4 + 1e-9, `caption ${i} holds ${c.holdUntil - c.end} s`));
+  assert.equal(plan.captions.at(-1).holdUntil, 120, "the closing words stay to the end");
+});
+
+test("the film strip never takes most of a Premiere Moment", () => {
+  for (const seed of [1, 2, 3]) {
+    const { plan } = directShowcase(base({ styleId: "premiere", lengthSec: 120, photos: photos(60), seed }));
+    const strip = plan.scenes.filter((s) => s.template === "filmstrip").reduce((a, s) => a + s.end - s.start, 0);
+    assert.ok(strip / 120 < 0.35, `seed ${seed}: film strip ${Math.round((strip / 120) * 100)}%`);
+  }
 });
 
 test("statements past the length's limit are left out", () => {

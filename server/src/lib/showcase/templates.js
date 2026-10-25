@@ -17,8 +17,11 @@ export const TEMPLATES = Object.freeze({
   invite: Object.freeze({ photos: 1, beats: 0 }),
 });
 
-/** Templates that fit the most photos into the time, favoured when the photos would not all fit. */
-export const DENSE = Object.freeze(["grid", "filmstrip", "polaroids"]);
+/**
+ * Templates that show the most photos per beat (grid 4 in 5, triptych 3 in 4), favoured when the photos
+ * would not all fit. The film strip shows five but stays up eight beats, so it is not one of them.
+ */
+export const DENSE = Object.freeze(["grid", "triptych"]);
 export const CLOSING = Object.freeze(["finale", "invite"]);
 /** The closing scene stays up at least this long, so its words can be read before the fade. */
 export const CLOSING_MIN_SEC = 3;

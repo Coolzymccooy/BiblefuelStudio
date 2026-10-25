@@ -23,7 +23,9 @@ const FLASH_EVERY = 4;
 /** Beats the closing scene takes at least (and CLOSING_MIN_SEC). */
 const CLOSING_BEATS = 4;
 /** How strongly the dense templates are favoured when the photos would not all fit. */
-const DENSE_BOOST = 3;
+const DENSE_BOOST = 2;
+/** A line clears this long after it is fully shown; only the closing words stay to the end. */
+const HOLD_MAX_SEC = 4;
 const MIN_SCENE_BEATS = 2;
 
 /** Calm stays longer on each scene, Hype moves on sooner. */
@@ -79,12 +81,17 @@ function closingIndex(list, period, D) {
   return at;
 }
 
-/** The last two templates are rested, so even a favoured dense template never dominates a stretch. */
+/**
+ * A style's weights are shares of screen time, so each is divided by the template's beats: a film
+ * strip (8 beats) is picked less often than a single (3). The last two templates are rested, so even
+ * a favoured dense template never dominates a stretch.
+ */
 function chooseTemplate({ style, recent, room, behind, rnd }) {
   const weights = {};
   for (const [id, w] of Object.entries(style.templates)) {
     if (recent.includes(id) || TEMPLATES[id].photos > room) continue;
-    weights[id] = behind && DENSE.includes(id) ? w * DENSE_BOOST : w;
+    const perPick = w / TEMPLATES[id].beats;
+    weights[id] = behind && DENSE.includes(id) ? perPick * DENSE_BOOST : perPick;
   }
   return weightedPick(weights, rnd) ?? (recent[0] === "single" ? "spotlight" : "single");
 }
@@ -150,7 +157,10 @@ export function directShowcase({
   const placed = placeCaptions({ cuts: scenes, title: words.title, statements: words.statements, period });
   // The calendar card takes the upper part of the closing scene, so its words pop in the lower band.
   const closingWords = (c) => invite && c.start >= r3(closeStart) && !c.effect;
-  const captions = placed.map((c) => (closingWords(c) ? { ...c, effect: "pop" } : c));
+  const captions = placed.map((c, i) => {
+    const held = i < placed.length - 1 ? { ...c, holdUntil: r3(Math.min(c.holdUntil, c.end + HOLD_MAX_SEC)) } : c;
+    return closingWords(c) ? { ...held, effect: "pop" } : held;
+  });
   const flashes = style.flashes
     ? scenes.filter((s, i) => i > 0 && i < scenes.length - 1 && i % FLASH_EVERY === 0).map((s) => s.start)
     : [];
