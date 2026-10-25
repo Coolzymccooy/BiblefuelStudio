@@ -32,9 +32,11 @@ test("church occasions are marked", () => {
 });
 
 test("statement limits follow the length", () => {
-  assert.deepEqual(LENGTHS.map(statementLimit), [3, 5, 8]);
+  assert.deepEqual(LENGTHS, [15, 30, 60, 90, 120, 180]);
+  assert.deepEqual(LENGTHS.map(statementLimit), [3, 5, 8, 10, 12, 16]);
   // The engine's rule: the nearest limit at or below the length, at least 3.
-  assert.equal(statementLimit(999), 8);
+  assert.equal(statementLimit(999), 16);
+  assert.equal(statementLimit(100), 10);
   assert.equal(statementLimit(10), 3);
 });
 

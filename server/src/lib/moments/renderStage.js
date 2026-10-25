@@ -5,7 +5,8 @@ import crypto from "node:crypto";
 import { readProject, writeProject, withHistory, MIN_PHOTOS } from "./projectStore.js";
 import { resolvePhoto, resolveSong } from "./photos.js";
 import { songGrid, voiceGrid } from "./beatCache.js";
-import { statementLimit, LENGTHS } from "./occasions.js";
+import { statementLimit } from "./occasions.js";
+import { CLASSIC_LENGTHS } from "../motion/styles.js";
 import { orientationOf, workImageArgs } from "../motion/prepare.js";
 import { directMoment } from "../motion/director.js";
 import { validatePlan } from "../motion/plan.js";
@@ -42,9 +43,9 @@ export function cancelMomentRender(projectId) {
 
 class StageError extends Error {}
 
-/** "N photos didn't fit L s." plus, when a longer length exists, a nudge to try the next one. */
-export function droppedNote(dropped, lengthSec) {
-  const next = LENGTHS.find((l) => l > lengthSec);
+/** "N photos didn't fit L s." plus, when the style offers a longer length, a nudge to try the next one. */
+export function droppedNote(dropped, lengthSec, lengths = CLASSIC_LENGTHS) {
+  const next = lengths.find((l) => l > lengthSec);
   const base = `${dropped} photo${dropped === 1 ? "" : "s"} didn't fit ${lengthSec} s.`;
   return next ? `${base} Try ${next} s?` : base;
 }

@@ -15,10 +15,10 @@ import { NORMALISERS, outputUrl } from "./jobs.js";
 export const MOMENT_ID = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, "a Moment id from moments_project");
 export const MOMENT_OCCASIONS = ["birthday", "anniversary", "wedding", "sermon", "event", "thanksgiving", "memorial", "fun"];
 export const MOMENT_STYLES = ["glow", "celebrate", "hype", "gallery", "fellowship", "scrapbook", "partyPop", "premiere"];
-export const MOMENT_LENGTHS = [15, 30, 60];
+export const MOMENT_LENGTHS = [15, 30, 60, 90, 120, 180];
 export const MOMENT_DETAIL_FIELDS = ["name", "milestone", "eventTitle", "date", "venue", "verse"];
 export const MIN_PHOTOS = 3;
-export const MAX_PHOTOS = 20;
+export const MAX_PHOTOS = 100;
 /** routes/moments.js SCRIPT_MAX: the longest voiceover script or idea. */
 export const SCRIPT_MAX = 1200;
 /** lib/ambient/movementImage.js UPLOAD_NAME: the only own files a Moment takes as photos (media_import_url kind image names them so). */

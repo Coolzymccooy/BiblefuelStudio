@@ -8,9 +8,10 @@ import { STATEMENT_LIMITS, statementLimit, TITLE_MAX, STATEMENT_MAX } from "../m
 // The director owns the word limits; re-exporting keeps one source of truth.
 export { statementLimit, TITLE_MAX, STATEMENT_MAX };
 export const STATEMENT_LIMIT = STATEMENT_LIMITS;
-export const LENGTHS = Object.freeze([15, 30, 60]);
+/** Every length any style offers; each style family offers its own subset (lengthsFor in motion/styles.js). */
+export const LENGTHS = Object.freeze([15, 30, 60, 90, 120, 180]);
 export const DETAIL_MAX = 80;
-export const MAX_STATEMENTS = 8;
+export const MAX_STATEMENTS = 16;
 export const DETAIL_FIELDS = Object.freeze(["name", "milestone", "eventTitle", "date", "venue", "verse"]);
 
 const o = (def) => Object.freeze({ ...def, fields: Object.freeze(def.fields), titles: Object.freeze(def.titles), statements: Object.freeze(def.statements) });

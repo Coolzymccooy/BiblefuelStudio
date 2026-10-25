@@ -14,7 +14,7 @@ import {
  */
 export const HISTORY_KEEP = 20;
 export const MIN_PHOTOS = 3;
-export const MAX_PHOTOS = 20;
+export const MAX_PHOTOS = 100;
 /** The folder name under the data dir that holds project files (Task 4 scans it to protect library images). */
 export const PROJECTS_SUBDIR = "moments";
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;

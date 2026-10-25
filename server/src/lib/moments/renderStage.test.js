@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { SHOWCASE_LENGTHS } from "../motion/styles.js";
 import { momentRenderStage, cancelMomentRender, droppedNote, _setEngineForTest, _resetEngineForTest, STAGES } from "./renderStage.js";
 import { createProject, readProject, writeProject } from "./projectStore.js";
 import { createJob, getJob, cancelJob } from "../renderJobs.js";
@@ -516,6 +517,8 @@ test("droppedNote suggests the next longer length, and nothing at 60 s", () => {
   assert.equal(droppedNote(4, 15), "4 photos didn't fit 15 s. Try 30 s?");
   assert.equal(droppedNote(1, 30), "1 photo didn't fit 30 s. Try 60 s?");
   assert.equal(droppedNote(2, 60), "2 photos didn't fit 60 s.");
+  assert.equal(droppedNote(3, 60, SHOWCASE_LENGTHS), "3 photos didn't fit 60 s. Try 90 s?");
+  assert.equal(droppedNote(3, 180, SHOWCASE_LENGTHS), "3 photos didn't fit 180 s.");
 });
 
 test("a Moment with too many photos for 15 s notes the dropped ones and suggests 30 s", async () => {
