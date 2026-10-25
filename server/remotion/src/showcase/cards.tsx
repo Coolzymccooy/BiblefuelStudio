@@ -3,7 +3,7 @@
 // Each lays out for the tall (9:16) or wide (16:9) frame.
 import React from "react";
 import { AbsoluteFill, Easing, Img, interpolate, useCurrentFrame } from "remotion";
-import { Backdrop, CLAMP, Cover, surfaceOf, useLand } from "./parts";
+import { Backdrop, CLAMP, Cover, staggerOf, surfaceOf, useLand } from "./parts";
 import type { SceneProps } from "./types";
 
 const POLAROID = {
@@ -35,34 +35,39 @@ function Polaroid({ src, at, x, y, rot, shape, card, tape }: {
 }
 
 export function Polaroids(props: SceneProps) {
-  const { scene, beat, shape, images, palette } = props;
+  const { scene, beat, shape, images, palette, frames } = props;
   const spots = POLAROID[shape].spots;
   const tape = palette.backdrop === "paper" ? palette.accent : null;
+  const step = staggerOf(1.5 * beat, frames, scene.photos.length);
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
       <Backdrop palette={palette} index={props.index} images={images} photo={scene.photos[0]} />
       {scene.photos.map((photo, i) => (
-        <Polaroid key={i} src={images[photo].card} at={Math.round(i * 1.5 * beat)} {...spots[i]} shape={shape} card={palette.card} tape={tape} />
+        <Polaroid key={i} src={images[photo].card} at={Math.round(i * step)} {...spots[i]} shape={shape} card={palette.card} tape={tape} />
       ))}
     </AbsoluteFill>
   );
 }
 
+const SWIPE_OUT_FRAMES = 12;
+
 /** Dating-app style: the top card flies off on the beat to reveal the next. */
 export function Swipe(props: SceneProps) {
   const frame = useCurrentFrame();
-  const { scene, beat, shape, images, palette, w } = props;
+  const { scene, beat, shape, images, palette, w, frames } = props;
   const box = shape === "tall"
     ? { left: 90, top: 230, width: 900, height: 1420, radius: 40, border: 14, travel: 1500 }
     : { left: (w - 660) / 2, top: 50, width: 660, height: 960, radius: 34, border: 12, travel: 1600 };
-  const leaves = [Math.round(1.6 * beat), Math.round(3.2 * beat)];
+  const cards = scene.photos.length;
+  const step = staggerOf(1.6 * beat, frames, cards, SWIPE_OUT_FRAMES);
+  const leaves = Array.from({ length: cards - 1 }, (_, i) => Math.round((i + 1) * step));
   const gone = leaves.filter((t) => frame >= t + 10).length;
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
       <Backdrop palette={palette} index={props.index} images={images} photo={scene.photos[0]} />
       {scene.photos.map((photo, i) => {
         const leaveAt = leaves[i];
-        const out = leaveAt === undefined ? 0 : interpolate(frame, [leaveAt, leaveAt + 12], [0, 1], { ...CLAMP, easing: Easing.in(Easing.cubic) });
+        const out = leaveAt === undefined ? 0 : interpolate(frame, [leaveAt, leaveAt + SWIPE_OUT_FRAMES], [0, 1], { ...CLAMP, easing: Easing.in(Easing.cubic) });
         const depth = Math.max(0, i - gone);
         const dir = i % 2 === 0 ? 1 : -1;
         const dx = out * dir * box.travel + (shape === "wide" ? depth * 60 : 0);
@@ -112,10 +117,11 @@ export function Grid(props: SceneProps) {
       return { left: pad + i * (tw + gap), top: pad, width: tw, height: h - pad * 2 };
     });
   const order = shape === "tall" ? [0, 1, 2, 3] : [0, 2, 1, 3];
+  const step = staggerOf(beat, frames, scene.photos.length);
   return (
     <AbsoluteFill style={{ backgroundColor: surfaceOf(palette, props.index), overflow: "hidden" }}>
       {scene.photos.map((photo, i) => (
-        <Tile key={i} src={images[photo].card} at={Math.round(order[i] * beat)} {...cells[i]} frames={frames} tilt={i % 2 ? 3 : -3} border={palette.card} />
+        <Tile key={i} src={images[photo].card} at={Math.round(order[i] * step)} {...cells[i]} frames={frames} tilt={i % 2 ? 3 : -3} border={palette.card} />
       ))}
     </AbsoluteFill>
   );

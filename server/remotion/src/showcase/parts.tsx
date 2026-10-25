@@ -8,6 +8,17 @@ export const CLAMP = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as 
 export const DISPLAY = "BF Display";
 const PAPER = "#EFE6D2";
 const DARK = "#0B0B0C";
+/** Frames a photo takes to settle once it starts arriving. */
+export const SETTLE_FRAMES = 15;
+
+/**
+ * The gap between photos arriving one after another: the template's usual rhythm, shortened when
+ * the scene (a Hype scene runs a beat or two shorter) would otherwise cut before the last photo has
+ * settled and been seen for as long as the others.
+ */
+export function staggerOf(rhythm: number, frames: number, count: number, settle = SETTLE_FRAMES): number {
+  return Math.max(1, Math.min(rhythm, (frames - settle) / Math.max(1, count)));
+}
 
 /** A bouncy 0 to 1 that starts `at` frames into the scene. */
 export function useLand(at: number, damping = 13) {

@@ -3,7 +3,7 @@
 // closing scenes (a slow pull-out, or the same with a calendar invite).
 import React from "react";
 import { AbsoluteFill, Easing, Img, interpolate, useCurrentFrame } from "remotion";
-import { Backdrop, CLAMP, Cover, DISPLAY, WholePhoto, useLand } from "./parts";
+import { Backdrop, CLAMP, Cover, DISPLAY, WholePhoto, staggerOf, useLand } from "./parts";
 import type { SceneProps } from "./types";
 
 const STRIP = "#050403";
@@ -37,15 +37,18 @@ export function Spotlight(props: SceneProps) {
   );
 }
 
+const WIPE_FRAMES = 12;
+
 /** Three panels wiping in one after another, alternately from the top and the bottom. */
 export function Triptych(props: SceneProps) {
   const frame = useCurrentFrame();
   const { scene, beat, images, palette, w, h, frames } = props;
   const col = w / 3;
+  const step = staggerOf(beat * 0.8, frames, scene.photos.length, WIPE_FRAMES);
   return (
     <AbsoluteFill style={{ backgroundColor: palette.backdrop === "colour" ? palette.ink : "#0B0B0C", overflow: "hidden" }}>
       {scene.photos.map((photo, i) => {
-        const p = interpolate(frame, [i * beat * 0.8, i * beat * 0.8 + 12], [0, 1], { ...CLAMP, easing: Easing.out(Easing.cubic) });
+        const p = interpolate(frame, [i * step, i * step + WIPE_FRAMES], [0, 1], { ...CLAMP, easing: Easing.out(Easing.cubic) });
         const fromTop = i % 2 === 0;
         const drift = interpolate(frame, [0, frames], fromTop ? [-30, 30] : [30, -30]);
         return (
