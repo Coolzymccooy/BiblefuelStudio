@@ -79,13 +79,14 @@ function closingIndex(list, period, D) {
   return at;
 }
 
-function chooseTemplate({ style, prev, room, behind, rnd }) {
+/** The last two templates are rested, so even a favoured dense template never dominates a stretch. */
+function chooseTemplate({ style, recent, room, behind, rnd }) {
   const weights = {};
   for (const [id, w] of Object.entries(style.templates)) {
-    if (id === prev || TEMPLATES[id].photos > room) continue;
+    if (recent.includes(id) || TEMPLATES[id].photos > room) continue;
     weights[id] = behind && DENSE.includes(id) ? w * DENSE_BOOST : w;
   }
-  return weightedPick(weights, rnd) ?? (prev === "single" ? "spotlight" : "single");
+  return weightedPick(weights, rnd) ?? (recent[0] === "single" ? "spotlight" : "single");
 }
 
 /**
@@ -130,7 +131,7 @@ export function directShowcase({
     const remaining = seen.size < n ? n - seen.size : n;
     const left = closeStart - timeOf(at);
     const behind = seen.size < n && (left / avgSec) * avgPhotos < remaining;
-    const template = first ? "single" : chooseTemplate({ style, prev: scenes.at(-1)?.template, room: n, behind, rnd });
+    const template = first ? "single" : chooseTemplate({ style, recent: scenes.slice(-2).map((s) => s.template).reverse(), room: n, behind, rnd });
     let end = closeAt >= 0 ? Math.min(at + beatsOf(template), closeAt) : closeAt;
     // Too little left for another scene: this one runs on to the closing scene.
     if (closeAt >= 0 && closeAt - end < MIN_SCENE_BEATS) end = closeAt;
@@ -146,7 +147,10 @@ export function directShowcase({
   scenes.push({ template: invite ? "invite" : "finale", photos: [hero], start: r3(closeStart), end: D, downbeat: false });
 
   const words = limitWords({ title, statements, lengthSec: D });
-  const captions = placeCaptions({ cuts: scenes, title: words.title, statements: words.statements, period });
+  const placed = placeCaptions({ cuts: scenes, title: words.title, statements: words.statements, period });
+  // The calendar card takes the upper part of the closing scene, so its words pop in the lower band.
+  const closingWords = (c) => invite && c.start >= r3(closeStart) && !c.effect;
+  const captions = placed.map((c) => (closingWords(c) ? { ...c, effect: "pop" } : c));
   const flashes = style.flashes
     ? scenes.filter((s, i) => i > 0 && i < scenes.length - 1 && i % FLASH_EVERY === 0).map((s) => s.start)
     : [];

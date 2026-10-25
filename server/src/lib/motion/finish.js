@@ -90,7 +90,11 @@ function audioGraph({ song, voice, D }) {
   return [`[1:a]anull,aresample=48000,${STEREO}[a]`];
 }
 
-export function finishArgs({ body, out, plan, statementsPath, fxPath, song, voice, workDir }) {
+/**
+ * `encode` sets the picture's quality: crf 19 for a classic Moment; a long Showcase Moment also caps
+ * the bitrate (maxrate, bufsize) so a three-minute video stays a sensible size to post.
+ */
+export function finishArgs({ body, out, plan, statementsPath, fxPath, song, voice, workDir, encode = { crf: 19 } }) {
   const D = plan.durationSec;
   const style = resolveStyle(plan.style);
   const inputs = ["-i", body];
@@ -120,7 +124,9 @@ export function finishArgs({ body, out, plan, statementsPath, fxPath, song, voic
     "-filter_complex_script", videoScript,
     "-filter_complex_script", audioScript,
     "-map", "[v]", "-map", "[a]",
-    "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
+    "-c:v", "libx264", "-preset", "medium", "-crf", String(encode.crf),
+    ...(encode.maxrate ? ["-maxrate", encode.maxrate, "-bufsize", encode.bufsize] : []),
+    "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
     "-movflags", "+faststart",
     out,

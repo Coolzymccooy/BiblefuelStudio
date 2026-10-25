@@ -142,6 +142,17 @@ test("the output is a social-ready MP4", () => {
   assert.equal(args.at(-1), "out.mp4");
 });
 
+test("the classic encode is crf 19 with no rate cap; a capped encode adds maxrate and bufsize", () => {
+  const classic = finishArgs({ ...common, plan: plan(), song: null, voice: null }).args;
+  assert.equal(classic[classic.indexOf("-crf") + 1], "19");
+  assert.ok(!classic.includes("-maxrate"));
+  const capped = finishArgs({ ...common, plan: plan(), song: null, voice: null, encode: { crf: 21, maxrate: "8M", bufsize: "16M" } }).args;
+  assert.equal(capped[capped.indexOf("-crf") + 1], "21");
+  assert.equal(capped[capped.indexOf("-maxrate") + 1], "8M");
+  assert.equal(capped[capped.indexOf("-bufsize") + 1], "16M");
+  assert.equal(capped.at(-1), "out.mp4");
+});
+
 test("the finish keeps the body's colour tags: no matrix conversion or retag", () => {
   const r = finishArgs({ ...common, plan: plan(), song: { file: "s", startSec: 0 }, voice: { file: "v" } });
   const all = r.args.join(" ") + graphOf(r);

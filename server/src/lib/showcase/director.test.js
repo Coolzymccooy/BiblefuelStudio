@@ -77,6 +77,8 @@ test("opens on a single hero photo and closes on a finale, or an invite when the
   const invite = directShowcase(base({ details: { date: "Saturday 21st November" } })).plan;
   assert.equal(invite.scenes.at(-1).template, "invite");
   assert.deepEqual(invite.invite, { month: 11, day: 21, label: "NOV" });
+  assert.equal(invite.captions.at(-1).effect, "pop", "the closing words sit low, clear of the calendar card");
+  assert.equal(plain.captions.at(-1).effect, undefined);
 });
 
 test("Energy changes how long scenes stay up", () => {
@@ -136,6 +138,17 @@ test("flashes mark section changes only in styles that use them", () => {
   assert.ok(fellowship.flashes.length > 0);
   for (const t of fellowship.flashes) assert.ok(fellowship.scenes.some((s) => s.start === t));
   assert.deepEqual(directShowcase(base({ styleId: "premiere" })).plan.flashes, []);
+});
+
+test("no template comes back within three scenes, even when dense ones are favoured", () => {
+  for (const styleId of ["fellowship", "scrapbook", "partyPop", "premiere"]) {
+    for (const [n, lengthSec] of [[24, 30], [100, 60], [40, 120]]) {
+      const body = directShowcase(base({ styleId, photos: photos(n), lengthSec })).plan.scenes.slice(0, -1);
+      body.forEach((s, i) => {
+        if (i >= 2) assert.ok(s.template !== body[i - 1].template && s.template !== body[i - 2].template, `${styleId} ${n}@${lengthSec} scene ${i}`);
+      });
+    }
+  }
 });
 
 test("only the style's own templates are used", () => {
