@@ -33,6 +33,10 @@ export const STAGES = Object.freeze({ prepare: [0, 10], analyse: [10, 20], shots
 export const SHOWCASE_STAGES = Object.freeze({ prepare: [0, 10], analyse: [10, 20], shots: [20, 80], finish: [80, 100] });
 const VOICE_SLACK_SEC = 0.05;
 const SONG_SHORT_SLACK_SEC = 1;
+/** However short the song, a Showcase Moment keeps room for its opening and closing. */
+const SHOWCASE_FLOOR_SEC = 15;
+/** Classic styles show one photo at a time, so photos past this many could never be used. */
+const CLASSIC_MAX_PHOTOS = 20;
 const VOICE_UNREADABLE_NOTE = "The voiceover couldn't be read, so this Moment has no voice. Make it again.";
 const VOICE_MISSING_NOTE = "The voiceover was missing, so this Moment has no voice. Make it again to add it back.";
 
@@ -87,12 +91,17 @@ function ownsRender(project, jobId) {
   return !(current && current !== jobId);
 }
 
-async function preparePhotos(ctx, project, workDir, signal) {
+async function preparePhotos(ctx, project, workDir, signal, progress) {
   const items = readLibrary(ctx.dataDir)?.items || [];
   const usable = [];
   const notes = [];
-  for (let i = 0; i < project.photos.length; i += 1) {
+  const total = Math.min(project.photos.length, CLASSIC_MAX_PHOTOS);
+  if (project.photos.length > total) {
+    notes.push(`Classic styles use up to ${CLASSIC_MAX_PHOTOS} photos, so the last ${project.photos.length - total} weren't used. Pick a Showcase style to show them all.`);
+  }
+  for (let i = 0; i < total; i += 1) {
     if (signal.aborted) throw new StageError("Cancelled.");
+    progress("prepare", i / total);
     const r = resolvePhoto(ctx, project.photos[i].ref, { items });
     if (!r.ok) { notes.push(`Photo ${i + 1} was skipped: ${r.error}`); continue; }
     const out = path.join(workDir, `work-${i}.jpg`);
@@ -107,13 +116,14 @@ async function preparePhotos(ctx, project, workDir, signal) {
 }
 
 /** Showcase photos: an upright card and a frame-shaped blur each (showcase/stage.js). */
-async function prepareShowcasePhotos(ctx, project, workDir, signal) {
+async function prepareShowcasePhotos(ctx, project, workDir, signal, progress) {
   const items = readLibrary(ctx.dataDir)?.items || [];
   const frame = project.shape === "wide" ? "wide" : "tall";
   const usable = [];
   const notes = [];
   for (let i = 0; i < project.photos.length; i += 1) {
     if (signal.aborted) throw new StageError("Cancelled.");
+    progress("prepare", i / project.photos.length);
     const r = resolvePhoto(ctx, project.photos[i].ref, { items });
     if (!r.ok) { notes.push(`Photo ${i + 1} was skipped: ${r.error}`); continue; }
     const card = path.join(workDir, `card-${i}.jpg`);
@@ -186,13 +196,17 @@ async function timing(ctx, project, sound, signal) {
     // A Showcase Moment can outlast its song: rather than run on in silence, it ends with the song.
     // Under a second short is left alone (the finish pads it), so a 29.9 s song still makes 30 s.
     const songLeft = Math.floor(g.durationSec - g.windowStartSec);
+    let shrunk = false;
     if (isShowcase(project.style) && songLeft > 0 && g.durationSec - g.windowStartSec < lengthSec - SONG_SHORT_SLACK_SEC) {
-      lengthSec = songLeft;
-      notes.push(`Your song is ${songLeft} s, so this Moment is ${songLeft} s.`);
+      shrunk = true;
+      lengthSec = Math.max(songLeft, SHOWCASE_FLOOR_SEC);
+      notes.push(songLeft >= SHOWCASE_FLOOR_SEC
+        ? `Your song is ${songLeft} s, so this Moment is ${songLeft} s.`
+        : `Your song is ${songLeft} s, so this Moment is ${lengthSec} s, the shortest it can be, and ends without music.`);
     }
-    return { grid: g.grid, song: { file: sound.songFile, startSec: g.windowStartSec }, voice, notes, lengthSec };
+    return { grid: g.grid, song: { file: sound.songFile, startSec: g.windowStartSec }, voice, notes, lengthSec, shrunk };
   }
-  return { grid: voiceGridResult || pulseGrid(lengthSec), song: null, voice, notes, lengthSec };
+  return { grid: voiceGridResult || pulseGrid(lengthSec), song: null, voice, notes, lengthSec, shrunk: false };
 }
 
 /** The stored project, or a StageError if it has been deleted since the render began. */
@@ -281,7 +295,7 @@ function engineFailure(projectId, result) {
 
 /** A classic Moment: one photo per shot through the ffmpeg shot engine. */
 async function makeClassic({ ctx, project, projectId, jobId, sound, workDir, out, signal, progress }) {
-  const { usable, notes } = await preparePhotos(ctx, project, workDir, signal);
+  const { usable, notes } = await preparePhotos(ctx, project, workDir, signal, progress);
   progress("prepare", 1);
   const timed = await timing(ctx, project, sound, signal);
   notes.push(...timed.notes);
@@ -317,7 +331,7 @@ async function makeClassic({ ctx, project, projectId, jobId, sound, workDir, out
 
 /** A Showcase Moment: several photos per scene through the MomentShowcase composition. */
 async function makeShowcase({ ctx, project, projectId, jobId, sound, workDir, out, signal, progress }) {
-  const { usable, notes } = await prepareShowcasePhotos(ctx, project, workDir, signal);
+  const { usable, notes } = await prepareShowcasePhotos(ctx, project, workDir, signal, progress);
   progress("prepare", 1);
   const timed = await timing(ctx, project, sound, signal);
   notes.push(...timed.notes);
@@ -341,7 +355,8 @@ async function makeShowcase({ ctx, project, projectId, jobId, sound, workDir, ou
     console.error(`[moments] invalid Showcase plan for ${projectId}: ${checked.errors.join("; ")}`);
     throw new StageError("Couldn't plan this Moment. Try Shuffle or a different length.");
   }
-  if (dropped) notes.push(droppedNote(dropped, lengthSec, lengthsFor(project.style)));
+  // When the song set the length, a longer length wouldn't help, so the note suggests none.
+  if (dropped) notes.push(droppedNote(dropped, lengthSec, timed.shrunk ? [] : lengthsFor(project.style)));
   savePlan(ctx, projectId, jobId, plan);
   progress("analyse", 1);
 

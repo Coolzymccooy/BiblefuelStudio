@@ -615,3 +615,24 @@ test("cancelling a Showcase render records Cancelled and removes the work dir", 
   assert.equal(done.render.error, "Cancelled.");
   assert.ok(!fs.existsSync(seen[0].workDir));
 });
+
+test("a very short song never shrinks a Showcase Moment below 15 s", async () => {
+  const seen = [];
+  showcaseEngine(seen);
+  _setEngineForTest({ decode: async () => Buffer.alloc(11025 * 2 * 9) }); // a song of about 9 s
+  const p = showcaseMoment({ lengthSec: 30 });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 30 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(seen[0].plan.durationSec, 15);
+  assert.ok(done.render.notes.includes("Your song is 8 s, so this Moment is 15 s, the shortest it can be, and ends without music."), JSON.stringify(done.render.notes));
+});
+
+test("a classic Moment prepares at most 20 photos and says how to show them all", async () => {
+  const p = moment({ photos: Array.from({ length: 25 }, () => photo()) });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(calls.prepare, 20);
+  assert.ok(done.render.notes.some((n) => /Classic styles use up to 20 photos/.test(n)), JSON.stringify(done.render.notes));
+});

@@ -24,10 +24,15 @@ const CAPPED = Object.freeze({ crf: 21, maxrate: "8M", bufsize: "16M" });
 /** Past a minute the picture's bitrate is capped, so a long Moment stays a sensible size to post. */
 export const encodeFor = (durationSec) => (durationSec > LONG_SEC ? { ...CAPPED } : { crf: 19 });
 
-/** What the shared finish pass reads: the captions, and one closing "shot" so the closing scene is darkened behind its words. */
+/**
+ * What the shared finish pass reads: the captions, and for a plain finale one closing "shot" so the
+ * closing scene is darkened behind its words. An invite dims its own photo, so the calendar card stays bright.
+ */
 export function finishPlanOf(plan) {
   const { durationSec, fps, w, h, style, energy, seed, captions } = plan;
-  return { durationSec, fps, w, h, style, energy, seed, captions, shots: [{ role: "end", start: plan.scenes.at(-1).start, overlays: [] }] };
+  const closing = plan.scenes.at(-1);
+  const shots = closing.template === "finale" ? [{ role: "end", start: closing.start, overlays: [] }] : [];
+  return { durationSec, fps, w, h, style, energy, seed, captions, shots };
 }
 
 /** The composition's props: the plan's scenes, the style's palette and each staged image by URL. */
@@ -48,8 +53,9 @@ const cancelled = () => ({ ok: false, error: "cancelled" });
 async function drawPicture({ plan, images, body, signal, onProgress, remotion, startServer }) {
   const files = { "display.ttf": path.join(FONT_DIR, "Anton.ttf") };
   images.forEach((im, i) => { files[`card-${i}.jpg`] = im.card; files[`blur-${i}.jpg`] = im.blur; });
-  const server = await startServer(files);
+  let server = null;
   try {
+    server = await startServer(files);
     const serveUrl = await remotion.serveUrl();
     if (signal?.aborted) return cancelled();
     await remotion.render({
@@ -61,7 +67,7 @@ async function drawPicture({ plan, images, body, signal, onProgress, remotion, s
     if (signal?.aborted || /cancel/i.test(String(err?.message))) return cancelled();
     return { ok: false, error: "Rendering failed at the picture.", detail: tail(err?.stack || err?.message || err) };
   } finally {
-    await server.close();
+    await server?.close();
   }
 }
 

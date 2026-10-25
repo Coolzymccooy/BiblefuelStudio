@@ -141,6 +141,37 @@ test("the film strip never takes most of a Premiere Moment", () => {
   }
 });
 
+test("a voiceover's pauses are not beats: scenes stay a few seconds long and the photos still fit", () => {
+  const marks = [];
+  for (let t = 3.5; t < 60; t += 3.5) marks.push({ t, downbeat: true, strong: false });
+  const { plan, dropped } = directShowcase(base({ grid: { kind: "pauses", marks, period: null }, photos: photos(30), lengthSec: 60 }));
+  const body = plan.scenes.slice(0, -1);
+  for (const s of body) assert.ok(s.end - s.start <= 6, `${s.template} lasts ${s.end - s.start} s`);
+  assert.equal(dropped, 0);
+  assert.equal(plan.scenes.at(-1).end, 60);
+});
+
+test("a scene never gets fewer beats than its template needs, even right before the closing", () => {
+  for (const seed of Array.from({ length: 40 }, (_, i) => i + 1)) {
+    for (const lengthSec of [30, 60, 90]) {
+      const grid = beatGrid(0.5);
+      const { plan } = directShowcase(base({ seed, lengthSec, grid, photos: photos(40) }));
+      plan.scenes.slice(0, -1).forEach((s) => {
+        const need = Math.max(2, Math.round(TEMPLATES[s.template].beats * 1)) * 0.5;
+        assert.ok(s.end - s.start >= need - 1e-6, `seed ${seed} ${lengthSec}s: ${s.template} [${s.start}, ${s.end}]`);
+      });
+    }
+  }
+});
+
+test("a Moment too short for a normal closing still plans: one scene, then the closing", () => {
+  for (const lengthSec of [4, 6, 8]) {
+    const { plan } = directShowcase(base({ lengthSec, grid: { kind: "pulse", marks: [{ t: 2, downbeat: true, strong: false }], period: 2 } }));
+    assert.ok(plan.scenes.every((s) => s.end > s.start), `${lengthSec}s`);
+    assert.equal(plan.scenes.at(-1).end, lengthSec);
+  }
+});
+
 test("statements past the length's limit are left out", () => {
   const many = Array.from({ length: 16 }, (_, i) => `Line ${i + 1}`);
   assert.equal(directShowcase(base({ statements: many, lengthSec: 30 })).plan.captions.length, 1 + 5);

@@ -50,10 +50,12 @@ test("encodeFor caps the bitrate only past 60 s", () => {
   assert.deepEqual(encodeFor(180), { crf: 21, maxrate: "8M", bufsize: "16M" });
 });
 
-test("the finish plan darkens the closing scene and carries the captions", () => {
+test("the finish plan darkens a plain closing but not an invite (it dims its own photo), and carries the captions", () => {
+  const finale = plan({ details: {} });
+  assert.deepEqual(finishPlanOf(finale).shots, [{ role: "end", start: finale.scenes.at(-1).start, overlays: [] }]);
   const p = plan();
   const f = finishPlanOf(p);
-  assert.deepEqual(f.shots, [{ role: "end", start: p.scenes.at(-1).start, overlays: [] }]);
+  assert.deepEqual(f.shots, [], "the calendar card stays bright");
   assert.equal(f.captions, p.captions);
   assert.deepEqual([f.w, f.h, f.fps, f.durationSec, f.style, f.seed], [1920, 1080, 30, 30, "premiere", 2]);
 });
@@ -124,6 +126,15 @@ test("a failed finish leaves nothing at out", async () => {
   assert.equal(r.ok, false);
   assert.equal(r.error, "Rendering failed at the finishing pass.");
   assert.equal(fs.existsSync(out), false);
+});
+
+test("an asset server that won't start reads as a friendly error", async () => {
+  const { deps } = fakes();
+  deps.startServer = async () => { throw new Error("EADDRINUSE"); };
+  const r = await renderShowcase({ plan: plan(), images, song: null, voice: null, workDir: work(), out: path.join(tmp, "s.mp4"), ...deps });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "Rendering failed at the picture.");
+  assert.ok(r.detail, "the cause is kept for the server log");
 });
 
 test("captions need libass", async () => {

@@ -26,8 +26,8 @@ export function readInviteDate(text) {
   if (m) return result(monthOf(m[2]), Number(m[1]));
   m = new RegExp(`\\b${NAME}\\s+${DAY}\\b`).exec(t);
   if (m) return result(monthOf(m[1]), Number(m[2]));
-  // Slashes or dots are day first, as written in the UK.
-  m = /\b(\d{1,2})[/.](\d{1,2})(?:[/.]\d{2,4})?\b/.exec(t);
+  // Day first, as written in the UK. Dots count only with a year, so a time such as 7.30 never reads as a date.
+  m = /\b(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?\b/.exec(t) || /\b(\d{1,2})\.(\d{1,2})\.\d{2,4}\b/.exec(t);
   if (m) return result(Number(m[2]), Number(m[1]));
   return null;
 }

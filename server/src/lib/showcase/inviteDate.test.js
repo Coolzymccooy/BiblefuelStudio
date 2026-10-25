@@ -10,10 +10,11 @@ test("common ways of writing a date read as day and month", () => {
   }
   assert.deepEqual(readInviteDate("1/2/2027"), { month: 2, day: 1, label: "FEB" }, "slashes are day first (UK)");
   assert.deepEqual(readInviteDate("29 Feb"), { month: 2, day: 29, label: "FEB" });
+  assert.deepEqual(readInviteDate("21.11.2026"), NOV21, "dots count only with a year, so a time never reads as a date");
 });
 
 test("anything that is not a real day and month gives null", () => {
-  for (const text of ["13/14", "next Sunday", "", "31 February", "32 May", "Nov", undefined, null, 42]) {
+  for (const text of ["13/14", "next Sunday", "", "31 February", "32 May", "Nov", "7.5", "starts 6.30", undefined, null, 42]) {
     assert.equal(readInviteDate(text), null, String(text));
   }
 });

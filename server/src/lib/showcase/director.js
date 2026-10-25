@@ -1,6 +1,5 @@
 import { mulberry32 } from "../kinetic/director.js";
 import { placeCaptions, limitWords } from "../motion/director.js";
-import { PULSE_SEC } from "../motion/cuts.js";
 import { STYLES, isShowcase } from "../motion/styles.js";
 import { TEMPLATES, DENSE, CLOSING_MIN_SEC, SHOWCASE_FPS, SHAPES } from "./templates.js";
 import { readInviteDate } from "./inviteDate.js";
@@ -27,6 +26,11 @@ const DENSE_BOOST = 2;
 /** A line clears this long after it is fully shown; only the closing words stay to the end. */
 const HOLD_MAX_SEC = 4;
 const MIN_SCENE_BEATS = 2;
+/**
+ * The beat used when the grid has none: a voiceover's pauses or the silent pulse are seconds apart,
+ * and counting them as beats made scenes 10 to 17 s long.
+ */
+const NOMINAL_BEAT_SEC = 0.6;
 
 /** Calm stays longer on each scene, Hype moves on sooner. */
 function energyFactor(energy) {
@@ -36,12 +40,14 @@ function energyFactor(energy) {
 }
 
 /**
- * Candidate boundaries inside (0, D): the grid's marks, then steps of its period past the last
- * mark (a grid can stop early: a short pause list, or a song's beats ending before the Moment).
+ * Candidate boundaries inside (0, D): a song's beats, then steps of its period past the last one
+ * (its beats can end before the Moment does). Without a song there are no beats to cut on, so the
+ * boundaries are an even NOMINAL_BEAT_SEC apart.
  */
 function boundaries(grid, D) {
-  const period = grid?.period > 0 ? grid.period : PULSE_SEC;
-  const marks = (grid?.marks || []).filter((m) => m.t > 0 && m.t < D).sort((a, b) => a.t - b.t);
+  const beats = grid?.kind === "beats";
+  const period = beats && grid.period > 0 ? grid.period : NOMINAL_BEAT_SEC;
+  const marks = (beats ? grid.marks : []).filter((m) => m.t > 0 && m.t < D).sort((a, b) => a.t - b.t);
   const out = marks.map((m) => ({ t: r3(m.t), downbeat: Boolean(m.downbeat) }));
   let t = out.length ? out.at(-1).t : 0;
   for (t += period; t < D - 0.05; t += period) out.push({ t: r3(t), downbeat: false });
@@ -83,17 +89,21 @@ function closingIndex(list, period, D) {
 
 /**
  * A style's weights are shares of screen time, so each is divided by the template's beats: a film
- * strip (8 beats) is picked less often than a single (3). The last two templates are rested, so even
- * a favoured dense template never dominates a stretch.
+ * strip (8 beats) is picked less often than a single (3). Only templates whose animation fits the
+ * beats left before the closing are candidates. The last two templates are rested, so even a
+ * favoured dense template never dominates a stretch, unless nothing else fits.
  */
-function chooseTemplate({ style, recent, room, behind, rnd }) {
-  const weights = {};
-  for (const [id, w] of Object.entries(style.templates)) {
-    if (recent.includes(id) || TEMPLATES[id].photos > room) continue;
-    const perPick = w / TEMPLATES[id].beats;
-    weights[id] = behind && DENSE.includes(id) ? perPick * DENSE_BOOST : perPick;
-  }
-  return weightedPick(weights, rnd) ?? (recent[0] === "single" ? "spotlight" : "single");
+function chooseTemplate({ style, recent, room, fits, behind, rnd }) {
+  const weigh = (rest) => {
+    const weights = {};
+    for (const [id, w] of Object.entries(style.templates)) {
+      if ((rest && recent.includes(id)) || TEMPLATES[id].photos > room || !fits(id)) continue;
+      const perPick = w / TEMPLATES[id].beats;
+      weights[id] = behind && DENSE.includes(id) ? perPick * DENSE_BOOST : perPick;
+    }
+    return weightedPick(weights, rnd);
+  };
+  return weigh(true) ?? weigh(false) ?? "single";
 }
 
 /**
@@ -110,7 +120,8 @@ export function directShowcase({
   const factor = energyFactor(energy);
   const { list, period } = boundaries(grid, D);
   const closeAt = closingIndex(list, period, D);
-  const closeStart = closeAt >= 0 ? list[closeAt].t : r3(D * 0.8);
+  // Too short for the usual closing: one scene, then the closing over the rest.
+  const closeStart = closeAt >= 0 ? list[closeAt].t : r3(Math.max(D * 0.5, D - CLOSING_MIN_SEC));
 
   const order = sequenceOf(n, hero);
   let next = 0; // position in `order` of the next photo to show
@@ -132,21 +143,28 @@ export function directShowcase({
   let at = -1; // index in `list` where the current scene ends (-1 = time 0)
   const timeOf = (i) => (i < 0 ? 0 : i >= closeAt ? closeStart : list[i].t);
   const beatsOf = (id) => Math.max(MIN_SCENE_BEATS, Math.round(TEMPLATES[id].beats * factor));
+  // The shortest scene the style can make: less than this left, and the scene before runs on to the closing.
+  const shortest = Math.min(...Object.keys(style.templates).map(beatsOf));
 
-  while (timeOf(at) < closeStart) {
+  if (closeAt < 0) {
+    scenes.push({ template: "single", photos: take(1), start: 0, end: closeStart, downbeat: false });
+  }
+  while (closeAt >= 0 && timeOf(at) < closeStart) {
     const first = scenes.length === 0;
     const remaining = seen.size < n ? n - seen.size : n;
     const left = closeStart - timeOf(at);
     const behind = seen.size < n && (left / avgSec) * avgPhotos < remaining;
-    const template = first ? "single" : chooseTemplate({ style, recent: scenes.slice(-2).map((s) => s.template).reverse(), room: n, behind, rnd });
-    let end = closeAt >= 0 ? Math.min(at + beatsOf(template), closeAt) : closeAt;
-    // Too little left for another scene: this one runs on to the closing scene.
-    if (closeAt >= 0 && closeAt - end < MIN_SCENE_BEATS) end = closeAt;
+    const beatsLeft = closeAt - at;
+    const template = first ? "single" : chooseTemplate({
+      style, recent: scenes.slice(-2).map((s) => s.template).reverse(), room: n, fits: (id) => beatsOf(id) <= beatsLeft, behind, rnd,
+    });
+    let end = Math.min(at + beatsOf(template), closeAt);
+    // Too little left for another whole scene: this one runs on to the closing scene.
+    if (closeAt - end < shortest) end = closeAt;
     const start = timeOf(at);
     // The opening scene is order[0], the hero, so taking one photo shows it and moves on.
     const scenePhotos = take(TEMPLATES[template].photos);
     scenes.push({ template, photos: scenePhotos, start: r3(start), end: r3(timeOf(end)), downbeat: at >= 0 && list[at].downbeat });
-    if (closeAt < 0) break;
     at = end;
   }
 
