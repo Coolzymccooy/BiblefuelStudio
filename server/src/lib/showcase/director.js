@@ -154,7 +154,7 @@ export function directShowcase({
   return {
     plan: {
       version: 1, kind: "showcase", w, h, fps: SHOWCASE_FPS, durationSec: D, seed, style: style.id, energy,
-      shape: shape === "wide" ? "wide" : "tall",
+      shape: shape === "wide" ? "wide" : "tall", beatSec: r3(period),
       scenes: scenes.map(({ template, photos: p, start, end }) => ({ template, photos: p, start, end })),
       captions, invite, flashes,
     },

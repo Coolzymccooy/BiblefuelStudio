@@ -92,6 +92,7 @@ test("the shape sets the frame", () => {
   assert.deepEqual([tall.w, tall.h, tall.fps, tall.shape], [1080, 1920, 30, "tall"]);
   const wide = directShowcase(base({ shape: "wide" })).plan;
   assert.deepEqual([wide.w, wide.h, wide.shape], [1920, 1080, "wide"]);
+  assert.equal(tall.beatSec, 0.6, "the beat the templates time their entrances to");
 });
 
 test("a grid that stops early still fills the length", () => {

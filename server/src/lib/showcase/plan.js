@@ -27,6 +27,8 @@ const planSchema = z.object({
   style: z.enum(SHOWCASE_IDS),
   energy: z.number().min(0).max(1),
   shape: z.enum(["tall", "wide"]),
+  /** The beat the templates time their entrances to. */
+  beatSec: z.number().positive().max(4),
   scenes: z.array(sceneSchema).min(1).max(400),
   captions: z.array(captionSchema).max(20),
   invite: z.object({ month: z.number().int().min(1).max(12), day: z.number().int().min(1).max(31), label: z.string() }).nullable(),

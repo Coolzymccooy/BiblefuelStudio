@@ -17,6 +17,11 @@ const PANORAMA_MAX_RATIO = 4;
 
 const ROTATE = { 2: "hflip", 3: "hflip,vflip", 4: "vflip", 5: "transpose=0", 6: "transpose=1", 7: "transpose=3", 8: "transpose=2" };
 
+/** The filters that turn a photo stored with this EXIF orientation upright ("" when it already is). */
+export const rotationFilter = (orientation) => ROTATE[orientation] || "";
+/** True when the orientation swaps the stored width and height. */
+export const swapsSides = (orientation) => orientation >= 5 && orientation <= 8;
+
 /**
  * Orientation from the TIFF block at buf[t..limit). Every read is bounds
  * checked against `limit`, so hostile offsets or counts return 1 instead of
@@ -99,8 +104,8 @@ export function orientationOf(file) {
  * `width` and `height` are the STORED dimensions as ffprobe reports them, before any rotation.
  */
 export function workImageArgs({ src, out, width, height, orientation }) {
-  const rotate = ROTATE[orientation] || "";
-  const swaps = orientation >= 5 && orientation <= 8;
+  const rotate = rotationFilter(orientation);
+  const swaps = swapsSides(orientation);
   const w = swaps ? height : width;
   const h = swaps ? width : height;
   const shape = w > h ? "wide" : "tall";
