@@ -14,7 +14,7 @@ import { NORMALISERS, outputUrl } from "./jobs.js";
 // lib/moments/projectStore.js ID_RE: no dots or slashes, so safe in a route path.
 export const MOMENT_ID = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, "a Moment id from moments_project");
 export const MOMENT_OCCASIONS = ["birthday", "anniversary", "wedding", "sermon", "event", "thanksgiving", "memorial", "fun"];
-export const MOMENT_STYLES = ["glow", "celebrate", "hype", "gallery"];
+export const MOMENT_STYLES = ["glow", "celebrate", "hype", "gallery", "fellowship", "scrapbook", "partyPop", "premiere"];
 export const MOMENT_LENGTHS = [15, 30, 60];
 export const MOMENT_DETAIL_FIELDS = ["name", "milestone", "eventTitle", "date", "venue", "verse"];
 export const MIN_PHOTOS = 3;
