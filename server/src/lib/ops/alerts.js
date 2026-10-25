@@ -3,14 +3,29 @@
  * failed, the disk is nearly full, a backup did not run.
  *
  * Every alert is logged with an [ALERT] prefix and sent to error tracking.
- * It is also emailed to the operator, at most once an hour for each kind, so
- * a render that fails for everyone sends one email, not hundreds; the email
- * says how many were held back since the last one.
+ * In production it is also emailed to the operator, at most once an hour for
+ * each kind (a full disk, twice a day), so a render that fails for everyone
+ * sends one email, not hundreds; the email says how many were held back
+ * since the last one.
  */
 
 const HOUR_MS = 60 * 60 * 1000;
+/** Standing conditions are re-checked every few minutes; they email less often than one-off failures. */
+const KIND_THROTTLE_MS = Object.freeze({ "disk-low": 12 * HOUR_MS });
 
-export function createAlerter({ sendEmail = null, to = "", captureMessage = null, throttleMs = HOUR_MS, now = () => Date.now(), log = console } = {}) {
+/**
+ * Alert emails are for production. A dev machine logs its alerts but does not email them (its
+ * disk checks and test failures are not the operator's to act on), unless ALERT_EMAILS is on.
+ */
+export function alertEmailsEnabled(env = process.env) {
+  const flag = String(env.ALERT_EMAILS || "").trim().toLowerCase();
+  if (["false", "0", "no", "off"].includes(flag)) return false;
+  return env.NODE_ENV === "production" || ["true", "1", "yes", "on"].includes(flag);
+}
+
+export function createAlerter({
+  sendEmail = null, to = "", captureMessage = null, throttleMs = HOUR_MS, throttleByKind = KIND_THROTTLE_MS, now = () => Date.now(), log = console,
+} = {}) {
   const lastSent = new Map();
   const held = new Map();
 
@@ -26,7 +41,7 @@ export function createAlerter({ sendEmail = null, to = "", captureMessage = null
     if (!sendEmail || !to) return { emailed: false, reason: "no-email" };
     const t = now();
     const last = lastSent.get(kind);
-    if (last !== undefined && t - last < throttleMs) {
+    if (last !== undefined && t - last < (throttleByKind[kind] ?? throttleMs)) {
       held.set(kind, (held.get(kind) || 0) + 1);
       return { emailed: false, reason: "throttled" };
     }

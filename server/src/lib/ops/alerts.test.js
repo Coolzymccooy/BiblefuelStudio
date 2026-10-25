@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAlerter } from "./alerts.js";
+import { createAlerter, alertEmailsEnabled } from "./alerts.js";
 import { renderEmailRequest } from "../../../services/email/send.js";
 
 const quiet = { error() {}, warn() {} };
@@ -60,4 +60,23 @@ test("the alert email escapes its text and keeps the subject on one line", () =>
   assert.equal(out.to, "o@example.com");
   assert.doesNotMatch(out.subject, /[\r\n]/);
   assert.match(out.html, /&lt;b&gt;12%&lt;\/b&gt; free/);
+});
+
+test("a full disk is a standing condition, so it emails at most twice a day", async () => {
+  const { alerter, sent, advance } = rig();
+  await alerter("disk-low", "Disk nearly full");
+  advance(60 * 60 * 1000);
+  assert.equal((await alerter("disk-low", "Disk nearly full")).reason, "throttled", "an hour later is still held back");
+  advance(11 * 60 * 60 * 1000);
+  assert.equal((await alerter("disk-low", "Disk nearly full")).emailed, true);
+  assert.equal(sent.length, 2);
+  assert.match(sent[1].detail, /1 more "disk-low" alert\(s\)/);
+});
+
+test("alert emails are for production; a dev machine only logs them unless ALERT_EMAILS is on", () => {
+  assert.equal(alertEmailsEnabled({ NODE_ENV: "production" }), true);
+  assert.equal(alertEmailsEnabled({}), false);
+  assert.equal(alertEmailsEnabled({ NODE_ENV: "development" }), false);
+  assert.equal(alertEmailsEnabled({ ALERT_EMAILS: "on" }), true);
+  assert.equal(alertEmailsEnabled({ NODE_ENV: "production", ALERT_EMAILS: "off" }), false);
 });
