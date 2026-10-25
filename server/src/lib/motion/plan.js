@@ -22,7 +22,7 @@ const shotSchema = z.object({
   overlays: z.array(z.object({ id: z.string() })).max(2),
   anchor: z.object({ x: unit, y: unit }),
 });
-const captionSchema = z.object({
+export const captionSchema = z.object({
   text: z.string().trim().min(1).max(60),
   start: z.number().min(0),
   end: z.number().positive(),
