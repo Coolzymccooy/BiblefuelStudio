@@ -1,103 +1,89 @@
 /**
- * Unified word-alignment contract.
- *
- * The typography renderer should be provider-agnostic: it consumes ONE
- * normalized shape regardless of which TTS provider produced the audio.
- *
- *   AlignmentContract = {
- *     audioPath: string,
- *     words: Array<{ text: string, startMs: number, endMs: number }>
- *   }
- *
- * Two timing sources map into it today:
- *   - Azure WordBoundary words — native, already millisecond word timings.
- *   - char-level alignment ({characters,starts,ends} in SECONDS) used by
- *     ElevenLabs + the Whisper forced-alignment fallback — grouped into words.
- *
- * Other providers map in over time ("eventually"); until then their contract
- * just has an empty words[] (audio still renders, captions degrade gracefully).
+ * Provider-agnostic caption contract: { audioPath, words: [{text,startMs,endMs}] }.
+ * Reject invalid sources as a whole rather than returning a misleading subset.
+ * Structural validation is NOT transcript coverage: well-formed subsets still
+ * pass. Acoustic alignment and matching against the complete script are unresolved.
  */
 
-/**
- * @typedef {Object} WordTiming
- * @property {string} text
- * @property {number} startMs
- * @property {number} endMs
- */
+/** @typedef {{text: string, startMs: number, endMs: number}} WordTiming */
+/** @typedef {{audioPath: string, words: WordTiming[]}} AlignmentContract */
 
-/**
- * @typedef {Object} AlignmentContract
- * @property {string} audioPath
- * @property {WordTiming[]} words
- */
+function validWindow(start, end, positive = true) {
+  return Number.isFinite(start) && Number.isFinite(end) && start >= 0 &&
+    (positive ? end > start : end >= start);
+}
 
-/**
- * Group a char-level alignment (seconds) into word timings (milliseconds).
- * Words are split on whitespace; runs of spaces collapse. A word's start is
- * its first character's start; its end is its last character's end.
- *
- * @param {{ characters?: string[], starts?: number[], ends?: number[] } | null | undefined} alignment
- * @returns {WordTiming[]}
- */
-export function charAlignmentToWords(alignment) {
-  const characters = alignment?.characters;
-  const starts = alignment?.starts;
-  const ends = alignment?.ends;
-  if (!Array.isArray(characters) || !Array.isArray(starts) || !Array.isArray(ends)) {
-    return [];
+function validWords(words) {
+  if (!Array.isArray(words) || words.length === 0) return false;
+  let previousStart = -Infinity;
+  let previousEnd = -Infinity;
+  for (const word of words) {
+    if (typeof word?.text !== "string" || !word.text.trim() ||
+        !validWindow(word.startMs, word.endMs) ||
+        word.startMs < previousStart || word.endMs < previousEnd) return false;
+    previousStart = word.startMs;
+    previousEnd = word.endMs;
   }
-
-  /** @type {WordTiming[]} */
-  const words = [];
-  let current = null; // { text, startSec, endSec }
-
-  const flush = () => {
-    if (current && current.text.length > 0) {
-      words.push({
-        text: current.text,
-        startMs: Math.round(current.startSec * 1000),
-        endMs: Math.round(current.endSec * 1000),
-      });
-    }
-    current = null;
-  };
-
-  for (let i = 0; i < characters.length; i++) {
-    const ch = characters[i];
-    if (ch === undefined || ch === null) continue;
-    if (/\s/.test(ch)) {
-      flush();
-      continue;
-    }
-    const start = Number(starts[i] ?? 0);
-    const end = Number(ends[i] ?? start);
-    if (!current) {
-      current = { text: ch, startSec: start, endSec: end };
-    } else {
-      current.text += ch;
-      current.endSec = end;
-    }
-  }
-  flush();
-
-  return words;
+  return true;
 }
 
 /**
- * Normalize any SpeechResult into the unified alignment contract.
- * Prefers a provider's native `words` (e.g. Azure); otherwise derives words
- * from char-level `alignment`; otherwise returns an empty words list.
- *
- * @param {{ file?: string, words?: WordTiming[], alignment?: object } | null | undefined} result
+ * Group character timing (seconds) on whitespace, retaining Unicode/punctuation.
+ * Starts and ends must each be nondecreasing. Provider overlaps are allowed;
+ * backwards timing is not. Zero-duration characters/spaces are allowed only if
+ * each resulting word has a positive window. No coercion, padding or rounding.
+ * @param {{characters?: string[], starts?: number[], ends?: number[]}|null|undefined} alignment
+ * @returns {WordTiming[]}
+ */
+export function charAlignmentToWords(alignment) {
+  const { characters, starts, ends } = alignment ?? {};
+  if (!Array.isArray(characters) || !Array.isArray(starts) || !Array.isArray(ends) ||
+      characters.length === 0 || starts.length !== characters.length ||
+      ends.length !== characters.length) return [];
+
+  const words = [];
+  let current = null;
+  let previousStart = -Infinity;
+  let previousEnd = -Infinity;
+  const flush = () => {
+    if (current) words.push(current);
+    current = null;
+  };
+  for (let i = 0; i < characters.length; i++) {
+    const ch = characters[i];
+    const start = starts[i];
+    const end = ends[i];
+    if (typeof ch !== "string" || ch.length === 0 ||
+        !validWindow(start, end, false) || start < previousStart || end < previousEnd ||
+        // Keep UTF-16 units, code points and graphemes; mixed text/space chunks
+        // cannot be split without inventing character timings.
+        (/\s/u.test(ch) && !/^\s+$/u.test(ch))) return [];
+    previousStart = start;
+    previousEnd = end;
+    if (/^\s+$/u.test(ch)) {
+      flush();
+    } else if (!current) {
+      current = { text: ch, startMs: start * 1000, endMs: end * 1000 };
+    } else {
+      current.text += ch;
+      current.endMs = end * 1000;
+    }
+  }
+  flush();
+  // Reject conversion overflow and zero-width words as well.
+  return validWords(words) ? words : [];
+}
+
+/**
+ * Valid native words take priority, retaining trusted objects/numeric values.
+ * Empty/invalid native words must not mask usable character timing.
+ * @param {{file?: string, words?: WordTiming[], alignment?: object}|null|undefined} result
  * @returns {AlignmentContract}
  */
 export function toAlignmentContract(result) {
   const audioPath = result?.file ?? "";
-  if (Array.isArray(result?.words)) {
-    return { audioPath, words: result.words };
-  }
-  if (result?.alignment) {
-    return { audioPath, words: charAlignmentToWords(result.alignment) };
-  }
-  return { audioPath, words: [] };
+  const words = validWords(result?.words)
+    ? result.words
+    : charAlignmentToWords(result?.alignment);
+  return { audioPath, words };
 }

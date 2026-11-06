@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ok, fail, withoutOk } from "../toolResult.js";
 import { SCENE_SCRIPT_ID, projectView, runningOf, startedHandle } from "../sceneView.js";
+import { captionTimingRefusal } from "../../lib/sceneScript/captionTiming.js";
 
 // Scene scripts: an authored cinematic script, voiced word for word, its shots
 // made as AI clips, rendered. Super-admin keys only, as the routes are. The
@@ -246,6 +247,8 @@ const sceneScriptRender = {
     const project = await readProject(ctx, id);
     const refusal = busyRefusal(project, ["render", "voice", "shots"]) || notReady(project);
     if (refusal) return refusal;
+    const timing = captionTimingRefusal(project);
+    if (timing) return fail(timing.code, timing.message, { lines: timing.lines });
     const refused = await ctx.chargeCap({ renders: 1 });
     if (refused) return refused;
     await ctx.api.call("POST", `${projectPath(id)}/render`);

@@ -14,6 +14,24 @@ function fileOf(dataDir, id) {
   return path.join(dirOf(dataDir), `${safe}.json`);
 }
 
+/** A manual display placement never turns its original anchors into measurements.
+ * Keep the first quality assessment (including estimates/warnings), even after
+ * repeated nudges or reruns. Word evidence remains on the source audio clock. */
+export function manualTiming(line, shiftSec = 0) {
+  const quality = line.timingQuality;
+  const originalEvidence = quality && Object.hasOwn(quality, "originalEvidence") ? quality.originalEvidence : quality || null;
+  return { ...line, timingQuality: {
+    ...quality,
+    status: "manual", verified: false,
+    exactCoverage: originalEvidence?.exactCoverage ?? null,
+    counts: { measured: 0, "asr-matched": 0, interpolated: 0, unresolved: 0, manual: line.words?.length || 0 },
+    wordSources: (line.words || []).map(() => "manual"),
+    warnings: quality?.warnings || [],
+    originalEvidence,
+    adjustment: { type: "manual", displayShiftSec: (quality?.adjustment?.displayShiftSec || 0) + shiftSec },
+  } };
+}
+
 export function cleanText(value, max = 100) {
   // eslint-disable-next-line no-control-regex
   return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max);
@@ -176,8 +194,8 @@ function carryOver(oldLines, newLines) {
   const out = newLines.slice();
   const pairs = matchedPairs(oldKeys, newKeys);
   for (const [i, j] of pairs) {
-    const { words, start, end, locked, effect, confidence, flag } = oldArr[i];
-    out[j] = { ...newLines[j], words, start, end, locked, effect, confidence, flag };
+    const { words, start, end, locked, effect, confidence, flag, timingQuality } = oldArr[i];
+    out[j] = { ...newLines[j], words, start, end, locked, effect, confidence, flag, timingQuality };
   }
   return { lines: out, allKept: pairs.length === newLines.length };
 }

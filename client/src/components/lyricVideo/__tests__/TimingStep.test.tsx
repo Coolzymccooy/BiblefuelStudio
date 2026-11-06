@@ -23,6 +23,16 @@ const done = { projectId: 'lv_1', song: { file: 'x', durationSec: 30, coverStill
   lines: [line('l1', 1), line('l2', 5, 'check'), line('l3', 9)], timing: { status: 'done' } } as unknown as LyricProject;
 
 describe('TimingStep', () => {
+  it('preserves visible estimated history after a manual move clears the legacy flag', () => {
+    const p = { ...done, lines: [{ ...done.lines[0], flag: null, timingQuality: { status: 'manual', originalEvidence: { status: 'needs-review', warnings: ['interpolated-words'] } } }] } as LyricProject;
+    render(<TimingStep project={p} onChange={vi.fn()} />);
+    expect(screen.getByText(/Manually adjusted/).textContent).toContain('Estimated word timing');
+  });
+
+  it('labels timed legacy lines unknown rather than verified', () => {
+    render(<TimingStep project={done} onChange={vi.fn()} />);
+    expect(screen.getAllByText(/Timing quality unknown/)).toHaveLength(3);
+  });
   beforeEach(() => vi.clearAllMocks());
 
   it('says when timing again did not work, and keeps the earlier timing on show (R44)', async () => {

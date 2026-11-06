@@ -25,7 +25,7 @@ const SPENT_USAGE = { ok: true, usage: { plan: "free", buckets: { render: { used
 
 const PROJECT = (fields = {}) => ({
   projectId: "p1", title: "Psalm 23", status: "segmenting", error: null, style: "cinematic-bible",
-  scenes: [], transcript: { words: [] }, source: { audioPath: null, durationMs: 0 }, render: {}, aiMotion: null, ...fields,
+  scenes: [], transcript: { words: [], timing: { provenance: "supplied", verified: false } }, source: { audioPath: null, durationMs: 0 }, render: {}, aiMotion: null, ...fields,
 });
 const scene = (id, fields = {}) => ({ id, text: id, imagePrompt: "p", imageStatus: "done", imagePath: `/x/${id}.png`, ...fields });
 
@@ -50,6 +50,20 @@ function ctxWith(responses, { usage = UNLIMITED_USAGE } = {}) {
 }
 
 const routesCalled = (calls) => calls.map((c) => `${c.method} ${c.path}`);
+
+test("real MCP legacy timing refusal leaves cap and project job unchanged", async () => {
+  const made = await client.callTool({ name: "story_project", arguments: { action: "create", title: "Synthetic unknown consent" } });
+  const id = made.structuredContent.project.id;
+  const before = (await client.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders;
+  for (const acknowledgeApproximateTiming of [undefined, false]) {
+    const result = await client.callTool({ name: "story_render", arguments: { id, ...(acknowledgeApproximateTiming === undefined ? {} : { acknowledgeApproximateTiming }) } });
+    assert.equal(result.isError, true); assert.match(result.content[0].text, /TIMING_CONSENT_REQUIRED/);
+  }
+  const after = (await client.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders;
+  assert.deepEqual(after, before);
+  const got = await client.callTool({ name: "story_project", arguments: { action: "get", id } });
+  assert.equal(got.structuredContent.project.status, "draft");
+});
 
 // ---- definitions ----
 
@@ -349,6 +363,7 @@ test("story_render checks the plan quota, charges one render and returns a story
   assert.deepEqual(chargeCalls, [{ renders: 1 }]);
   assert.deepEqual(result.structuredContent, {
     kind: "story", id: "p1", status: "running", percent: null, phase: "rendering", output: null, error: null, jobId: "rj1",
+    timingWarning: "Caption timing is not acoustically verified. Review against the audio; estimated or unknown placement is approximate.",
   });
 });
 
@@ -473,7 +488,7 @@ test("a real story_render on a project without pictures is refused, and the rend
   const made = await client.callTool({ name: "story_project", arguments: { action: "create", title: "No pictures" } });
   const id = made.structuredContent.project.id;
   const before = (await client.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders;
-  const result = await client.callTool({ name: "story_render", arguments: { id } });
+  const result = await client.callTool({ name: "story_render", arguments: { id, acknowledgeApproximateTiming: true } });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /every scene needs/);
   const afterCall = (await client.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders;

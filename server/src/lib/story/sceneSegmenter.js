@@ -1,4 +1,4 @@
-import { anchorFor, composeScenePrompt } from "./styleAnchors.js";
+import { composeScenePrompt } from "./styleAnchors.js";
 
 // Injected LLM completion: (prompt:string) => Promise<string>. Default does the
 // gpt-4o-mini -> gemini-2.0-flash fallback. Mockable in tests via _setLlmImpl
@@ -35,14 +35,33 @@ const MAX_SCENES = Math.max(8, Number(process.env.STORY_MAX_SCENES) || 60);
 export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAULT, cast = [], maxScenes }) {
   if (!Array.isArray(words) || words.length === 0) return [];
   const cap = Number.isFinite(Number(maxScenes)) && Number(maxScenes) >= 1 ? Math.round(Number(maxScenes)) : MAX_SCENES;
-  const baseTargetSec = Number(targetSec) > 0 ? Number(targetSec) : TARGET_SEC_DEFAULT;
-  // Widen scenes for long audio so the count never exceeds cap. The
-  // effective target is whichever is LONGER: the requested per-scene length, or
-  // the length needed to fit the whole recording into `cap` scenes.
-  const totalSec = Math.max(0, (words[words.length - 1].endMs - words[0].startMs) / 1000);
-  const minSecForCap = totalSec > 0 ? totalSec / cap : baseTargetSec;
-  const effectiveTargetSec = Math.max(baseTargetSec, minSecForCap);
-  const anchor = anchorFor(style);
+  const baseTargetSec = Number.isFinite(Number(targetSec)) && Number(targetSec) > 0
+    ? Number(targetSec) : TARGET_SEC_DEFAULT;
+  // Match the renderer: the first image starts at zero; each subsequent image
+  // starts at its first word, and the final image ends at the last word end.
+  // Unreported trailing audio cannot be accounted for by this API.
+  const boundaries = [0, ...words.slice(1).map((w) => w.startMs), words.at(-1).endMs];
+  const totalSec = Math.max(0, boundaries.at(-1) / 1000);
+  let effectiveTargetSec = Math.max(baseTargetSec, totalSec / cap);
+  let maxDisplayMs = (1.5 * effectiveTargetSec + 0.5) * 1000;
+  let plan = windowPlan(boundaries, maxDisplayMs);
+  // Sparse word boundaries can make total/cap insufficient (e.g. five 16s
+  // word/silence cells into four scenes). Widen only as far as necessary to
+  // make the budget feasible, rather than dumping overflow into the last scene.
+  // A single cell longer than the bound is always indivisible and may stand
+  // alone, never serve as permission to append more words to a giant scene.
+  if (plan.counts[0] > cap) {
+    let low = maxDisplayMs;
+    let high = Math.max(low, totalSec * 1000);
+    for (let i = 0; i < 50; i++) {
+      const mid = (low + high) / 2;
+      if (windowPlan(boundaries, mid).counts[0] <= cap) high = mid;
+      else low = mid;
+    }
+    maxDisplayMs = high;
+    effectiveTargetSec = Math.max(effectiveTargetSec, (maxDisplayMs / 1000 - 0.5) / 1.5);
+    plan = windowPlan(boundaries, maxDisplayMs);
+  }
 
   let llmScenes = null;
   try {
@@ -52,29 +71,20 @@ export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAU
     llmScenes = null;
   }
 
-  // Use the LLM split only when it's present, respects the cap AND actually
-  // covers the recording. If it over-segments (ignoring the widened target)
-  // OR stops early — on a 14-min narration gpt-4o-mini returned ten ~10 s
-  // scenes over the first two minutes and quit, and the renderer then held
-  // the last image for twelve minutes — fall back to bounded duration
-  // windows so every scene count stays within MAX_SCENES and every word
-  // gets a picture.
-  const llmRanges = llmScenes && llmScenes.length > 0 && llmScenes.length <= cap
-    ? llmScenes.map((s) => ({
-        text: String(s.text || "").trim(),
-        start: clampIndex(s.startWordIndex, words.length),
-        end: clampIndex(s.endWordIndex, words.length),
-        imagePrompt: String(s.imagePrompt || "").trim(),
-      }))
-    : null;
-  const ranges = llmRanges && coversRecording(llmRanges, words)
+  // Validate the raw indices BEFORE coercion, sorting or clamping could hide
+  // omissions, overlaps or malformed ranges. Coverage is a word partition,
+  // not a sum of durations (overlaps used to mask missing words).
+  const llmRanges = exactPartition(llmScenes, words.length, cap);
+  const ranges = llmRanges && llmRanges.every((r) =>
+    r.end + 1 <= plan.reach[r.start])
     ? llmRanges
-    : fallbackRanges(words, effectiveTargetSec);
+    : fallbackRanges(boundaries, effectiveTargetSec, cap, plan);
 
   return ranges.map((r, i) => {
-    const start = Math.min(r.start, r.end);
-    const end = Math.max(r.start, r.end);
-    const text = r.text || words.slice(start, end + 1).map((w) => w.text).join(" ");
+    const { start, end } = r;
+    // LLM prose is only an image prompt; displayed/spoken text is authoritative
+    // input text, with original token spelling, punctuation and casing intact.
+    const text = words.slice(start, end + 1).map((w) => w.text).join(" ");
     const prompt = (r.imagePrompt || text).trim();
     return {
       id: `scene-${String(i + 1).padStart(3, "0")}`,
@@ -94,47 +104,55 @@ export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAU
   });
 }
 
-// The LLM's scenes must span (nearly) the whole recording: the last scene has
-// to end within the final 5% of the audio, and the scenes together must cover
-// at least 90% of it. Anything less leaves a long tail with no picture.
-const MIN_COVERAGE = 0.9;
-const TAIL_TOLERANCE = 0.05;
-function coversRecording(ranges, words) {
-  const startMs = words[0].startMs;
-  const totalMs = words[words.length - 1].endMs - startMs;
-  if (totalMs <= 0) return true;
-  let coveredMs = 0;
-  let lastEndMs = startMs;
-  for (const r of ranges) {
-    const a = Math.min(r.start, r.end);
-    const b = Math.max(r.start, r.end);
-    coveredMs += Math.max(0, words[b].endMs - words[a].startMs);
-    lastEndMs = Math.max(lastEndMs, words[b].endMs);
-  }
-  const tailOk = (words[words.length - 1].endMs - lastEndMs) <= totalMs * TAIL_TOLERANCE;
-  return tailOk && coveredMs >= totalMs * MIN_COVERAGE;
-}
-
-function clampIndex(idx, len) {
-  const n = Number(idx);
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.min(len - 1, Math.floor(n)));
-}
-
-// Split words into contiguous windows whose spoken duration is ~targetSec.
-function fallbackRanges(words, targetSec) {
+function exactPartition(scenes, wordCount, cap) {
+  if (!Array.isArray(scenes) || scenes.length === 0 || scenes.length > cap) return null;
   const ranges = [];
-  let startIdx = 0;
-  const windowMs = targetSec * 1000;
-  for (let i = 0; i < words.length; i++) {
-    const spanMs = words[i].endMs - words[startIdx].startMs;
-    const isLast = i === words.length - 1;
-    if (spanMs >= windowMs || isLast) {
-      ranges.push({ start: startIdx, end: i, text: "", imagePrompt: "" });
-      // Advance past the word just consumed; if that was the last word the
-      // outer loop ends, so startIdx never indexes past the array.
-      startIdx = i + 1;
+  let next = 0;
+  for (const s of scenes) {
+    if (!s || !Number.isInteger(s.startWordIndex) || !Number.isInteger(s.endWordIndex)
+      || s.startWordIndex !== next || s.endWordIndex < s.startWordIndex
+      || s.endWordIndex >= wordCount) return null;
+    ranges.push({ start: s.startWordIndex, end: s.endWordIndex,
+      imagePrompt: String(s.imagePrompt || "").trim() });
+    next = s.endWordIndex + 1;
+  }
+  return next === wordCount ? ranges : null;
+}
+
+// reach[i] is the farthest exclusive boundary reachable from i within the
+// display bound. An oversized single word/silence cell may only stand alone.
+// Greedy farthest cuts give the minimum suffix scene count for each boundary.
+// Assumes finite, chronological input word timings, as the previous segmenter did.
+function windowPlan(boundaries, maxMs) {
+  const n = boundaries.length - 1;
+  const reach = new Array(n);
+  let end = 1;
+  for (let start = 0; start < n; start++) {
+    end = Math.max(end, start + 1);
+    while (end < n && boundaries[end + 1] - boundaries[start] <= maxMs) end++;
+    reach[start] = end;
+  }
+  const counts = new Array(n + 1).fill(0);
+  for (let start = n - 1; start >= 0; start--) counts[start] = 1 + counts[reach[start]];
+  return { reach, counts };
+}
+
+// Prefer target-sized scenes, but reserve enough budget for a bounded suffix.
+// The old greedy threshold could strand a tiny final word in cap+1 scenes.
+function fallbackRanges(boundaries, targetSec, cap, { reach, counts }) {
+  const ranges = [];
+  const n = boundaries.length - 1;
+  for (let start = 0; start < n;) {
+    const remaining = cap - ranges.length - 1;
+    let best = reach[start];
+    let distance = Infinity;
+    for (let end = start + 1; end <= reach[start]; end++) {
+      if (counts[end] > remaining) continue;
+      const d = Math.abs(boundaries[end] - boundaries[start] - targetSec * 1000);
+      if (d < distance) { best = end; distance = d; }
     }
+    ranges.push({ start, end: best - 1, imagePrompt: "" });
+    start = best;
   }
   return ranges;
 }

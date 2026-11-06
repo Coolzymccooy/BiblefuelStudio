@@ -8,7 +8,8 @@ import { spawnSync } from "node:child_process";
 import express from "express";
 import { createLyricVideoRouter } from "./lyricVideo.js";
 import { readProject, writeProject, createProject, applySheet } from "../lib/lyricVideo/projectStore.js";
-import { isAligning } from "../lib/lyricVideo/alignJob.js";
+import { isAligning, runAlignJob } from "../lib/lyricVideo/alignJob.js";
+import { placeLines } from "../lib/lyricVideo/align.js";
 import { readUsage } from "../lib/usageStore.js";
 import { markRunning, markDone, markError, markProgress, persistJob, readPersistedJob, getJob, cancelJob } from "../lib/renderJobs.js";
 import { writeBranding, logoFileFor } from "../lib/branding.js";
@@ -94,6 +95,41 @@ const finishingRender = (extra = async () => {}) => async (o) => {
   markDone(o.jobId, o.outPath);
   return { ok: true, file: o.outPath };
 };
+
+test("HTTP nudges preserve original evidence on disk and through sheet edits and rerun locks", async () => {
+  const p = placedProject(ctx, { n: 1, durationSec: 20 });
+  const heard = [{ word: "aa0", start: 1, end: 1.5 }];
+  const original = placeLines(p.lines, heard, { durationSec: 20 });
+  writeProject(ctx.dataDir, { ...p, lines: original, timing: { status: "done" } });
+  const quality = original[0].timingQuality;
+  const evidence = original[0].words.map((w) => w.timing);
+  assert.equal(quality.status, "needs-review");
+  for (const start of [3, 4]) {
+    const r = await call("PATCH", `/${p.projectId}/lines/${p.lines[0].id}`, { start });
+    assert.equal(r.status, 200);
+    const saved = readProject(ctx.dataDir, p.projectId).lines[0];
+    assert.deepEqual(r.json.project.lines[0], saved);
+    assert.equal(saved.start, start);
+    assert.equal(saved.timingQuality.status, "manual");
+    assert.equal(saved.timingQuality.verified, false);
+    assert.deepEqual(saved.timingQuality.originalEvidence, quality);
+    assert.deepEqual(saved.timingQuality.warnings, quality.warnings, "manual edits do not hide estimates");
+    assert.deepEqual(saved.words.map((w) => w.timing), evidence, "anchors stay on the source clock");
+    assert.equal(saved.timingQuality.adjustment.displayShiftSec, start - original[0].start);
+  }
+  const before = readProject(ctx.dataDir, p.projectId).lines[0];
+  const sheet = await call("PUT", `/${p.projectId}/sheet`, { sheet: p.sheet.raw });
+  assert.equal(sheet.status, 200);
+  assert.deepEqual(sheet.json.project.lines[0].timingQuality, before.timingQuality);
+  await runAlignJob({ dataDir: ctx.dataDir, workDir: ctx.outputDir, projectId: p.projectId, deps: {
+    prepareAudio: async () => "synthetic", vocalStem: async () => null,
+    transcribe: async () => ({ words: heard }), cutAudio: async () => "synthetic-cut",
+    measureAudibleEnd: async () => 20, detectBeats: async () => ({ bpm: 0, times: [] }), log: () => {},
+  } });
+  const after = (await call("GET", `/${p.projectId}`)).json.project;
+  assert.equal(after.timing.status, "done");
+  assert.deepEqual(after.lines[0], before);
+});
 
 describe("projects", () => {
   test("create, list, read, delete", async () => {
@@ -227,7 +263,9 @@ describe("look and background", () => {
   test("a picture is attached, with a fit; an unknown fit is refused", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
     const id = await newProject();
     const img = path.join(ctx.outputDir, "bg.jpg");
-    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=160x90:d=1", "-frames:v", "1", img]);
+    const fixture = spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=160x90:d=1", "-frames:v", "1", img], { encoding: "utf8" });
+    assert.equal(fixture.status, 0, `Picture fixture generation failed: ${fixture.error?.message || fixture.stderr || "unknown FFmpeg failure"}`);
+    assert.ok(fs.existsSync(img), "Picture fixture must exist before testing the background route");
     const ok = await call("PUT", `/${id}/background`, { path: img, fit: "cover" });
     assert.equal(ok.status, 200);
     assert.deepEqual(ok.json.project.background, { file: fs.realpathSync(img), kind: "image", fit: "cover" });
@@ -279,7 +317,7 @@ describe("song upload", () => {
     for (const saved of [r.json.project, readProject(ctx.dataDir, p.projectId)]) {
       assert.equal(saved.lines.length, 3, "the lyrics stay");
       for (const l of saved.lines) {
-        for (const key of ["words", "start", "end", "confidence", "flag", "locked"]) assert.equal(l[key], undefined, `${l.id}.${key}`);
+        for (const key of ["words", "start", "end", "confidence", "flag", "locked", "timingQuality"]) assert.equal(l[key], undefined, `${l.id}.${key}`);
       }
       for (const s of saved.sections) assert.equal(s.start, undefined, `${s.id}.start`);
       assert.equal(saved.timing.status, "idle");

@@ -21,7 +21,7 @@ const TAIL_WORD = 0.3;
 const RESPONSE_MATCH = 1.75; // responses are rarely sung back, so a lead wins a tie for heard words
 
 export function normWord(w) {
-  return String(w).normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[’`]/g, "'").replace(/[^a-z0-9']/g, "");
+  return String(w).normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[’`]/g, "'").replace(/[^\p{L}\p{N}']/gu, "");
 }
 
 export function tokenize(lines) {
@@ -123,7 +123,30 @@ function wordsOf(line) {
 function round(n) { return Math.round(n * 1000) / 1000; }
 function round2(n) { return Math.round(n * 100) / 100; }
 
-const emptySlot = () => ({ start: null, end: null, parts: 0, heard: 0, kind: "gap", heardStart: null });
+const emptySlot = () => ({ start: null, end: null, parts: 0, heard: 0, exact: 0, anchors: [], kind: "gap", heardStart: null });
+
+/** Evidence stays on the source audio clock; start/end remain karaoke display windows.
+ * A lexical ASR match is NOT measured ground truth. Only explicitly measured
+ * input anchors retain that designation. Substitutions keep their historical
+ * display placement, but never count as exact lyric coverage.
+ */
+function wordTiming(slot) {
+  const anchors = slot.anchors || [];
+  const complete = slot.parts > 0 && slot.exact === slot.parts;
+  const valid = anchors.length > 0 && anchors.every((a) => Number.isFinite(a.start) && Number.isFinite(a.end) && a.start >= 0 && a.end > a.start);
+  const source = !slot.parts || (anchors.length && !valid) ? "unresolved"
+    : !complete ? "interpolated"
+      : anchors.every((a) => a.source === "measured") ? "measured" : "asr-matched";
+  return {
+    source,
+    acousticStart: valid ? Math.min(...anchors.map((a) => a.start)) : null,
+    acousticEnd: valid ? Math.max(...anchors.map((a) => a.end)) : null,
+    parts: slot.parts,
+    exactParts: slot.exact || 0,
+    mismatch: anchors.some((a) => !a.exact),
+    anchors,
+  };
+}
 
 /** A lock only counts when it carries words. */
 function lockOf(locked, line) {
@@ -161,6 +184,12 @@ function alignSegments(lines, segments, sortedHeard) {
       const j = map[k];
       if (j < 0) return;
       slot.heard += 1;
+      const exact = t.norm === normWord(pool[j].word);
+      if (exact) slot.exact += 1;
+      slot.anchors.push({
+        word: pool[j].word, start: pool[j].start, end: pool[j].end, exact,
+        source: pool[j].timingSource === "measured" ? "measured" : "asr-matched",
+      });
       slot.kind = "heard";
       if (slot.start === null) { slot.start = pool[j].start; slot.heardStart = pool[j].start; }
       slot.end = pool[j].end;
@@ -276,7 +305,7 @@ function lineWords(plan, nextStart, bound) {
   return slots.map((s, wi) => {
     const natural = wi + 1 < slots.length ? slots[wi + 1].start : tailEnd(s);
     const end = Math.min(Math.max(natural, s.start + MIN_WORD), cap);
-    return { text: texts[wi], start: round(s.start), end: round(Math.max(end, s.start + STEP / 2)) };
+    return { text: texts[wi], start: round(s.start), end: round(Math.max(end, s.start + STEP / 2)), timing: wordTiming(s) };
   });
 }
 
@@ -341,6 +370,7 @@ function placeResponses(plan, words, bounds) {
         text,
         start: round(start + (len * wi) / n),
         end: round(start + (len * (wi + 1)) / n),
+        timing: wordTiming(plan[q].slots[wi]),
       }));
       cursor = start + len;
     }
@@ -348,13 +378,25 @@ function placeResponses(plan, words, bounds) {
   }
 }
 
-function assemble(plan, words, gapLines) {
+function assemble(plan, words, gapLines, bounds) {
   return plan.map((p, li) => {
     const nextStart = nextPlacedStart(plan, words, li);
-    const heardParts = p.slots.reduce((n, s) => n + s.heard, 0);
+    const heardParts = p.slots.reduce((n, s) => n + (s.exact || 0), 0);
     const parts = p.slots.reduce((n, s) => n + s.parts, 0);
     const confidence = p.locked ? 1 : parts ? heardParts / parts : 0;
-    const check = !p.locked && (confidence < FLAG_CONFIDENCE || gapLines.has(li) || hasConflict(p, nextStart));
+    // Locks preserve words byte-for-byte, including older records without provenance.
+    // Their manual placement is not evidence of acoustic verification.
+    const evidence = words[li].map((w) => w.timing || { source: "manual", mismatch: false });
+    const counts = { measured: 0, "asr-matched": 0, interpolated: 0, unresolved: 0, manual: 0 };
+    for (const t of evidence) counts[p.locked ? "manual" : t.source in counts ? t.source : "unresolved"] += 1;
+    const warnings = [];
+    if (evidence.some((t) => t.source === "interpolated")) warnings.push("interpolated-words");
+    if (evidence.some((t) => t.source === "unresolved")) warnings.push("unresolved-words");
+    if (evidence.some((t) => t.mismatch)) warnings.push("lyric-asr-mismatch");
+    if (evidence.some((t) => t.anchors?.some((a) => a.start < 0 || a.end > bounds[li]))) warnings.push("source-outside-bounds");
+    if (!p.locked && gapLines.has(li)) warnings.push("open-or-long-gap");
+    if (!p.locked && hasConflict(p, nextStart)) warnings.push("display-timing-adjusted");
+    const check = !p.locked && (confidence < FLAG_CONFIDENCE || warnings.length > 0);
     return {
       ...p.line,
       words: words[li],
@@ -362,6 +404,16 @@ function assemble(plan, words, gapLines) {
       end: words[li][words[li].length - 1].end,
       confidence: p.locked ? 1 : round2(confidence),
       flag: check ? "check" : null,
+      timingQuality: {
+        // confidence is retained for UI compatibility: exact lexical part coverage,
+        // not a probability of correct acoustic timing (locks historically use 1).
+        status: p.locked ? "manual" : warnings.length ? "needs-review" : counts.measured === evidence.length ? "measured" : "asr-matched",
+        verified: !p.locked && !warnings.length && counts.measured === evidence.length,
+        exactCoverage: p.locked ? null : round2(confidence),
+        counts,
+        wordSources: p.locked ? evidence.map(() => "manual") : evidence.map((t) => t.source),
+        warnings,
+      },
     };
   });
 }
@@ -391,7 +443,7 @@ export function placeLines(lines, heard, { locked = new Map(), durationSec = Inf
   enforceOrder(flat.map((f) => f.slot), slotBounds, { reserves, leadIn: room.leadIn });
   const words = plan.map((p, li) => (p.unheard ? null : lineWords(p, nextPlacedStartRaw(plan, li), bounds[li])));
   placeResponses(plan, words, bounds);
-  return assemble(plan, words, gapLines);
+  return assemble(plan, words, gapLines, bounds);
 }
 
 /** Start of the next line that has a real place (not an unheard response), from the slot times. */

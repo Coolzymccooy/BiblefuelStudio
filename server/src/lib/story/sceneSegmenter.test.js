@@ -1,4 +1,4 @@
-import { test, describe, afterEach } from "node:test";
+import { test, describe, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   segmentScenes,
@@ -13,6 +13,8 @@ const WORDS = Array.from({ length: 30 }, (_, i) => ({
 }));
 
 afterEach(() => _resetLlmImpl());
+// Every test is offline, including cast-only tests (never use real API keys).
+beforeEach(() => _setLlmImpl(async () => null));
 
 describe("segmentScenes", () => {
   test("derives scene timings from word indices, never from the LLM", async () => {
@@ -24,7 +26,7 @@ describe("segmentScenes", () => {
         ],
       }),
     );
-    const scenes = await segmentScenes({ words: WORDS, style: "cinematic-bible" });
+    const scenes = await segmentScenes({ words: WORDS, style: "cinematic-bible", targetSec: 20 });
     assert.equal(scenes.length, 2);
     assert.equal(scenes[0].startMs, 0);
     assert.equal(scenes[0].endMs, WORDS[9].endMs);
@@ -36,18 +38,19 @@ describe("segmentScenes", () => {
     _setLlmImpl(async () =>
       JSON.stringify({ scenes: [{ text: "x", startWordIndex: 0, endWordIndex: 29, imagePrompt: "a lamp" }] }),
     );
-    const scenes = await segmentScenes({ words: WORDS, style: "heavenly-atmosphere" });
+    const scenes = await segmentScenes({ words: WORDS, style: "heavenly-atmosphere", targetSec: 30 });
     assert.ok(scenes[0].imagePrompt.startsWith("a lamp"));
     assert.ok(/heavenly/i.test(scenes[0].imagePrompt));
   });
 
-  test("clamps out-of-range word indices instead of crashing", async () => {
+  test("rejects out-of-range word indices without clamping them into validity", async () => {
     _setLlmImpl(async () =>
       JSON.stringify({ scenes: [{ text: "x", startWordIndex: -5, endWordIndex: 999, imagePrompt: "p" }] }),
     );
     const scenes = await segmentScenes({ words: WORDS, style: "cinematic-bible" });
     assert.equal(scenes[0].startMs, WORDS[0].startMs);
-    assert.equal(scenes[0].endMs, WORDS[WORDS.length - 1].endMs);
+    assert.equal(scenes.at(-1).endMs, WORDS.at(-1).endMs);
+    assert.ok(scenes.every((s) => !s.imagePrompt.startsWith("p,")));
   });
 
   test("falls back to fixed windows when the LLM returns invalid JSON", async () => {
@@ -99,6 +102,8 @@ describe("segmentScenes", () => {
     assert.ok(scenes.length >= 20, `expected scenes to still span the audio, got ${scenes.length}`);
     assert.equal(scenes[0].startMs, 0);
     assert.equal(scenes[scenes.length - 1].endMs, longWords[longWords.length - 1].endMs);
+    assertPartition(scenes, longWords, 60);
+    assert.ok(displaySpans(scenes).every((s) => s <= 1.5 * (1799.9 / 60) + 0.5));
   });
 
   test("rejects LLM output that exceeds the scene cap and uses bounded fallback", async () => {
@@ -147,7 +152,7 @@ describe("segmentScenes", () => {
         { text: "b", startWordIndex: 15, endWordIndex: 29, imagePrompt: "p2" },
       ] }),
     );
-    const scenes = await segmentScenes({ words: WORDS, style: "cinematic-bible" });
+    const scenes = await segmentScenes({ words: WORDS, style: "cinematic-bible", targetSec: 10 });
     assert.equal(scenes.length, 2);
   });
 
@@ -155,7 +160,7 @@ describe("segmentScenes", () => {
     _setLlmImpl(async () =>
       "```json\n{\"scenes\":[{\"text\":\"x\",\"startWordIndex\":0,\"endWordIndex\":29,\"imagePrompt\":\"p\"}]}\n```",
     );
-    const scenes = await segmentScenes({ words: WORDS, style: "cinematic-bible" });
+    const scenes = await segmentScenes({ words: WORDS, style: "cinematic-bible", targetSec: 30 });
     assert.equal(scenes.length, 1);
     assert.equal(scenes[0].startMs, 0);
     assert.equal(scenes[0].endMs, WORDS[WORDS.length - 1].endMs);
@@ -208,6 +213,180 @@ describe("character anchors in scene prompts", () => {
     assert.match(scenes[0].imagePrompt, /shepherd boy/i);
     assert.match(scenes[0].imagePrompt, /armoured warrior/i);
   });
+});
+
+function regularWords(count, durationMs = count * 1000) {
+  return Array.from({ length: count }, (_, i) => ({
+    text: `w${i}`, startMs: i * durationMs / count, endMs: (i + 1) * durationMs / count,
+  }));
+}
+
+function assertPartition(scenes, words, cap = Infinity) {
+  assert.ok(scenes.length > 0 && scenes.length <= cap, `scene count ${scenes.length} <= ${cap}`);
+  let next = 0;
+  for (const s of scenes) {
+    const tokens = s.text.split(" ");
+    assert.equal(s.text, words.slice(next, next + tokens.length).map((w) => w.text).join(" "));
+    assert.equal(s.startMs, words[next].startMs);
+    next += tokens.length;
+    assert.equal(s.endMs, words[next - 1].endMs);
+  }
+  assert.equal(next, words.length, "every input word appears exactly once and in order");
+}
+
+function displaySpans(scenes) {
+  return scenes.map((s, i) => ((scenes[i + 1]?.startMs ?? s.endMs)
+    - (i === 0 ? 0 : s.startMs)) / 1000);
+}
+
+function stubRanges(ranges) {
+  _setLlmImpl(async () => JSON.stringify({ scenes: ranges.map(([startWordIndex, endWordIndex]) => ({
+    startWordIndex, endWordIndex, text: "invented paraphrase", imagePrompt: "LLM_ACCEPTED_MARKER",
+  })) }));
+}
+
+// 200 words: ten omitted interior words were only 5% of the recording, so
+// the former 90%-duration check accepted them. Overlap could hide still more.
+for (const [name, ranges] of [
+  ["ten-word interior omission", [[0, 89], [100, 199]]],
+  ["overlap masking a gap", [[0, 99], [90, 139], [150, 199]]],
+  ["out-of-order ranges", [[100, 199], [0, 99]]],
+  ["omitted tail within former five-percent tolerance", [[0, 194]]],
+  ["negative index", [[-1, 199]]],
+  ["index beyond final word", [[0, 200]]],
+  ["fractional index", [[0, 99.5], [100, 199]]],
+  ["numeric string index", [["0", 199]]],
+  ["null index", [[null, 199]]],
+  ["reversed range", [[0, 99], [150, 100], [151, 199]]],
+]) {
+  test(`rejects ${name} before normalization`, async () => {
+    const words = regularWords(200);
+    stubRanges(ranges);
+    // Large target isolates partition validity from display-span rejection.
+    const scenes = await segmentScenes({ words, style: "cinematic-bible", targetSec: 200 });
+    assertPartition(scenes, words);
+    assert.ok(scenes.every((s) => !s.imagePrompt.includes("LLM_ACCEPTED_MARKER")));
+  });
+}
+
+test("valid LLM ranges use verbatim tokens, not paraphrased scene text", async () => {
+  const words = regularWords(4, 4000).map((w, i) => ({ ...w, text: ["Don't", "CHANGE,", "café", "amen!"][i] }));
+  stubRanges([[0, 1], [2, 3]]);
+  const scenes = await segmentScenes({ words, style: "cinematic-bible" });
+  assert.deepEqual(scenes.map((s) => s.text), ["Don't CHANGE,", "café amen!"]);
+  assert.ok(scenes.every((s) => s.imagePrompt.includes("LLM_ACCEPTED_MARKER")));
+});
+
+test("rejects exact-coverage 8/8/8/76s split and balances the final scene", async () => {
+  const words = regularWords(100);
+  stubRanges([[0, 7], [8, 15], [16, 23], [24, 99]]);
+  const scenes = await segmentScenes({ words, style: "cinematic-bible", maxScenes: 13 });
+  assertPartition(scenes, words, 13);
+  assert.ok(displaySpans(scenes).every((s) => s <= 12.5));
+  assert.ok(scenes.every((s) => !s.imagePrompt.includes("LLM_ACCEPTED_MARKER")));
+});
+
+test("54.264s narration falls back to seven balanced scenes, none above 12.5s", async () => {
+  const words = regularWords(140, 54264);
+  stubRanges([[0, 19], [20, 39], [40, 59], [60, 79], [80, 99], [100, 104], [105, 139]]);
+  const scenes = await segmentScenes({ words, style: "cinematic-bible", maxScenes: 7 });
+  assertPartition(scenes, words, 7);
+  assert.equal(scenes.length, 7);
+  assert.ok(displaySpans(scenes).every((s) => s <= 12.5));
+});
+
+test("display bound includes inter-word silence, not just each scene's spoken span", async () => {
+  const words = [
+    { text: "w0", startMs: 0, endMs: 1000 },
+    { text: "w1", startMs: 1000, endMs: 2000 },
+    { text: "w2", startMs: 30000, endMs: 31000 },
+    { text: "w3", startMs: 31000, endMs: 32000 },
+  ];
+  stubRanges([[0, 1], [2, 3]]); // first spoken span is 2s; display span is 30s
+  const scenes = await segmentScenes({ words, style: "cinematic-bible" });
+  assertPartition(scenes, words);
+  assert.ok(scenes.every((s) => !s.imagePrompt.includes("LLM_ACCEPTED_MARKER")));
+  for (const [i, span] of displaySpans(scenes).entries()) {
+    if (span > 12.5) assert.equal(scenes[i].text, "w1", "only the indivisible silence cell may exceed bound");
+  }
+});
+
+test("counts leading silence in display duration and isolates an indivisible long word", async () => {
+  const words = [
+    { text: "w0", startMs: 20000, endMs: 20100 },
+    { text: "w1", startMs: 21000, endMs: 21100 },
+    { text: "w2", startMs: 22000, endMs: 50000 },
+  ];
+  stubRanges([[0, 2]]);
+  const scenes = await segmentScenes({ words, style: "cinematic-bible" });
+  assertPartition(scenes, words);
+  assert.deepEqual(scenes.map((s) => s.text), ["w0", "w1", "w2"]);
+  assert.deepEqual(displaySpans(scenes), [21, 1, 28]);
+});
+
+test("fallback does not strand cap+1 final words on irregular timings", async () => {
+  // Old fallback consumed two exact 8s windows, then emitted a third scene
+  // for a final zero-duration word. Such words occur in imperfect transcripts.
+  const words = [[0, 4000], [4000, 8000], [8000, 16000], [16000, 16000]]
+    .map(([startMs, endMs], i) => ({ text: `w${i}`, startMs, endMs }));
+  const scenes = await segmentScenes({ words, style: "cinematic-bible", targetSec: 8, maxScenes: 2 });
+  assertPartition(scenes, words, 2);
+  assert.ok(displaySpans(scenes).every((s) => s <= 12.5));
+});
+
+test("zero-duration transcript still requires an exact ordered word partition", async () => {
+  const words = regularWords(10, 0);
+  stubRanges([[0, 8]]);
+  const scenes = await segmentScenes({ words, style: "cinematic-bible", maxScenes: 1 });
+  assertPartition(scenes, words, 1);
+  assert.ok(scenes.every((s) => !s.imagePrompt.includes("LLM_ACCEPTED_MARKER")));
+});
+
+test("valid LLM singleton silence exception is accepted without attaching neighbors", async () => {
+  const words = [
+    { text: "w0", startMs: 0, endMs: 1000 },
+    { text: "w1", startMs: 30000, endMs: 31000 },
+  ];
+  stubRanges([[0, 0], [1, 1]]);
+  const scenes = await segmentScenes({ words, style: "cinematic-bible" });
+  assertPartition(scenes, words);
+  assert.ok(scenes.every((s) => s.imagePrompt.includes("LLM_ACCEPTED_MARKER")));
+  assert.deepEqual(displaySpans(scenes), [30, 1]);
+});
+
+test("sparse boundaries widen effective target minimally only when the budget requires it", async () => {
+  const words = regularWords(5, 80000); // five indivisible 16s cells, four images
+  let prompt;
+  _setLlmImpl(async (p) => { prompt = p; return null; });
+  const scenes = await segmentScenes({ words, style: "cinematic-bible", maxScenes: 4 });
+  assertPartition(scenes, words, 4);
+  assert.ok(displaySpans(scenes).every((s) => s <= 32));
+  const effective = Number(prompt.match(/each about ([\d.]+) seconds/)[1]);
+  assert.ok(effective > 20 && effective <= 21.000001);
+});
+
+test("deterministic dense and sparse fallback matrix preserves budget and all words", async () => {
+  let seed = 84721;
+  const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 2 ** 32; };
+  for (let sample = 0; sample < 80; sample++) {
+    const words = [];
+    let time = 0;
+    const count = 5 + Math.floor(random() * 150);
+    for (let i = 0; i < count; i++) {
+      const step = sample % 2 ? 100 + random() * 600 : 100 + random() * 40000;
+      words.push({ text: `w${i}`, startMs: time, endMs: time + step });
+      time += step;
+    }
+    const cap = 1 + sample % 12;
+    let prompt;
+    _setLlmImpl(async (p) => { prompt = p; return null; });
+    const scenes = await segmentScenes({ words, style: "cinematic-bible", maxScenes: cap });
+    assertPartition(scenes, words, cap);
+    const effective = Number(prompt.match(/each about ([\d.]+) seconds/)[1]);
+    for (const [i, span] of displaySpans(scenes).entries()) {
+      if (span > 1.5 * effective + 0.500001) assert.equal(scenes[i].text.split(" ").length, 1);
+    }
+  }
 });
 
 test("maxScenes override widens scenes beyond the env cap", async () => {

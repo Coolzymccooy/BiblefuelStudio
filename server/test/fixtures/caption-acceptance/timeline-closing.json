@@ -1,0 +1,43 @@
+{
+  "tracks": [
+    {
+      "kind": "captions",
+      "clips": [
+        {
+          "id": "caption-34",
+          "text": "BibleFuel Studio \u2014 Fuel for Your",
+          "startSec": 54.31776960784313,
+          "durationSec": 1.8678104575163452,
+          "words": [
+            {
+              "text": "BibleFuel",
+              "startMs": 0,
+              "endMs": 657.6797385620957
+            },
+            {
+              "text": "Studio \u2014",
+              "startMs": 668.9542483660189,
+              "endMs": 1115.2369281045758
+            },
+            {
+              "text": "Fuel",
+              "startMs": 1291.8709150326831,
+              "endMs": 1597.2222222222263
+            },
+            {
+              "text": "for",
+              "startMs": 1608.4967320261494,
+              "endMs": 1702.450980392161
+            },
+            {
+              "text": "Your",
+              "startMs": 1714.665032679739,
+              "endMs": 1867.8104575163452
+            }
+          ],
+          "timingStatus": "source"
+        }
+      ]
+    }
+  ]
+}

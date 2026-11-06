@@ -6,6 +6,8 @@ import { lyricDownloadUrl, lyricVideoUrl } from '../../lib/lyricDownload';
 import { formatSongLength } from '../../lib/lyricTiming';
 import { ASPECTS, aspectName } from '../../lib/lyricRenderOptions';
 import { shortsTrimOffer } from '../../lib/shortsTrim';
+import { TimingQualityNotice } from '../ui/TimingQualityNotice';
+import { lyricTimingMessages } from '../../lib/timingQuality';
 import type { LyricProject, LyricPublishDraft, LyricRender, LyricRenderJob, RenderAspect, RenderQuality } from '../../lib/lyricVideoTypes';
 import { YoutubePublishPanel } from '../share/YoutubePublishPanel';
 import { RenderProgressOverlay } from '../RenderProgressOverlay';
@@ -215,6 +217,7 @@ export function RenderStep({ project, onChange }: Props) {
 
   return (
     <div className="space-y-4">
+      <TimingQualityNotice messages={lyricTimingMessages(project.lines)} />
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label htmlFor="lyric-frame" className={fieldLabelCls}>Frame</label>

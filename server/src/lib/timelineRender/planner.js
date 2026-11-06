@@ -48,7 +48,7 @@ export function buildTimelineRenderPlan(project, options = {}) {
   if (!valid.ok) return valid;
 
   const tracks = project.tracks
-    .filter((track) => RENDERABLE_TRACKS.has(track.kind) && Array.isArray(track.clips) && track.hidden !== true)
+    .filter((track) => RENDERABLE_TRACKS.has(track.kind) && Array.isArray(track.clips) && track.hidden !== true && !(track.kind === 'voiceover' && track.muted))
     .map((track) => ({
       id: track.id,
       kind: track.kind,
@@ -67,12 +67,15 @@ export function buildTimelineRenderPlan(project, options = {}) {
             prompt: asset.prompt || null,
             placeholder: !asset.path && Boolean(asset.prompt),
             startSec: Math.max(0, Number(clip.startSec || 0)),
-            durationSec: Math.max(0.1, Number(clip.durationSec || asset.durationSec || 5)),
+            durationSec: Math.max(0.001, Number(clip.durationSec || asset.durationSec || 5)),
             transform: clip.transform || { fit: 'cover' },
             // Track-specific payloads the renderer reads from the PLAN. The
             // whitelist above used to drop them, so caption clips arrived
             // without their text (nothing burned in) and effect clips without
             // their kind (nothing applied).
+            ...(Array.isArray(clip.words) ? { words: clip.words, timingStatus: clip.timingStatus || 'source' } :
+              track.kind === 'voiceover' && Array.isArray(asset.words) ? { words: asset.words, timingStatus: 'source' } : {}),
+            ...(clip.timingStatus ? { timingStatus: clip.timingStatus } : {}),
             ...(typeof clip.text === 'string' ? { text: clip.text } : {}),
             ...(clip.effect ? { effect: clip.effect } : {}),
             ...(clip.effectOptions ? { effectOptions: clip.effectOptions } : {}),

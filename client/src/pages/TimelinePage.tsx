@@ -50,7 +50,7 @@ import { CaptionStylePanel } from '../components/timeline/CaptionStylePanel';
 import { ScenesPanel } from '../components/timeline/ScenesPanel';
 import { LivePreviewStage } from '../components/timeline/LivePreviewStage';
 import { addEffectToScene, removeEffectClip } from '../lib/timelineEffects';
-import { syncSidecarTracks } from '../lib/timelineTrackSync';
+import { syncSidecarTracks, composeVoiceTiming, preserveMatchingWords, type TimedCaptionClip } from '../lib/timelineTrackSync';
 import type { TimelineEffectKind, TimelineTrackKind } from '../lib/timelineProject';
 import { hiddenLaneWarning } from '../lib/hiddenLanes';
 import { MasteringPanel } from '../components/timeline/MasteringPanel';
@@ -97,11 +97,6 @@ function groupWordsIntoLines(words: TranscriptWord[], wordsPerLine: number): str
     return out;
 }
 
-// Re-flow edited caption lines back into a TranscriptWord[] for the render
-// route. Word-level timing precision is lost (we redistribute uniformly across
-// the original span) but editability beats perfect alignment for sermon
-// recaptioning — users care more about fixing transcription errors than
-// keeping sub-second sync on every token.
 /** "m:ss" for under-an-hour render runs (which is all of them at our caps). */
 function formatElapsed(ms: number): string {
     const totalSec = Math.max(0, Math.round(ms / 1000));
@@ -126,34 +121,9 @@ function reflowWordsFromEditedLines(
     originalWords: TranscriptWord[],
     lines: string[],
 ): TranscriptWord[] {
-    const lineWords = lines
-        .flatMap((l) => cleanCaptionLine(l).split(/\s+/).filter(Boolean));
-    if (!originalWords.length || !lineWords.length) return [];
-
-    // Pair each edited word positionally with its original Whisper word so
-    // each caption inherits the REAL spoken timing. Even-distribution (the
-    // previous approach) collapses pauses and uneven speech into a uniform
-    // metronome — captions then race ahead of the audio. If the edited list
-    // runs past the original (user added words), interpolate the overrun
-    // from the original's average word duration.
-    const last = originalWords[originalWords.length - 1];
-    const avgWordMs = Math.max(
-        1,
-        (last.endMs - originalWords[0].startMs) / originalWords.length,
-    );
-
-    return lineWords.map((text, idx) => {
-        const original = originalWords[idx];
-        if (original) {
-            return { text, startMs: original.startMs, endMs: original.endMs };
-        }
-        const overrun = idx - originalWords.length + 1;
-        return {
-            text,
-            startMs: Math.round(last.endMs + (overrun - 1) * avgWordMs),
-            endMs: Math.round(last.endMs + overrun * avgWordMs),
-        };
-    });
+    const matched = preserveMatchingWords(originalWords, lines.map(cleanCaptionLine));
+    if (!matched) throw new Error('Caption text changed. Re-transcribe or realign the edited text before rendering word captions.');
+    return matched;
 }
 
 interface TimelineClip {
@@ -778,6 +748,10 @@ export function TimelinePage() {
             setEditedLines(captionLines);
             toast('Formatted captions before render', { icon: '✨' });
         }
+        if (shouldRenderCaptions && transcript && !preserveMatchingWords(transcript, captionLines.map(cleanCaptionLine))) {
+            toast.error('Caption text changed. Re-transcribe or realign before rendering word captions.');
+            return;
+        }
         const words = shouldRenderCaptions && transcript ? reflowWordsFromEditedLines(transcript, captionLines) : [];
         // Feasibility guard: kinetic captions don't scale to long sermons — the
         // filter graph explodes and the render effectively never finishes. Block
@@ -1328,6 +1302,13 @@ export function TimelinePage() {
         // unread.
         const hidden = hiddenLaneWarning(documentaryProject);
         if (hidden && !window.confirm(hidden.message)) return;
+        const captionClips = documentaryProject.tracks.filter((t) => t.kind === 'captions' && !t.hidden)
+            .flatMap((t) => t.clips) as TimedCaptionClip[];
+        if (captionClips.some((c) => c.timingStatus === 'unavailable')) {
+            toast.error('Caption text does not match timed speech. Realign or restore the spoken text before rendering.');
+            return;
+        }
+        if (captionClips.some((c) => c.timingStatus !== 'source') && !window.confirm('These captions have estimated timing, not verified word timing. Render with estimated caption animation?')) return;
 
         const toastId = toast.loading('Queued timeline render…');
         setIsRenderingDocumentaryTimeline(true);
@@ -1399,14 +1380,7 @@ export function TimelinePage() {
         if (!documentaryProject) return;
         // Captions follow the voice-over lane: its span, and its word timings
         // when the take carried them.
-        const voClips = (documentaryProject.tracks.find((t) => t.kind === 'voiceover')?.clips || []).filter((c) => documentaryProject.assets[c.assetId]?.path);
-        const voice = voClips.length > 0 ? (() => {
-            const startSec = Math.min(...voClips.map((c) => c.startSec));
-            const endSec = Math.max(...voClips.map((c) => c.startSec + c.durationSec));
-            const first = [...voClips].sort((a, b) => a.startSec - b.startSec)[0];
-            const words = voClips.length === 1 ? documentaryProject.assets[first.assetId]?.words : undefined;
-            return { startSec, durationSec: Math.max(0.1, endSec - startSec), words };
-        })() : null;
+        const voice = composeVoiceTiming(documentaryProject);
         const next = syncSidecarTracks(documentaryProject, {
             musicPaths,
             captionLines: editedLines,

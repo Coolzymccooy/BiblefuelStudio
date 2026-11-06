@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { clipMediaPath, clipsWithMedia } from './clipPaths.js';
 import { planAudioSources } from './audioGraph.js';
+import { clipClock, captionRendererInput } from './captions.js';
 import path from 'path';
 import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
@@ -140,7 +141,7 @@ function brollClips(plan) {
 
 function voiceoverClips(plan) {
   return (plan.tracks?.find((track) => track.kind === 'voiceover')?.clips || [])
-    .filter((clip) => clip.prompt || clipMediaPath(clip, plan))
+    .filter((clip) => !clip.muted && (clip.prompt || clipMediaPath(clip, plan)))
     .map((clip) => ({ ...clip, resolvedMediaPath: clipMediaPath(clip, plan) }));
 }
 
@@ -433,18 +434,45 @@ export function buildProofRenderCommand(plan, opts = {}) {
       // The engine reads font files; a missing or corrupt one must degrade to
       // the fallback preset below, never fail the render.
       try {
-        const built = studioCaptionFilter({
-          assPath,
-          // Clip text goes in as typed: the look decides its own casing.
-          lines: studioLines(captions),
-          w: width,
-          h: height,
-          look: opts.typographyPreset,
-          energy: resolveEnergy(opts.captionEnergy, 'calm'),
-          seed: normaliseSeed(opts.captionSeed),
-        });
-        studioFilter = built.filter;
-        if (studioFilter) sideFiles = built.sideFiles;
+        const inputs = captions.map((clip) => ({ clip, ...captionRendererInput(clip) }));
+        if (!inputs.some((input) => input.words.length)) {
+          const built = studioCaptionFilter({ assPath, lines: studioLines(captions), w: width, h: height,
+            look: opts.typographyPreset, energy: resolveEnergy(opts.captionEnergy, 'calm'), seed: normaliseSeed(opts.captionSeed) });
+          studioFilter = built.filter;
+          sideFiles = built.sideFiles;
+        } else {
+          // Build each cue with its own native words (or explicitly estimated
+          // legacy lines). Merge events under one identical style/header so
+          // there is still a single ASS overlay and cleanup contract.
+          let header = '';
+          const events = [];
+          for (const input of inputs) {
+            const built = studioCaptionFilter({ assPath,
+              ...(input.words.length ? { words: input.words } : { lines: studioLines([input.clip]) }),
+              w: width, h: height, look: opts.typographyPreset,
+              energy: resolveEnergy(opts.captionEnergy, 'calm'), seed: normaliseSeed(opts.captionSeed) });
+            if (!built.filter) continue;
+            studioFilter = built.filter;
+            const text = built.sideFiles[0].text;
+            header ||= text.slice(0, text.indexOf('Dialogue:'));
+            const clock = clipClock(input.clip);
+            const seconds = (stamp) => stamp.split(':').reduce((v, part) => v * 60 + Number(part), 0);
+            const stamp = (sec) => {
+              const cs = Math.round(sec * 100);
+              return `${Math.floor(cs / 360000)}:${String(Math.floor(cs / 6000) % 60).padStart(2, '0')}:${String(Math.floor(cs / 100) % 60).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
+            };
+            for (const line of text.split('\n').filter((line) => line.startsWith('Dialogue:'))) {
+              const fields = line.split(',');
+              const start = Math.max(clock.start, seconds(fields[1]));
+              const end = Math.min(clock.start + clock.duration, seconds(fields[2]));
+              if (end <= start) continue;
+              fields[1] = stamp(start);
+              fields[2] = stamp(end);
+              events.push(fields.join(','));
+            }
+          }
+          if (studioFilter) sideFiles = [{ path: assPath, text: header + events.join('\n') + '\n' }];
+        }
       } catch (err) {
         console.warn(`[CAPTIONS] studio fallback: ${err?.message || err}`);
         studioFilter = '';
@@ -464,12 +492,13 @@ export function buildProofRenderCommand(plan, opts = {}) {
         style,
       );
       const lines = captions.map((clip) => {
-        const start = Math.max(0, Number(clip.startSec || 0));
-        const raw = String(clip.text).slice(0, MAX_CAPTION_CHARS);
+        const { start, duration: captionDuration } = clipClock(clip);
+        const input = captionRendererInput(clip);
+        const raw = (input.words.length ? input.words.map((w) => w.text).join(' ') : String(clip.text)).slice(0, MAX_CAPTION_CHARS);
         return {
           text: style.uppercase ? raw.toUpperCase() : raw,
           start,
-          end: Math.max(start + 0.1, start + Number(clip.durationSec || 2)),
+          end: start + captionDuration,
         };
       });
       const drawtext = buildLineDrawtext({
@@ -481,8 +510,8 @@ export function buildProofRenderCommand(plan, opts = {}) {
         block: motion.block,
         reveal: motion.reveal,
         stagger: motion.stagger,
-        // Word mode needs per-word timings, which a caption lane does not
-        // carry; it degrades to paced lines rather than drawing nothing.
+        highlightWords: captions.flatMap((clip) => captionRendererInput(clip).words),
+        // Untimed captions retain line-level rendering; no invented word clock.
         layout: opts.captionLayout,
         // The look this renderer drew before the shared builder took over:
         // the lower band, its own size, an outline and a scrim floor. An
@@ -533,8 +562,9 @@ export function buildProofRenderCommand(plan, opts = {}) {
 
   voiceovers.forEach((clip, index) => {
     const inputIndex = 1 + broll.length + index;
-    const delayMs = Math.max(0, Math.round(Number(clip.startSec || 0) * 1000));
-    audioParts.push(`[${inputIndex}:a]adelay=${delayMs}|${delayMs},volume=1.25[vo${index}]`);
+    const { sourceStart, start, duration: clipDuration } = clipClock(clip);
+    const delayMs = Math.round(start * 1000);
+    audioParts.push(`[${inputIndex}:a]atrim=start=${sourceStart}:duration=${clipDuration},asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs},volume=1.25[vo${index}]`);
     audioLabels.push(`[vo${index}]`);
   });
 
@@ -608,7 +638,9 @@ export function buildProofRenderCommand(plan, opts = {}) {
     // What actually made it in, and what did not — so the UI can say so
     // instead of leaving the operator to discover omissions by watching.
     coverage,
-    warnings: coverage.warnings,
+    captionTiming: captions.map((clip) => ({ clipId: clip.id, ...captionRendererInput(clip) })),
+    warnings: [...coverage.warnings, ...captions.filter((clip) => captionRendererInput(clip).timingStatus !== 'source')
+      .map((clip) => `Caption ${clip.id}: word timing ${captionRendererInput(clip).timingStatus}; animation timing is estimated, not speech-aligned.`)],
   };
 }
 
@@ -693,6 +725,8 @@ export async function renderTimelineProof(plan, opts = {}) {
     outputPath: command.outputPath,
     publicUrl: command.publicUrl,
     ignoredPlaceholders: command.ignoredPlaceholders,
+    captionTiming: command.captionTiming,
+    warnings: command.warnings,
     generatedVoiceovers: prepared.generatedVoiceovers,
     stderr: result.stderr,
   };

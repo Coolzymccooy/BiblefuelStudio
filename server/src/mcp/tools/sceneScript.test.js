@@ -28,7 +28,7 @@ const SCRIPT = [
 ].join("\n");
 
 const PROJECT = (fields = {}) => ({
-  id: ID, meta: { title: "Be Still" }, lines: [{ id: "l1", text: "Be still.", audio: { file: "l1.mp3", url: "/outputs/scene-scripts/x/voice/l1.mp3", words: [{ text: "Be" }] } }],
+  id: ID, meta: { title: "Be Still" }, lines: [{ id: "l1", text: "Be still.", audio: { file: "l1.mp3", url: "/outputs/scene-scripts/x/voice/l1.mp3", words: [{ text: "Be", start: 0, end: 0.4 }, { text: "still.", start: 0.4, end: 0.8 }] } }],
   shots: [{ id: "s1", prompt: "a river", clip: null, similar: [] }], cast: {}, music: { cues: [] }, voice: null, render: null,
   needsVoice: false, blockers: [], running: { voice: false, shots: false, render: false }, estimate: { clips: 1, usd: 0.4 },
   ...fields,
@@ -291,6 +291,61 @@ test("render is refused, uncharged, when the project is not ready", async () => 
   assert.equal(blocked.chargeCalls.length + stale.chargeCalls.length + busy.chargeCalls.length, 0);
 });
 
+test("caption timing refusal makes no render POST and no cap charge", async () => {
+  for (const audio of [
+    { words: [{ text: "Be", start: 0, end: 1 }], timing: { quality: "unresolved" } },
+    {}, { words: [] }, { words: [null] },
+    { words: [{ text: "Be", start: 0, end: 0 }] },
+    { words: [{ text: "Be", start: 1, end: 0 }] },
+    { words: [{ text: "Be", start: NaN, end: 1 }] },
+    { words: [{ text: "Be", start: 0, end: Infinity }] },
+  ]) {
+    const { ctx, calls, chargeCalls } = ctxWith({ [`GET ${BASE_PATH}`]: answer(PROJECT({ captions: { enabled: true }, lines: [{ id: "l1", audio }] })) });
+    const result = await byName.scene_script_render.handler(ctx, { id: ID });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error, "CAPTION_TIMING_UNRESOLVED");
+    assert.equal(result.structuredContent.lines[0].lineId, "l1");
+    assert.match(result.structuredContent.message, /Re-record.*captions.enabled: false/);
+    assert.deepEqual(chargeCalls, []);
+    assert.deepEqual(routesCalled(calls), [`GET ${BASE_PATH}`]);
+  }
+});
+
+test("captionless render charges once and starts; complete native/ASR/unknown timing is not overblocked", async () => {
+  for (const fields of [
+    { captions: { enabled: false }, lines: [{ id: "l1", audio: { words: [], timing: { quality: "unresolved" } } }] },
+    ...[undefined, "native", "asr-matched", "estimated"].map((quality) => ({ captions: { enabled: true }, lines: PROJECT().lines.map((l) => ({ ...l, audio: { ...l.audio, timing: quality ? { quality } : undefined } })) })),
+  ]) {
+    const { ctx, calls, chargeCalls } = ctxWith({ [`GET ${BASE_PATH}`]: answer(PROJECT(fields)), [`POST ${BASE_PATH}/render`]: answer(PROJECT(fields)) });
+    const result = await byName.scene_script_render.handler(ctx, { id: ID });
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(chargeCalls, [{ renders: 1 }]);
+    assert.deepEqual(routesCalled(calls), [`GET ${BASE_PATH}`, `POST ${BASE_PATH}/render`]);
+  }
+});
+
+test("MCP whole-line chant/reference and explicit nonspoken punctuation do not require word timing", async () => {
+  const punctuation = { words: [{ text: "Grace", start: 0, end: 0.4 }, { text: "—", start: 0.4, end: 0.4 }, { text: "saves", start: 0.4, end: 0.8 }], timing: { quality: "native", tokens: [{ index: 1, text: "—", provenance: "nonspoken" }] } };
+  for (const line of [
+    ...["chant", "reference"].map((kind) => ({ id: "l1", kind, audio: { words: [], timing: { quality: "unresolved" } } })),
+    { id: "l1", kind: "narration", text: "Grace — saves", audio: punctuation },
+  ]) {
+    const { ctx, calls, chargeCalls } = ctxWith({ [`GET ${BASE_PATH}`]: answer(PROJECT({ captions: { enabled: true }, lines: [line] })), [`POST ${BASE_PATH}/render`]: answer(PROJECT()) });
+    assert.equal((await byName.scene_script_render.handler(ctx, { id: ID })).isError, undefined);
+    assert.deepEqual(chargeCalls, [{ renders: 1 }]);
+    assert.deepEqual(routesCalled(calls), [`GET ${BASE_PATH}`, `POST ${BASE_PATH}/render`]);
+  }
+  for (const kind of ["narration", "scripture"]) {
+    const audio = { ...punctuation, words: punctuation.words.map((w, i) => i === 2 ? { ...w, end: w.start } : w) };
+    const { ctx, calls, chargeCalls } = ctxWith({ [`GET ${BASE_PATH}`]: answer(PROJECT({ lines: [{ id: "l1", kind, audio }] })) });
+    const result = await byName.scene_script_render.handler(ctx, { id: ID });
+    assert.equal(result.structuredContent.error, "CAPTION_TIMING_UNRESOLVED");
+    assert.deepEqual(result.structuredContent.lines[0].wordIndexes, [2]);
+    assert.deepEqual(chargeCalls, []);
+    assert.deepEqual(routesCalled(calls), [`GET ${BASE_PATH}`]);
+  }
+});
+
 // ---- scene_script_cancel ----
 
 test("cancel stops what runs, and refuses with NOTHING_RUNNING otherwise", async () => {
@@ -307,6 +362,36 @@ test("cancel stops what runs, and refuses with NOTHING_RUNNING otherwise", async
 });
 
 // ---- through the real MCP client ----
+
+test("real MCP caption refusal leaves stored render and persisted daily cap unchanged", async () => {
+  const { resolveScopeDirs } = await import("../../lib/paths.js");
+  const { updateProject, readProject } = await import("../../lib/sceneScript/projectStore.js");
+  const { withTimeline, lineAudioKey } = await import("../../lib/sceneScript/voiceStage.js");
+  const { isRendering } = await import("../../lib/sceneScript/renderStage.js");
+  const scope = resolveScopeDirs({ sub: ADMIN.id, email: ADMIN.email, role: ADMIN.role });
+  const made = await adminClient.callTool({ name: "scene_script_project", arguments: { action: "create", markdown: SCRIPT } });
+  assert.ok(!made.isError);
+  const id = made.structuredContent.project.id;
+  try {
+    updateProject(scope.dataDir, id, (p) => withTimeline({ ...p, shots: [], music: { cues: [] }, voice: { status: "done" }, lines: p.lines.map((l) => ({ ...l, audio: { file: "synthetic.wav", durationSec: 1, key: lineAudioKey(l, p.cast), words: [{ text: "Be", start: 0, end: 0 }], timing: { quality: "unresolved" } } })) }));
+    for (const texts of [["still", "saves"], ["Grace", "saves"], ["Grace", "still"], ["saves", "still", "Grace"], ["Grace", "now", "saves"], ["Grace"]]) {
+      updateProject(scope.dataDir, id, (p) => withTimeline({ ...p, lines: p.lines.map((l) => ({ ...l, text: texts.length === 1 ? "Grace saves" : "Grace still saves", audio: { ...l.audio, words: texts.map((text, i) => ({ text, start: i / 4, end: (i + 1) / 4 })), timing: { quality: "native" } } })) }));
+      updateProject(scope.dataDir, id, (p) => ({ ...p, lines: p.lines.map((l) => ({ ...l, audio: { ...l.audio, key: lineAudioKey(l, p.cast) } })) }));
+    const stored = readProject(scope.dataDir, id);
+    const before = (await adminClient.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders;
+    const result = await adminClient.callTool({ name: "scene_script_render", arguments: { id } });
+    assert.equal(result.structuredContent.error, "CAPTION_TIMING_UNRESOLVED");
+    assert.equal(result.structuredContent.lines[0].lineId, stored.lines[0].id);
+    const afterCall = (await adminClient.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders;
+    assert.deepEqual(afterCall, before);
+    assert.deepEqual(readProject(scope.dataDir, id), stored);
+    assert.equal(isRendering(id), false);
+    assert.ok(result.structuredContent.lines[0].reasons.includes("WORD_COVERAGE_MISMATCH"));
+    }
+  } finally {
+    await adminClient.callTool({ name: "scene_script_project", arguments: { action: "delete", id } });
+  }
+});
 
 test("the scene script tools are listed for a super-admin key and hidden from a normal one", async () => {
   const userNames = (await userClient.listTools()).tools.map((t) => t.name);

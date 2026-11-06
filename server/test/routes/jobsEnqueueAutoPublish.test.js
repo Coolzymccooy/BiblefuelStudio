@@ -94,6 +94,25 @@ test("a free user at the render limit gets 429 QUOTA_EXCEEDED from enqueue and n
   assert.equal(readUsage(user.dataDir).counts.render, QUOTAS.free.render);
 });
 
+test("caption-budget refusal is structured and spends no quota or queue work", async () => {
+  const { a, user } = freeApp();
+  const before = JSON.parse(fs.readFileSync(JOBS_FILE, "utf-8")).jobs.length;
+  for (const [type, payload] of [
+    ["render_video", { autoBackground: true, lines: ["Hope remains with us through every season. ".repeat(63), "Share Grâce 愛 🙏."] }],
+    ["campaign_auto_post", { prebuiltScript: { verse: "Hope remains with us through every season. ".repeat(63), cta: "Share Grâce 愛 🙏." } }],
+  ]) {
+    const res = await request(a).post("/api/jobs/enqueue").send({ type, payload });
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.code, "CAPTION_SCRIPT_TOO_LARGE");
+    assert.equal(res.body.details.maxWrappedLines, 80);
+    assert.equal(res.body.details.maxCharsPerLine, 25);
+    assert.match(res.body.error, /Split this script into smaller Series parts/);
+    assert.equal(JSON.parse(fs.readFileSync(JOBS_FILE, "utf-8")).jobs.length, before);
+    assert.equal(readUsage(user.dataDir).counts.render || 0, 0);
+  }
+});
+
 test("below the limit an enqueued render counts one render; an invalid payload counts none", async () => {
   const { a, user } = freeApp();
   const bad = await request(a).post("/api/jobs/enqueue").send({ type: "render_video", payload: { lines: [] } });

@@ -1,4 +1,5 @@
 
+import type { TimingQuality } from './timingQuality';
 /** A Story video's output frame. */
 export type StoryAspect = 'portrait' | 'landscape' | 'square';
 
@@ -164,7 +165,7 @@ export interface StoryProject extends StoryCaptionSettings {
     /** The upload was trimmed before the story was made from it. */
     trimmed?: boolean;
   };
-  transcript: { words: StoryWord[]; hash: string | null };
+  transcript: { words: StoryWord[]; hash: string | null; timing?: TimingQuality };
   scenes: StoryScene[];
   music: { path: string | null; volume: number; autoDuck?: boolean };
   longform?: StoryLongform;

@@ -7,7 +7,11 @@ import { parseSceneScript } from "./parse.js";
 import { defaultCast, normaliseCast, deliveryForLine, DEFAULT_ENSEMBLE, isVoiceName } from "./cast.js";
 import { speakableText, ssmlFor, numberToWords, audioKey } from "./speech.js";
 import { computeTimeline, gapAfter, GAP } from "./timeline.js";
-import { alignWords, spreadWords } from "./align.js";
+import { alignWords, alignCaption } from "./align.js";
+
+import { createProject, readProject, updateProject } from "./projectStore.js";
+import { projectFromMarkdown } from "./model.js";
+import { startVoicing, isVoicing } from "./voiceStage.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { script } = parseSceneScript(fs.readFileSync(path.join(here, "__fixtures__", "grace-made-me.md"), "utf8"));
@@ -171,9 +175,69 @@ describe("alignWords", () => {
     assert.deepEqual(words, [{ text: "self-made", start: 0.5, end: 1 }]);
   });
 
-  test("spreads by length when the provider's words do not match", () => {
-    const words = alignWords("Grace upon grace", [{ text: "something", start: 0, end: 1 }], 2);
-    assert.deepEqual(words, spreadWords("Grace upon grace", 2));
-    assert.equal(words.length, 3);
+  test("reports missing content without whole-line redistribution", () => {
+    const result = alignCaption("Grace upon grace", [{ text: "something", start: 0, end: 1 }], 2);
+    assert.equal(result.timing.quality, "unresolved");
+    assert.ok(result.words.every((w) => w.start === w.end));
+    assert.equal(result.words.length, 3);
+  });
+});
+
+describe("persisted caption timing (synthetic local I/O; no providers)", () => {
+  for (const scenario of [
+    { text: "Grace saves us", kind: "narration", heard: [{ text: "Grace", start: 1, end: 1.4 }, { text: "us", start: 4, end: 4.3 }], quality: "unresolved" },
+    { text: "Grace saves us", kind: "narration", heard: [{ text: "Grace", start: 1, end: 1.4 }, { text: "us", start: 2, end: 2.3 }], quality: "estimated" },
+    { text: "Psalm 23", kind: "reference", heard: [{ text: "Psalms", start: 0.1, end: 0.5 }, { text: "chapter", start: 0.6, end: 0.8 }, { text: "twenty-three", start: 0.9, end: 1.3 }], quality: "native" },
+    { text: "Grace saves us", kind: "chant", heard: [], quality: "unresolved" },
+    { text: "Grace saves us", kind: "narration", heard: [], quality: "unresolved" },
+    { text: "Grace saves us", kind: "narration", heard: [], malformed: true, quality: "unresolved" },
+  ]) test(`${scenario.kind} ${scenario.quality} ${scenario.malformed ? "malformed" : scenario.heard.length}`, async () => {
+    const scratch = process.env.TMPDIR || path.join(process.env.LOCALAPPDATA, "hermes", "cache", "scratch");
+    fs.mkdirSync(scratch, { recursive: true });
+    const root = fs.mkdtempSync(path.join(scratch, "ss-caption-test-"));
+    const ctx = { dataDir: path.join(root, "data"), outputDir: path.join(root, "output") };
+    let project;
+    try {
+      project = createProject(ctx.dataDir, projectFromMarkdown('### Scene 1 — Opening (0:00–0:10)\n**Narrator:**\n"Grace saves us"'));
+      updateProject(ctx.dataDir, project.id, (p) => ({ ...p, lines: p.lines.map((l) => ({ ...l, text: scenario.text, kind: scenario.kind })) }));
+      const boundaries = scenario.heard.map((w) => ({ text: w.text, audioOffsetTicks: w.start * 1e7, durationTicks: (w.end - w.start) * 1e7, boundaryType: "Word" }));
+      if (scenario.malformed) boundaries.push({ text: "Grace", audioOffsetTicks: "10000000", durationTicks: 1000000, boundaryType: "Word" });
+      let synthCount = 0;
+      const deps = {
+        synth: async () => { synthCount += 1; return { audio: Buffer.from("synthetic-not-real-audio"), boundaries }; },
+        ffmpeg: async (args) => { fs.writeFileSync(args.at(-1), "synthetic-not-real-audio"); return { ok: true }; },
+        probe: async () => 5,
+        sleep: async () => {},
+      };
+      async function finish() {
+        for (let i = 0; i < 400 && isVoicing(project.id); i += 1) await new Promise((r) => setTimeout(r, 5));
+        assert.equal(isVoicing(project.id), false);
+        return readProject(ctx.dataDir, project.id);
+      }
+      startVoicing(ctx, project.id, { deps });
+      const done = await finish();
+      assert.equal(done.voice.status, "done");
+      const line = done.lines[0];
+      assert.equal(line.text, scenario.text);
+      assert.equal(line.audio.timing.text, scenario.text);
+      assert.equal(line.audio.timing.quality, scenario.quality);
+      assert.equal(line.audio.timing.durationSec, 5);
+      if (scenario.kind === "chant") {
+        assert.deepEqual(line.audio.words, []);
+        assert.equal(line.audio.timing.source, "ensemble-mix");
+      } else {
+        assert.deepEqual(line.audio.words.map((w) => w.text), scenario.text.split(/\s+/));
+        assert.equal(line.audio.timing.tokens.length, line.audio.words.length);
+      }
+      if (scenario.malformed) assert.ok(line.audio.timing.warnings.some((w) => w.code === "invalid-boundary"));
+      const firstCount = synthCount;
+      startVoicing(ctx, project.id, { deps });
+      const cached = await finish();
+      assert.equal(synthCount, firstCount);
+      assert.deepEqual(cached.lines[0].audio.timing, line.audio.timing);
+    } finally {
+      if (project) for (let i = 0; i < 400 && isVoicing(project.id); i += 1) await new Promise((r) => setTimeout(r, 5));
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

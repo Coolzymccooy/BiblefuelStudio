@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
+import { TimingQualityNotice } from '../ui/TimingQualityNotice';
+import { lyricTimingText } from '../../lib/timingQuality';
 import { Loader2 } from 'lucide-react';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import { flaggedCount, formatTime, isPlacedLine, nudgeLine } from '../../lib/lyricTiming';
@@ -126,7 +128,7 @@ export function TimingStep({ project, onChange }: Props) {
             >
               <div className="flex items-start gap-2">
                 <span className="w-12 shrink-0 pt-0.5 text-xs tabular-nums text-content-secondary">{placed ? formatTime(l.start) : '—'}</span>
-                <span className="min-w-0 flex-1">{l.text}</span>
+                <div className="min-w-0 flex-1"><span>{l.text}</span><TimingQualityNotice messages={[lyricTimingText(l)]} /></div>
                 {l.flag === 'check' && (
                   <span className="shrink-0 rounded bg-[rgba(245,211,58,0.15)] px-1.5 text-xs text-bf-gold">Check this line</span>
                 )}

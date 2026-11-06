@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { api } from '../../lib/api';
@@ -39,6 +39,87 @@ function setup(over: Partial<VoiceLabEmbed> = {}) {
   );
   return embedded;
 }
+
+describe('VoiceLab take timing regression', () => {
+  const words = [{ text: 'Hello', startMs: 100, endMs: 500 }];
+  async function generate() {
+    fireEvent.click(screen.getByRole('button', { name: /^Generate \(/ }));
+    await waitFor(() => expect(screen.getByText('Word timing is attached to this audio take.')).toBeInTheDocument());
+  }
+
+  it('lands current native timing, then clears it on manual path selection and history reselection', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { file: 'take-a.mp3', words } } as any);
+    const embedded = setup({ seedText: 'Hello there' });
+    await generate();
+    fireEvent.click(screen.getByRole('button', { name: /land on vo lane/i }));
+    expect(embedded.onLandVoiceover).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'take-a.mp3', words }));
+    fireEvent.click(screen.getByRole('tab', { name: /^Takes/ }));
+    fireEvent.change(screen.getByPlaceholderText('e.g. server/outputs/audio.mp3'), { target: { value: 'other.wav' } });
+    fireEvent.click(screen.getByRole('button', { name: /land on vo lane/i }));
+    expect(embedded.onLandVoiceover).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'other.wav', words: undefined }));
+    fireEvent.click(screen.getByRole('button', { name: 'tts' }));
+    fireEvent.click(screen.getByRole('button', { name: /land on vo lane/i }));
+    expect(embedded.onLandVoiceover).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'take-a.mp3', words: undefined }));
+  });
+
+  it('does not let an old TTS response overwrite a newly selected take', async () => {
+    let resolve!: (value: any) => void;
+    vi.spyOn(api, 'post').mockImplementation(() => new Promise((done) => { resolve = done; }));
+    const embedded = setup({ seedText: 'Hello there' });
+    fireEvent.click(screen.getByRole('button', { name: /^Generate \(/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /^Takes/ }));
+    fireEvent.change(screen.getByPlaceholderText('e.g. server/outputs/audio.mp3'), { target: { value: 'selected.wav' } });
+    await act(async () => resolve({ ok: true, data: { file: 'stale.mp3', words } }));
+    fireEvent.click(screen.getByRole('button', { name: /land on vo lane/i }));
+    expect(embedded.onLandVoiceover).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'selected.wav', words: undefined }));
+  });
+
+  it('clears timing for processed output with silence removal enabled', async () => {
+    vi.spyOn(api, 'post')
+      .mockResolvedValueOnce({ ok: true, data: { file: 'take-a.mp3', words } } as any)
+      .mockResolvedValueOnce({ ok: true, data: { file: 'processed.mp3' } } as any);
+    const embedded = setup({ seedText: 'Hello there' });
+    await generate();
+    fireEvent.click(screen.getByRole('tab', { name: /^Treat/ }));
+    const silenceSelect = screen.getAllByRole('combobox').find((select) => select.querySelector('option[value="true"]'))!;
+    fireEvent.change(silenceSelect, { target: { value: 'true' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Process Audio' }));
+    await screen.findByText(/Processed audio has no verified word timing/);
+    expect(api.post).toHaveBeenLastCalledWith('/api/audio/process', expect.objectContaining({ inputPath: 'take-a.mp3', silenceRemove: { enabled: true } }), undefined, expect.any(Object));
+    fireEvent.click(screen.getByRole('button', { name: /land on vo lane/i }));
+    expect(embedded.onLandVoiceover).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'processed.mp3', words: undefined }));
+  });
+
+  it('clears timing on upload and on a successful replacement with explicit no timing', async () => {
+    vi.spyOn(api, 'post')
+      .mockResolvedValueOnce({ ok: true, data: { file: 'take-a.mp3', words } } as any)
+      .mockResolvedValueOnce({ ok: true, data: { file: 'take-b.mp3', words: [] } } as any);
+    vi.spyOn(api, 'uploadRaw').mockResolvedValue({ ok: true, data: { file: 'uploaded.wav' } } as any);
+    const embedded = setup({ seedText: 'Hello there' });
+    await generate();
+    fireEvent.click(screen.getByRole('button', { name: /^Generate \(/ }));
+    await screen.findByText('This take has no word timing. Align it before using word-synced captions.');
+    fireEvent.click(screen.getByRole('button', { name: /land on vo lane/i }));
+    expect(embedded.onLandVoiceover).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'take-b.mp3', words: undefined }));
+    fireEvent.click(screen.getByRole('tab', { name: /^Record/ }));
+    fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [new File(['synthetic'], 'new.wav', { type: 'audio/wav' })] } });
+    await waitFor(() => expect(screen.getByText('uploaded.wav', { selector: 'p.font-mono' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /land on vo lane/i }));
+    expect(embedded.onLandVoiceover).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'uploaded.wav', words: undefined }));
+  });
+
+  it('clears timing after a failed new generation rather than retaining the prior words', async () => {
+    vi.spyOn(api, 'post')
+      .mockResolvedValueOnce({ ok: true, data: { file: 'take-a.mp3', words } } as any)
+      .mockResolvedValueOnce({ ok: false, error: 'Synthetic failure' } as any);
+    const embedded = setup({ seedText: 'Hello there' });
+    await generate();
+    fireEvent.click(screen.getByRole('button', { name: /^Generate \(/ }));
+    await screen.findByText(/Generation failed. No word timing/);
+    fireEvent.click(screen.getByRole('button', { name: /land on vo lane/i }));
+    expect(embedded.onLandVoiceover).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'take-a.mp3', words: undefined }));
+  });
+});
 
 describe('VoiceLab (embedded in the Timeline editor)', () => {
   it('docks EVERY classic section as a sub-tab - nothing left behind on the classic page', () => {

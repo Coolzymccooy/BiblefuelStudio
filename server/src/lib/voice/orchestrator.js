@@ -2,6 +2,7 @@ import { list, listAvailable, get as getProvider } from "./registry.js";
 import { SpeechRequestSchema } from "./schemas.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "./alignment.js";
 import { prepareScriptureForSpeech } from "./scripture.js";
+import { toAlignmentContract, charAlignmentToWords } from "./alignmentContract.js";
 
 // Indirection so tests can substitute the alignment implementation without
 // touching the public synthesize() signature. Production code path is
@@ -126,17 +127,22 @@ export async function synthesize(req) {
     );
   }
 
-  // Forced-alignment post-processor. Opt-in via forcedAlignmentFallback.
-  // Only runs when the caller wants timestamps AND the chosen provider
-  // didn't supply any. Failure is non-fatal — audio still ships.
-  if (parsed.withTimestamps && parsed.forcedAlignmentFallback && !result.alignment) {
+  // Legacy opt-in name: the current fallback is Whisper ASR, NOT forced
+  // alignment against parsed.text (alignment.js currently ignores that text).
+  // Validate actual usable timing, not truthiness/capability flags. This is
+  // structural validation only; a well-formed subset can still suppress ASR.
+  // This is not a completeness guarantee: script-driven caption callers must
+  // check coverage against their exact prepared spoken text before replacing
+  // the full script. Do not retry ASR here merely to make native text match.
+  if (parsed.withTimestamps && parsed.forcedAlignmentFallback &&
+      toAlignmentContract(result).words.length === 0) {
     if (!_isAlignmentAvailableImpl()) {
       console.warn(
         `[TTS] forcedAlignmentFallback requested but OPENAI_API_KEY not configured — skipping`,
       );
     } else {
       const alignment = await _alignImpl(result.file, parsed.text);
-      if (alignment) {
+      if (charAlignmentToWords(alignment).length > 0) {
         result = { ...result, alignment, alignmentSource: "whisper" };
       }
     }

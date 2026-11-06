@@ -37,6 +37,44 @@ beforeEach(() => {
   vi.spyOn(storyApi, 'listProjects').mockResolvedValue([] as any);
 });
 
+describe('Story export timing consent', () => {
+  function ready(timing?: any, captions?: 'none', status = 'ready_to_render') {
+    localStorage.setItem('BF_STORY_ACTIVE', 'consent');
+    const p = { projectId: 'consent', title: 'Consent', style: 'cinematic-bible', status, captions,
+      source: { audioPath: '/fake.mp3', durationMs: 1000 }, transcript: { words: [{ text: 'hello', startMs: 0, endMs: 1000 }], hash: null, timing },
+      scenes: [{ id: 's1', text: 'hello', startMs: 0, endMs: 1000, imagePrompt: 'p', imagePath: '/fake.png', imageStatus: 'done' }],
+      music: { path: null, volume: 0.3 }, captionPreset: 'default', render: { jobId: null, outputPath: null, status: null }, createdAt: 0, updatedAt: 0 } as any;
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue(p);
+    return vi.spyOn(storyApi, 'render').mockResolvedValue(p);
+  }
+  it.each([['estimated', { estimated: true }], ['unknown', undefined]])('cancels %s safely and asks again for each render', async (_kind, timing) => {
+    const start = ready(timing);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderPage(); const button = await screen.findByRole('button', { name: /looks good → render/i });
+    await userEvent.click(button); expect(start).not.toHaveBeenCalled(); expect(button).toBeEnabled();
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringMatching(/approximate placement, not acoustically verified/));
+    confirm.mockReturnValue(true); await userEvent.click(button);
+    expect(start).toHaveBeenCalledExactlyOnceWith('consent', { acknowledgeApproximateTiming: true });
+    confirm.mockReturnValue(false); await userEvent.click(button);
+    expect(confirm).toHaveBeenCalledTimes(3); expect(start).toHaveBeenCalledTimes(1);
+  });
+  it('resume of interrupted render also requires fresh consent and cancels safely', async () => {
+    const start = ready({ estimated: true }, undefined, 'rendering');
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderPage(); const button = await screen.findByRole('button', { name: /resume/i });
+    await userEvent.click(button); expect(start).not.toHaveBeenCalled(); expect(button).toBeEnabled();
+    confirm.mockReturnValue(true); await userEvent.click(button);
+    expect(start).toHaveBeenCalledExactlyOnceWith('consent', { acknowledgeApproximateTiming: true });
+  });
+  it.each([['captionless', { estimated: true }, 'none'], ['native', { provenance: 'native' }, undefined], ['supplied', { provenance: 'supplied' }, undefined]])('%s does not prompt or claim verification', async (_kind, timing, captions) => {
+    const start = ready(timing, captions as 'none' | undefined);
+    const confirm = vi.spyOn(window, 'confirm'); renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /looks good → render/i }));
+    expect(confirm).not.toHaveBeenCalled(); expect(start).toHaveBeenCalledExactlyOnceWith('consent', {});
+    expect(screen.getByText(/not acoustically verified/i)).toBeInTheDocument();
+  });
+});
+
 describe('StoryVideoPage', () => {
   function mkDraft(id = 'np') {
     return {
@@ -316,6 +354,7 @@ describe('StoryVideoPage', () => {
   });
 
   it('a finished story can change its frame and render again', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     localStorage.setItem('BF_STORY_ACTIVE', 'pd');
     const done = {
       projectId: 'pd', title: 'Done', style: 'cinematic-bible', status: 'done', aspect: 'portrait',
@@ -335,7 +374,7 @@ describe('StoryVideoPage', () => {
     await userEvent.selectOptions(screen.getByRole('combobox', { name: /output frame/i }), 'landscape');
     expect(setAspect).toHaveBeenCalledWith('pd', 'landscape');
     await userEvent.click(again);
-    expect(renderSpy).toHaveBeenCalledWith('pd');
+    expect(renderSpy).toHaveBeenCalledWith('pd', { acknowledgeApproximateTiming: true });
   });
   describe('AI motion note', () => {
     const note = '2 of 5 scenes animated: monthly AI budget reached';

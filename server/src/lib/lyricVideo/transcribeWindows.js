@@ -1,7 +1,19 @@
 // server/src/lib/lyricVideo/transcribeWindows.js
-import { placeLines, alignTokens, tokenize, normWord } from "./align.js";
+import { placeLines, alignTokens, tokenize, normWord, FLAG_CONFIDENCE } from "./align.js";
 import { trimLoops, rejectPass, promptFor, expectedFrom } from "./passQuality.js";
 
+/** Historical placement policy, not an acoustic quality verdict. Substituted
+ * anchors counted as heard before provenance existed. Keep that policy separate
+ * from exactCoverage and the stricter diagnostic flags used for user review. */
+export function placementPolicy(line) {
+  if (!line.timingQuality) return { confidence: line.confidence, flag: line.flag };
+  if (line.timingQuality.status === "manual") return { confidence: 1, flag: null };
+  const parts = line.words.reduce((n, w) => n + (w.timing?.parts || 0), 0);
+  const heard = line.words.reduce((n, w) => n + (w.timing?.anchors?.length || 0), 0);
+  const coverage = parts ? heard / parts : 0;
+  const conflict = line.timingQuality.warnings.some((w) => w === "open-or-long-gap" || w === "display-timing-adjusted");
+  return { confidence: Math.round(coverage * 100) / 100, flag: coverage < FLAG_CONFIDENCE || conflict ? "check" : null };
+}
 const WINDOW_SEC = 30;
 const RETRY_SEC = 15;
 const BACKUP_SEC = 2; // a window starts this far before the frontier
@@ -29,7 +41,7 @@ function lastReliable(placed) {
   let run = 0;
   for (let i = 0; i < placed.length; i += 1) {
     const line = placed[i];
-    if (line.confidence >= LOW) { last = i; run = 0; continue; }
+    if (placementPolicy(line).confidence >= LOW) { last = i; run = 0; continue; }
     if (line.kind === "response") continue;
     run += 1;
     if (run >= RUN) break;
@@ -79,8 +91,16 @@ function locateWindow(lines, lo, hi, words) {
   return { last: best.s + offset, lastEnd: Math.max(...hits.matched.map((j) => words[j].end)) };
 }
 
-function shift(words, by) {
-  return words.map((w) => ({ word: w.word, start: w.start + by, end: w.end + by }));
+export function shift(words, by) {
+  const time = (t) => Number.isFinite(t) ? t + by : t;
+  return words.map((w) => ({
+    ...w, start: time(w.start), end: time(w.end),
+    ...(w.timing ? { timing: {
+      ...w.timing,
+      acousticStart: time(w.timing.acousticStart), acousticEnd: time(w.timing.acousticEnd),
+      ...(w.timing.anchors ? { anchors: w.timing.anchors.map((a) => ({ ...a, start: time(a.start), end: time(a.end) })) } : {}),
+    } } : {}),
+  }));
 }
 
 /**

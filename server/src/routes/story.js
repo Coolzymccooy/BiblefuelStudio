@@ -981,7 +981,7 @@ router.post("/import-script", (req, res) => {
 
     let patch;
     try {
-      patch = buildImportedTranscript({ script, audioPath: guard.path, durationMs, words: req.body?.words });
+      patch = buildImportedTranscript({ script, audioPath: guard.path, durationMs, words: req.body?.words, spokenText: req.body?.spokenText, tokenMap: req.body?.tokenMap, timing: req.body?.timing });
     } catch (e) {
       return res.status(400).json({ ok: false, error: String(e?.message || e) });
     }
@@ -1415,6 +1415,14 @@ router.post("/:id/render", async (req, res) => {
   try {
     const project = readProject(req.ctx.dataDir, req.params.id);
     if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    // Shared with MCP so refusal happens there before cap charging, and here
+    // before jobs, output directories or renderer work. No consent is persisted.
+    const { storyTimingConsentKind } = await import("../mcp/tools/story.js");
+    const timingKind = storyTimingConsentKind(project);
+    if (timingKind && req.body?.acknowledgeApproximateTiming !== true) return res.status(409).json({
+      ok: false, code: "TIMING_CONSENT_REQUIRED", timingKind,
+      error: `Caption timing is ${timingKind}: approximate, not acoustically verified. Explicitly acknowledge this render with acknowledgeApproximateTiming: true, or turn project captions off.`,
+    });
     const scenes = project.scenes || [];
     if (!scenes.length || scenes.some((s) => s.imageStatus !== "done")) {
       return res.status(400).json({ ok: false, error: "every scene needs a generated image before render" });
@@ -1532,7 +1540,9 @@ router.post("/:id/render", async (req, res) => {
       } catch { /* the error is already logged by the job registry */ }
     });
 
-    return res.json({ ok: true, jobId: job.jobId, project: readProject(req.ctx.dataDir, project.projectId) });
+    return res.json({ ok: true, jobId: job.jobId, project: readProject(req.ctx.dataDir, project.projectId),
+      timingWarning: project.captions === "none" ? null : "Caption timing is not acoustically verified. Review against the audio; estimated or unknown placement is approximate.",
+    });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
