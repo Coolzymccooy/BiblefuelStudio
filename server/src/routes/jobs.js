@@ -21,6 +21,8 @@ import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizC
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
+import { toAlignmentContract } from "../lib/voice/alignmentContract.js";
+import { prepareScriptureForSpeech } from "../lib/voice/scripture.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, resolveTypographyPreset, resolveCaptionMotion, buildEndingFade } from "../lib/videoFilters.js";
 import { isStudioLook } from "../lib/kinetic/looks.js";
 import { prepareStudioCaptions } from "../lib/kinetic/renderCaptions.js";
@@ -120,6 +122,35 @@ async function withVideoLength(result) {
     console.warn(`[RENDER] could not read the finished video's length: ${err?.message || err}`);
     return result;
   }
+}
+
+// Narration is authoritative: caller duration fields are not a trim contract.
+// Remote audio alone must be downloaded to probe it; defer music/background work.
+async function prepareShortNarration(payload) {
+  if (!payload?.audioPath) return { payload, audioDuration: null };
+  let resolved = resolveAssetPath(payload.audioPath);
+  let audioDuration;
+  try {
+    if (!resolved || !isLocalOrRemote(resolved)) throw new Error("missing audio");
+    if (isRemoteUrl(resolved)) {
+      resolved = await localiseInput(resolved);
+      currentJobRun?.made.add(path.resolve(resolved));
+    }
+    audioDuration = await probeAudioDuration(resolved);
+    if (!Number.isFinite(audioDuration) || audioDuration <= 0) throw new Error("invalid duration");
+  } catch {
+    const error = new Error("Cannot verify narration duration. Supply a readable audio file, then retry; durationSec/durationMs cannot replace probing or specify a trim.");
+    error.code = "NARRATION_DURATION_UNVERIFIABLE";
+    error.details = { maxDurationSec: MAX_RENDER_SECONDS, action: "supply_readable_audio" };
+    throw error;
+  }
+  if (audioDuration > MAX_RENDER_SECONDS) {
+    const error = new Error(`Narration is ${audioDuration.toFixed(3)}s, exceeding the ${MAX_RENDER_SECONDS}s short-render limit. Shorten the narration or supply an explicitly trimmed audio file within the limit (for example using media trim), then retry. durationSec/durationMs do not trim narration.`);
+    error.code = "NARRATION_EXCEEDS_RENDER_CAP";
+    error.details = { audioDurationSec: audioDuration, maxDurationSec: MAX_RENDER_SECONDS, action: "trim_or_shorten_narration", trimRequired: true };
+    throw error;
+  }
+  return { payload: { ...payload, audioPath: resolved }, audioDuration };
 }
 
 function clampDuration(value) {
@@ -510,8 +541,24 @@ function getDims(aspect) {
   }
 }
 
+// Keep the existing short-render filter budget. Never silently turn its safety
+// limit into a shorter transcript. Legacy drawtext is still passed on the
+// command line; advanced rendering uses a filter script, but not cheaper filters.
+const SHORT_CAPTION_MAX_LINES = 80;
+const SHORT_CAPTION_MAX_CHARS = 80 * 140;
+function captionBudgetError(reason, details = {}) {
+  const error = new Error(`CAPTION_SCRIPT_TOO_LARGE: ${reason}. Split this script into smaller Series parts or shorten it; no text was truncated.`);
+  error.code = "CAPTION_SCRIPT_TOO_LARGE";
+  error.details = { maxWrappedLines: SHORT_CAPTION_MAX_LINES, maxInputChars: SHORT_CAPTION_MAX_CHARS, ...details };
+  return error;
+}
+
 function wrapTextLines(lines, maxChars, maxLines) {
   const out = [];
+  const append = (line) => {
+    if (out.length >= maxLines) throw captionBudgetError(`Caption wrapping exceeds ${maxLines} lines`, { maxCharsPerLine: maxChars });
+    out.push(line);
+  };
   for (const raw of lines) {
     const words = String(raw).split(/\s+/).filter(Boolean);
     let current = "";
@@ -520,15 +567,38 @@ function wrapTextLines(lines, maxChars, maxLines) {
       if (next.length <= maxChars) {
         current = next;
       } else {
-        if (current) out.push(current);
+        if (current) append(current);
         current = word;
       }
-      if (out.length >= maxLines) break;
     }
-    if (current && out.length < maxLines) out.push(current);
-    if (out.length >= maxLines) break;
+    if (current) append(current);
   }
-  return out.slice(0, maxLines);
+  return out;
+}
+
+function prepareShortCaptionLines(lines, payload = {}) {
+  if (!Array.isArray(lines)) return [];
+  // Bound work BEFORE cleaning, splitting or constructing a filter graph.
+  let inputChars = 0;
+  for (const line of lines) {
+    inputChars += String(line).length;
+    if (inputChars > SHORT_CAPTION_MAX_CHARS || lines.length > SHORT_CAPTION_MAX_CHARS) {
+      throw captionBudgetError("Caption input exceeds the short-render text budget");
+    }
+  }
+  const clean = lines.map((line) => cleanCaptionLine(String(line))).filter(Boolean);
+  // splitCaptionLines deliberately keeps unbroken tokens intact. Refuse those
+  // that would exceed the existing downstream 140-character line contract.
+  if (clean.some((line) => line.split(/\s+/u).some((word) => word.length > 140))) {
+    throw captionBudgetError("A caption token exceeds 140 characters", { maxTokenChars: 140 });
+  }
+  const result = splitCaptionLines(clean, 140);
+  const { w } = getDims(payload.aspect);
+  const widthPct = Math.min(100, Math.max(60, Number(payload.captionWidthPct || 90)));
+  const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
+  const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
+  wrapTextLines(result, maxChars, SHORT_CAPTION_MAX_LINES);
+  return result;
 }
 
 let running = false;
@@ -888,6 +958,12 @@ async function applyAutoBackground(payload) {
 // new word-level / scene-splitter pipeline. Otherwise uses the legacy
 // single-background + line-captions path.
 async function renderVideoCore(payload, jobId) {
+  // Refuse unsafe captions before background downloads, alignment or FFmpeg.
+  if (Array.isArray(payload?.lines)) {
+    payload = { ...payload, lines: prepareShortCaptionLines(payload.lines, payload) };
+  }
+  const narration = await prepareShortNarration(payload);
+  payload = narration.payload;
   // Resolve auto backgrounds into scenes up front so the rest of the pipeline
   // treats them exactly like client-supplied scenes.
   const noExplicitBg =
@@ -972,17 +1048,8 @@ async function renderVideoCore(payload, jobId) {
   // Honour the audio's full length when it's longer than the requested
   // durationSec — otherwise -shortest truncates the narration mid-sentence.
   // Padding is harmless; truncation is the bug we're fixing.
-  let t = clampDuration(durationSec || 20);
-  if (resolvedAudio) {
-    try {
-      const audioDur = await probeAudioDuration(resolvedAudio);
-      if (Number.isFinite(audioDur) && audioDur > t) {
-        t = clampDuration(Math.ceil(audioDur) + 1);
-      }
-    } catch {
-      // probe failure isn't fatal; fall back to requested duration.
-    }
-  }
+  const t = narration.audioDuration == null ? clampDuration(durationSec || 20)
+    : Math.max(clampDuration(durationSec || 20), narration.audioDuration);
 
   // Pace the lines across the real video length. `t` is resolved above (not
   // below, where it used to live) precisely because the caption filter needs
@@ -1162,6 +1229,8 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
 // `words` without `scenes` falls back to a single background, and `scenes`
 // without `words` falls back to legacy line captions.
 async function renderAdvancedVideo(payload, jobId) {
+  const narration = await prepareShortNarration(payload);
+  payload = narration.payload;
   const {
     audioPath,
     musicPath,
@@ -1189,14 +1258,7 @@ async function renderAdvancedVideo(payload, jobId) {
   // cuts off mid-sentence (the previous bug) and never trails silence past
   // the last word. When audio is absent we fall back to the user's
   // durationSec.
-  let audioDur = null;
-  if (resolvedAudio) {
-    try {
-      audioDur = await probeAudioDuration(resolvedAudio);
-    } catch (err) {
-      console.warn(`[RENDER] probe audio duration failed (${err?.message || err}); using durationSec fallback`);
-    }
-  }
+  const audioDur = narration.audioDuration;
 
   const sceneList = Array.isArray(scenes) && scenes.length > 0
     ? scenes
@@ -1551,6 +1613,11 @@ async function runCampaignAutoPost(payload, jobId) {
     if (!script) throw new Error("campaign: script generation produced 0 results");
   }
   const cleanScript = sanitizeScriptObject(script);
+  // Every accepted script must have a complete bounded static fallback, even
+  // if the selected voice later returns partial/no timing. Do this before TTS.
+  const ttsLines = prepareShortCaptionLines(
+    [cleanScript.hook, cleanScript.verse, cleanScript.reflection, cleanScript.cta], payload,
+  );
   const lines = [cleanScript.hook, cleanScript.reference ? `${cleanScript.verse} (${cleanScript.reference})` : cleanScript.verse, cleanScript.reflection, cleanScript.cta].filter(Boolean);
   safeUpdateJob(jobId, { progress: 12 });
 
@@ -1580,7 +1647,8 @@ async function runCampaignAutoPost(payload, jobId) {
         },
       })
     : await synthesizeTts({ text: ttsText, voiceId, withTimestamps: true });
-  const audioPath = tts.file;
+  const narration = await prepareShortNarration({ audioPath: tts.file });
+  const audioPath = narration.payload.audioPath;
   // Pick the typography preset: explicit override > category profile recommendation > undefined
   const typographyPreset =
     (typeof typographyPresetOverride === "string" && typographyPresetOverride.trim().length > 0)
@@ -1622,10 +1690,8 @@ async function runCampaignAutoPost(payload, jobId) {
   safeUpdateJob(jobId, { progress: 45 });
 
   // 4. If we have alignment, build word-level captions + per-beat scenes.
-  // Otherwise fall back to the legacy single-bg + line-captions path.
-  // The line renderer cuts each line at 140 characters, so a long Series part
-  // is broken into sentence-sized lines first and all of it reaches the screen.
-  const ttsLines = splitCaptionLines([cleanScript.hook, cleanScript.verse, cleanScript.reflection, cleanScript.cta], 140);
+  // Otherwise use the complete, preflighted static lines prepared before TTS.
+
   const beatTexts = [
     cleanScript.hook,
     cleanScript.reference ? `${cleanScript.verse} (${cleanScript.reference})` : cleanScript.verse,
@@ -1634,8 +1700,25 @@ async function runCampaignAutoPost(payload, jobId) {
 
   let renderResult;
   let pickedBackground;
-  if (tts.alignment && Array.isArray(tts.alignment.characters) && tts.alignment.characters.length > 0) {
-    const rawWords = charsToWords(tts.alignment);
+  const timing = toAlignmentContract(tts);
+  // Both synthesis entry points apply this exact preparation by default. Compare
+  // against the text actually spoken, not visual-only reference/caption fields.
+  // Normalize Unicode composition, case and punctuation, but never accept a
+  // same-length substitution, reordered words or a prefix/middle/suffix subset.
+  const coverageTokens = (text) => String(text).normalize("NFC").toLowerCase()
+    .match(/[\p{L}\p{M}\p{N}]+|[^\s\p{P}\p{L}\p{M}\p{N}]/gu) || [];
+  const spokenTokens = coverageTokens(prepareScriptureForSpeech(ttsText));
+  const timedTokens = coverageTokens(timing.words.map((word) => word.text).join(" "));
+  const coversSpokenScript = spokenTokens.length > 0
+    && timedTokens.length === spokenTokens.length
+    && spokenTokens.every((token, index) => token === timedTokens[index]);
+  if (timing.words.length > 0 && coversSpokenScript) {
+    // Prefer valid native boundaries, recovering character timings when needed.
+    // Convert units only: keep Unicode, punctuation and positive sub-50ms windows.
+    // Text coverage is not independent verification of acoustic accuracy.
+    const rawWords = timing.words.map(({ text, startMs, endMs }) => ({
+      text, start: startMs / 1000, end: endMs / 1000,
+    }));
     const words = annotatePhrasedTiers(rawWords);
     const beats = groupWordsByBeat(words, beatTexts);
     const sceneCount = beats.length >= 2 ? beats.length : 1;
@@ -1707,16 +1790,15 @@ async function runCampaignAutoPost(payload, jobId) {
       autoDuck: payload.autoDuck,
     }, jobId);
   } else {
-    // Tell the OPERATOR, not just the console. A scheduled post publishes
-    // unreviewed, so a silent downgrade to static captions is discovered by
-    // watching the finished video on a public feed. Word timings come from the
-    // TTS provider's alignment, and only ElevenLabs returns it - so the honest
-    // message names the cause and the fix.
-    console.warn("[CAMPAIGN] no alignment from TTS (Edge-TTS fallback?) — using legacy line captions");
+    // Keep the COMPLETE authoritative script on missing or mismatched timing.
+    // Do not turn a structurally valid subset into the caption transcript, or
+    // retry a provider here: this branch is a bounded, explicit static fallback.
+    const timingFailure = timing.words.length > 0
+      ? "Word timings did not cover the complete spoken script"
+      : "This schedule's voice returned no usable word timings";
+    console.warn(`[CAMPAIGN] ${timingFailure} — using complete static captions`);
     safeUpdateJob(jobId, {
-      captionFallback:
-        "Word-by-word captions need an ElevenLabs voice — this schedule's voice returned no word timings, "
-        + "so static captions were used. Set an ElevenLabs voice on the schedule to get animated captions.",
+      captionFallback: `${timingFailure}, so static captions were used. The complete script was preserved.`,
     });
     const hasGenImage = typeof generatedImage === "string" && generatedImage.trim().length > 0;
     if (hasGenImage) {
@@ -1885,7 +1967,13 @@ export function validatePayloadForEnqueue(type, payload) {
     if (payload?.musicPath && !isLocalOrRemote(resolvedMusic)) {
       return { ok: false, error: `musicPath not found: ${payload?.musicPath}` };
     }
-    const lines = Array.isArray(payload?.lines) ? buildSpeakableLines(payload.lines.join("\n"), { maxLines: 12, maxChars: 140 }) : [];
+    let lines;
+    try {
+      lines = prepareShortCaptionLines(payload?.lines, payload);
+    } catch (error) {
+      if (error.code !== "CAPTION_SCRIPT_TOO_LARGE") throw error;
+      return { ok: false, error: error.message, code: error.code, details: error.details };
+    }
     if (lines.length === 0) return { ok: false, error: "lines[] required for render_video" };
     return { ok: true };
   }
@@ -1907,6 +1995,15 @@ export function validatePayloadForEnqueue(type, payload) {
   }
 
   if (type === "campaign_auto_post") {
+    if (payload?.prebuiltScript) {
+      try {
+        const s = sanitizeScriptObject(payload.prebuiltScript);
+        prepareShortCaptionLines([s.hook, s.verse, s.reflection, s.cta], payload);
+      } catch (error) {
+        if (error.code !== "CAPTION_SCRIPT_TOO_LARGE") throw error;
+        return { ok: false, error: error.message, code: error.code, details: error.details };
+      }
+    }
     // Library is the only hard precondition — everything else has defaults.
     const lib = readLibrary(currentDataDir());
     if (!Array.isArray(lib?.items) || lib.items.length === 0) {
@@ -2040,6 +2137,10 @@ async function workerTick() {
       finishedAt: new Date().toISOString(),
       error: String(e?.message || e)
     };
+    if (["CAPTION_SCRIPT_TOO_LARGE", "NARRATION_EXCEEDS_RENDER_CAP", "NARRATION_DURATION_UNVERIFIABLE"].includes(e?.code)) {
+      failedPatch.errorCode = e.code;
+      failedPatch.errorDetails = e.details;
+    }
     if (Number.isFinite(lastPct)) failedPatch.progress = lastPct;
     safeUpdateJob(next.id, failedPatch);
   } finally {
@@ -2113,7 +2214,7 @@ router.post("/enqueue", (req, res) => {
     if (sendUserPathError(res, err)) return;
     throw err;
   } finally { currentJobCtx = prevCtx; }
-  if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
+  if (!validation.ok) return res.status(400).json(validation);
 
   // A queued render spends the plan's render quota exactly as a retry does
   // (R34); without this, the queue was an unmetered way to render.
@@ -2184,7 +2285,7 @@ router.post("/:id/retry", (req, res) => {
     if (sendUserPathError(res, err)) return;
     throw err;
   } finally { currentJobCtx = prevCtx; }
-  if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
+  if (!validation.ok) return res.status(400).json(validation);
 
   // A retry renders again, so it spends the plan's render quota; without this
   // a free user could keep rendering by retrying (app button and agents alike).

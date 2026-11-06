@@ -7,8 +7,20 @@ import os from 'os';
 import path from 'path';
 import storyRouter, { confineImportAudio } from './story.js';
 
+// All route fixtures are synthetic and removed after each test.
+const fixtureDirs = new Set();
+function tempDir(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  fixtureDirs.add(dir);
+  return dir;
+}
+afterEach(() => {
+  for (const dir of fixtureDirs) fs.rmSync(dir, { recursive: true, force: true });
+  fixtureDirs.clear();
+});
+
 function app() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'story-import-'));
+  const dir = tempDir('story-import-');
   const a = express();
   a.use(express.json());
   a.use((req, _res, next) => {
@@ -24,6 +36,83 @@ function app() {
 }
 
 describe('POST /api/story/import-script', () => {
+
+  test('preserves script and honest estimated metadata after persisted readback', async () => {
+    const { a, audio } = app();
+    const script = 'Éternel,  Dieu’s grâce!';
+    const created = await request(a).post('/api/story/import-script').send({ script, audioPath: audio, durationMs: 2000 }).expect(200);
+    const got = await request(a).get(`/api/story/${created.body.project.projectId}`).expect(200);
+    assert.equal(got.body.project.transcript.script, script);
+    assert.equal(got.body.project.transcript.timing.estimated, true);
+    assert.equal(got.body.project.transcript.timing.verified, false);
+  });
+
+  test('maps complete provider tokens to exact author spelling without claiming verified timing', async () => {
+    const { a, audio } = app();
+    const res = await request(a).post('/api/story/import-script').send({
+      script: '“Éternel,” Dieu’s grâce!', audioPath: audio, durationMs: 2000,
+      words: ['éternel', "dieu's", 'grâce'].map((text, i) => ({ text, startMs: i * 300, endMs: (i + 1) * 300 })),
+    }).expect(200);
+    assert.deepEqual(res.body.project.transcript.words.map(w => w.text), ['“Éternel,”', 'Dieu’s', 'grâce!']);
+    assert.equal(res.body.project.transcript.timing.accuracy, 'unknown');
+    const got = await request(a).get(`/api/story/${res.body.project.projectId}`).expect(200);
+    assert.deepEqual(got.body.project.transcript, res.body.project.transcript);
+  });
+
+  for (const texts of [['the', 'shepherd'], ['the', 'lord', 'shepherd'], ['the', 'wolf', 'is', 'shepherd']]) {
+    test(`rejects partial/mismatched provider tokens ${texts.join(' ')}`, async () => {
+      const { a, audio, dir } = app();
+      const res = await request(a).post('/api/story/import-script').send({
+        script: 'the lord is shepherd', audioPath: audio, durationMs: 2000,
+        words: texts.map((text, i) => ({ text, startMs: i * 100, endMs: (i + 1) * 100 })),
+      }).expect(400);
+      assert.match(res.body.error, /mismatch/);
+      assert.equal(fs.existsSync(path.join(dir, 'story-projects')), false);
+    });
+  }
+
+  test('persists exact synthesis reference handoff and ignores acoustic claims', async () => {
+    const { a, audio } = app();
+    const script = 'Read John 3:16 today';
+    const spokenText = 'Read John chapter three verse sixteen today';
+    const words = spokenText.split(' ').map((text, i) => ({ text, startMs: i * 100, endMs: (i + 1) * 100 }));
+    const tokenMap = [
+      { tokenIndex: 0, spokenStart: 0, spokenEnd: 1 }, { tokenIndex: 1, spokenStart: 1, spokenEnd: 2 },
+      { tokenIndex: 2, spokenStart: 2, spokenEnd: 6 }, { tokenIndex: 3, spokenStart: 6, spokenEnd: 7 },
+    ];
+    const created = await request(a).post('/api/story/import-script').send({ script, audioPath: audio,
+      durationMs: 2000, words, spokenText, tokenMap, timing: { verified: true, estimated: true } }).expect(200);
+    const got = await request(a).get(`/api/story/${created.body.project.projectId}`).expect(200);
+    assert.equal(got.body.project.transcript.script, script);
+    assert.deepEqual(got.body.project.transcript.words, [
+      { text: 'Read', startMs: 0, endMs: 100 }, { text: 'John', startMs: 100, endMs: 200 },
+      { text: '3:16', startMs: 200, endMs: 600 }, { text: 'today', startMs: 600, endMs: 700 },
+    ]);
+    assert.equal(got.body.project.transcript.timing.estimated, true);
+    assert.equal(got.body.project.transcript.timing.verified, false);
+    await request(a).post('/api/story/import-script').send({ script, audioPath: audio,
+      durationMs: 2000, words, spokenText: 'unrelated text', tokenMap }).expect(400);
+  });
+
+  test('rejects spoken verse expansion with an actionable alignment error', async () => {
+    const { a, audio } = app();
+    const res = await request(a).post('/api/story/import-script').send({
+      script: 'John 3:16', audioPath: audio, durationMs: 2000,
+      words: ['John', 'three', 'sixteen'].map((text, i) => ({ text, startMs: i * 100, endMs: (i + 1) * 100 })),
+    }).expect(400);
+    assert.match(res.body.error, /explicit script-to-audio alignment/);
+  });
+
+  test('rejects malformed native timing source, not merely its bad entries', async () => {
+    const { a, audio, dir } = app();
+    const res = await request(a).post('/api/story/import-script').send({
+      script: 'be still', audioPath: audio, durationMs: 2000,
+      words: [{ text: 'be', startMs: 0, endMs: 100 }, { text: 'still', startMs: null, endMs: 200 }],
+    }).expect(400);
+    assert.match(res.body.error, /invalid word timings/);
+    assert.equal(fs.existsSync(path.join(dir, 'story-projects')), false);
+  });
+
   test('creates a project ready to segment, skipping transcription', async () => {
     const { a, audio } = app();
     const res = await request(a).post('/api/story/import-script').send({
@@ -178,7 +267,7 @@ describe('POST /api/story/import-script: AI motion and auto-start', () => {
     story = await import('./story.js');
     pipelineCalls = [];
     story._setPipelineImpl(async (ctx, projectId, audioPath) => { pipelineCalls.push({ ctx, projectId, audioPath }); });
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'story-import-ai-'));
+    const dir = tempDir('story-import-ai-');
     const a = express();
     a.use(express.json());
     a.use((req, _res, next) => {
@@ -271,7 +360,7 @@ describe('POST /api/story/import-script: AI motion and auto-start', () => {
 
   test('without autoStart the audio is still confined: another account\'s file is refused, and no project is made', async () => {
     const { a, dir } = await adminApp();
-    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'story-import-other-'));
+    const other = tempDir('story-import-other-');
     const theirs = path.join(other, 'their-voice.mp3');
     fs.writeFileSync(theirs, 'ID3');
     for (const audioPath of [theirs, '/somewhere/else.mp3']) {
@@ -319,8 +408,8 @@ describe('confineImportAudio (narration in the shared outputs folder)', () => {
   const tts = 'tts-0dc7c473-7170-4355-b57f-279780487081.mp3';
   let own, shared;
   beforeEach(() => {
-    own = fs.mkdtempSync(path.join(os.tmpdir(), 'imp-own-'));
-    shared = fs.mkdtempSync(path.join(os.tmpdir(), 'imp-shared-'));
+    own = tempDir('imp-own-');
+    shared = tempDir('imp-shared-');
   });
   afterEach(() => {
     for (const d of [own, shared]) fs.rmSync(d, { recursive: true, force: true });

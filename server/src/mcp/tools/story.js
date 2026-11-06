@@ -273,6 +273,17 @@ function renderBusyRefusal({ project, body }) {
   return fail("SESSION_BUSY", "This project is already rendering. Wait for it with jobs_wait (kind story), or stop it with story_cancel.");
 }
 
+/** Consent is request-scoped; provenance never establishes acoustic verification. */
+export function storyTimingConsentKind(project) {
+  if (project?.captions === "none") return null;
+  const timing = project?.transcript?.timing;
+  const evidence = [timing, timing?.originalEvidence].filter(Boolean);
+  if (evidence.some(t => t.estimated === true || [t.provenance, t.accuracy, t.status, t.quality].some(v => /estimated|section-spread|interpolated/.test(String(v || "")))
+    || (t.counts?.interpolated || 0) > 0 || t.warnings?.some(w => /estimat|interpolat/.test(typeof w === "string" ? w : w.code)))) return "estimated";
+  if (!timing || ![timing.provenance, timing.status, timing.quality].some(v => ["native", "supplied", "asr-matched", "measured", "manual"].includes(v))) return "unknown";
+  return null;
+}
+
 const storyRender = {
   name: "story_render",
   title: "Render a story video",
@@ -280,19 +291,29 @@ const storyRender = {
     "Render the story into a video: every scene's picture (or clip), the narration, the music bed and the captions. Every scene needs a picture first (story_step images; the call is refused otherwise and costs nothing). " +
     "Returns a handle of kind story: call jobs_wait with kind story and the project id until done; output.path is the video, which publish_youtube and publish_post take. " +
     "Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up). Takes about real time or longer for long narrations. It never posts anywhere. story_cancel stops it. " +
+    "Estimated or unknown caption timing requires explicit user consent for each render via acknowledgeApproximateTiming: true; otherwise TIMING_CONSENT_REQUIRED costs nothing. Captionless exports are exempt. Native and supplied timings are not acoustically verified either. " +
     "While the project is already rendering another call is refused with SESSION_BUSY and costs nothing. " +
     "A server deploy or restart stops a running render (and any running story step): about two minutes later jobs_wait reports failed with \"This stopped when the server restarted\", and story_project get shows interrupted: true. Then call story_cancel, then story_render again (or story_process, for pictures that were being made).",
-  inputSchema: { id: STORY_ID.describe("The project id.") },
+  inputSchema: {
+    id: STORY_ID.describe("The project id."),
+    acknowledgeApproximateTiming: z.boolean().optional().describe("Explicit consent for THIS render only: estimated or unknown caption timing is approximate, not acoustically verified. Ask the user before setting true."),
+  },
   routes: ["/api/story"],
-  async handler(ctx, { id }) {
-    const busy = renderBusyRefusal(await readStory(ctx, id));
+  async handler(ctx, { id, acknowledgeApproximateTiming }) {
+    const story = await readStory(ctx, id);
+    const busy = renderBusyRefusal(story);
     if (busy) return busy;
+    const timingKind = storyTimingConsentKind(story.project);
+    if (timingKind && acknowledgeApproximateTiming !== true) return fail("TIMING_CONSENT_REQUIRED",
+      `Caption timing is ${timingKind}: approximate, not acoustically verified. Obtain explicit user acknowledgement for this render, then pass acknowledgeApproximateTiming: true, or turn project captions off.`);
     const outOfQuota = await renderQuotaRefusal(ctx);
     if (outOfQuota) return outOfQuota;
     const refused = await ctx.chargeCap({ renders: 1 });
     if (refused) return refused;
-    const response = await ctx.api.call("POST", `${projectPath(id)}/render`);
-    return ok({ ...startedHandle(id, "rendering"), jobId: response?.jobId ?? null });
+    const response = await ctx.api.call("POST", `${projectPath(id)}/render`, { body: defined({ acknowledgeApproximateTiming }) });
+    return ok({ ...startedHandle(id, "rendering"), jobId: response?.jobId ?? null,
+      timingWarning: story.project.captions === "none" ? null : "Caption timing is not acoustically verified. Review against the audio; estimated or unknown placement is approximate.",
+    });
   },
 };
 

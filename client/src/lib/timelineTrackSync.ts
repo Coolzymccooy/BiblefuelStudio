@@ -71,6 +71,100 @@ function buildMusic(paths: string[], targetSec: number) {
   return { assets, clips };
 }
 
+/** Fail closed on spoken-text edits. Formatting/case/punctuation may change,
+ * but insertion/deletion/replacement needs realignment, never positional reuse. */
+const nonspokenCaptionToken = (token: string) => /^["'“”‘’()[\]{},.!?;:\-‐‑‒–—―…]+$/u.test(token);
+
+/** Mirror captions.js: one lexical token per source unit, punctuation attached
+ * to that unit without manufacturing timestamps. Partition by lexical counts,
+ * not whitespace counts, so punctuation cannot steal the next line's word. */
+function matchingWordLines(original: TimelineWord[], lines: string[]): TimelineWord[][] | null {
+  const key = (token: string) => token.toLowerCase()
+    .replace(/^["'“”‘’(\[\{,!?;:]+/u, '')
+    .replace(/["'“”‘’)\]\},.!?;:]+$/u, '');
+  let cursor = 0;
+  const groups: TimelineWord[][] = [];
+  for (const line of lines) {
+    const tokens = line.trim().split(/\s+/).filter(Boolean);
+    const lexical = tokens.map((token, index) => ({ token, index })).filter(({ token }) => !nonspokenCaptionToken(token));
+    if (!lexical.length) return null;
+    const group: TimelineWord[] = [];
+    for (let i = 0; i < lexical.length; i++) {
+      const w = original[cursor++];
+      if (!w) return null;
+      const parts = w.text.trim().split(/\s+/).filter(Boolean).filter((token) => !nonspokenCaptionToken(token));
+      if (parts.length !== 1 || !key(parts[0]) || key(parts[0]) !== key(lexical[i].token) ||
+          !Number.isFinite(w.startMs) || !Number.isFinite(w.endMs) || w.endMs <= w.startMs) return null;
+      const start = i === 0 ? 0 : lexical[i].index;
+      const end = i + 1 < lexical.length ? lexical[i + 1].index : tokens.length;
+      group.push({ ...w, text: tokens.slice(start, end).join(' ') });
+    }
+    groups.push(group);
+  }
+  return cursor === original.length ? groups : null;
+}
+
+export function preserveMatchingWords(original: TimelineWord[], lines: string[]): TimelineWord[] | null {
+  return matchingWordLines(original, lines)?.flat() ?? null;
+}
+
+/** Source audio clock -> composition clock, at the editor's supported 1x rate.
+ * Keep source words immutable; splits share the asset and change sourceStartSec. */
+export function composeVoiceTiming(project: TimelineProject): SidecarVoice | null {
+  const clips = project.tracks.flatMap((t, trackIndex) =>
+    t.kind !== 'voiceover' || t.hidden || t.muted ? [] :
+      [...t.clips].sort((a, b) => a.startSec - b.startSec)
+        .map((clip, clipIndex) => ({ clip, trackIndex, clipIndex })))
+    .filter(({ clip }) => !clip.muted && project.assets[clip.assetId]?.path);
+  if (!clips.length) return null;
+  const startSec = Math.min(...clips.map(({ clip: c }) => c.startSec));
+  const endSec = Math.max(...clips.map(({ clip: c }) => c.startSec + c.durationSec));
+  // Carry provenance beside each transformed word until stitching is complete.
+  // Text equality cannot identify a source word: repeats and other takes may
+  // have identical text/times. Clip adjacency alone cannot identify a split.
+  const fragments = clips.flatMap(({ clip: c, trackIndex, clipIndex }) => {
+    const source = Math.max(0, c.sourceStartSec || 0) * 1000;
+    const end = source + c.durationSec * 1000;
+    return (project.assets[c.assetId].words || []).flatMap((w, wordIndex) =>
+      w.endMs > source && w.startMs < end ? [{
+        word: { ...w,
+          startMs: (c.startSec - startSec) * 1000 + Math.max(source, w.startMs) - source,
+          endMs: (c.startSec - startSec) * 1000 + Math.min(end, w.endMs) - source,
+        },
+        assetId: c.assetId, wordIndex, trackIndex, clipIndex,
+        clipStart: c.startSec * 1000, clipEnd: (c.startSec + c.durationSec) * 1000,
+        sourceStart: source, sourceEnd: end,
+        fragmentStart: Math.max(source, w.startMs), fragmentEnd: Math.min(end, w.endMs),
+      }] : []);
+  }).filter(({ word: w }) => Number.isFinite(w.startMs) && Number.isFinite(w.endMs) && w.endMs > w.startMs)
+    .sort((a, b) => a.word.startMs - b.word.startMs);
+  const stitched: typeof fragments = [];
+  // Sub-microsecond tolerance only for floating-point clock arithmetic, not
+  // editorial gaps. Require BOTH source and composition continuity.
+  const contiguous = (a: number, b: number) => Math.abs(a - b) < 0.000001;
+  for (const next of fragments) {
+    const prev = stitched[stitched.length - 1];
+    if (prev && prev.assetId === next.assetId && prev.wordIndex === next.wordIndex &&
+        prev.trackIndex === next.trackIndex && prev.clipIndex + 1 === next.clipIndex &&
+        contiguous(prev.clipEnd, next.clipStart) && contiguous(prev.sourceEnd, next.sourceStart) &&
+        contiguous(prev.fragmentEnd, next.fragmentStart) && contiguous(prev.word.endMs, next.word.startMs)) {
+      prev.word.endMs = next.word.endMs;
+      prev.clipIndex = next.clipIndex;
+      prev.clipEnd = next.clipEnd;
+      prev.sourceEnd = next.sourceEnd;
+      prev.fragmentEnd = next.fragmentEnd;
+    } else {
+      stitched.push(next);
+    }
+  }
+  return { startSec, durationSec: endSec - startSec, words: stitched.map(({ word }) => word) };
+}
+
+export type TimedCaptionClip = TimelineClip & {
+  /** words are in the clip's source clock (ms), not the composition clock. */
+  words?: TimelineWord[];
+  timingStatus?: 'source' | 'estimated' | 'unavailable';
+};
 const MIN_CAPTION_SEC = 0.8;
 
 /**
@@ -78,36 +172,21 @@ const MIN_CAPTION_SEC = 0.8;
  * timeline with a 20-second take spread four lines over 270 seconds, so the
  * words on screen never matched the words being spoken.
  *
- *  - with word timings: each line claims as many timed words as it has
- *    words, in order (the way Azure/ElevenLabs return them);
- *  - with just a span: lines share the voice span in proportion to length;
- *  - with no voice at all: even split across the runtime (the old rule).
+ *  - with matching word text: preserve source timings, including pauses;
+ *  - edited text: no word timing reuse; the cue span is estimated/unavailable;
+ *  - without words: estimated cue distribution only.
  */
 export function timeCaptionLines(lines: string[], targetSec: number, voice?: SidecarVoice | null): Array<{ startSec: number; durationSec: number }> {
   const n = lines.length;
   if (n === 0) return [];
   const round = (v: number) => Math.round(v * 1000) / 1000;
-  const words = voice?.words?.filter((w) => Number.isFinite(w.startMs) && Number.isFinite(w.endMs)) || [];
-  if (voice && words.length > 0) {
+  const groups = matchingWordLines(voice?.words || [], lines);
+  if (voice && groups?.length) {
     const out: Array<{ startSec: number; durationSec: number }> = [];
-    let cursor = 0;
-    let lastEnd = voice.startSec;
-    lines.forEach((line, i) => {
-      const count = Math.max(1, line.split(/\s+/).filter(Boolean).length);
-      const slice = words.slice(cursor, cursor + count);
-      cursor += count;
-      if (slice.length === 0) {
-        // Ran out of timed words: park the rest after the voice, evenly.
-        const rest = n - i;
-        const tail = Math.max(MIN_CAPTION_SEC, (voice.startSec + voice.durationSec - lastEnd) / rest);
-        out.push({ startSec: round(lastEnd), durationSec: round(tail) });
-        lastEnd += tail;
-        return;
-      }
-      const startSec = Math.max(lastEnd, voice.startSec + slice[0].startMs / 1000);
-      const endSec = Math.max(startSec + MIN_CAPTION_SEC, voice.startSec + slice[slice.length - 1].endMs / 1000);
+    groups.forEach((slice) => {
+      const startSec = voice.startSec + slice[0].startMs / 1000;
+      const endSec = voice.startSec + slice[slice.length - 1].endMs / 1000;
       out.push({ startSec: round(startSec), durationSec: round(endSec - startSec) });
-      lastEnd = endSec;
     });
     return out;
   }
@@ -142,15 +221,22 @@ function buildCaptions(lines: string[], targetSec: number, voice?: SidecarVoice 
     tags: [OWNED_TAG, 'captions'],
   });
   const timing = timeCaptionLines(lines, targetSec, voice);
+  const matched = matchingWordLines(voice?.words || [], lines);
   lines.forEach((line, i) => {
-    clips.push({
+    const words = matched?.[i].map((w) => ({ ...w,
+      startMs: w.startMs + (voice!.startSec - timing[i].startSec) * 1000,
+      endMs: w.endMs + (voice!.startSec - timing[i].startSec) * 1000,
+    }));
+    const clip: TimedCaptionClip = {
       id: clipId('captions', String(i)),
       assetId: assetId('captions', 'all'),
       startSec: timing[i].startSec,
       durationSec: timing[i].durationSec,
       transform: { fit: 'cover' },
       text: line,
-    });
+      ...(words?.length ? { words, timingStatus: 'source' } : { timingStatus: voice?.words?.length ? 'unavailable' : 'estimated' }),
+    };
+    clips.push(clip);
   });
   return { assets, clips };
 }
@@ -172,13 +258,11 @@ export function syncSidecarTracks(
   const unchanged = Object.entries(desired).every(([kind, next]) => {
     const current = project.tracks.find((t) => t.kind === kind)?.clips || [];
     const owned = current.filter((c) => c.id.includes(OWNED_TAG));
-    const foreign = current.filter((c) => !c.id.includes(OWNED_TAG));
     // Compare the ASSET each clip points at, not just the clip id. Ids are
     // positional (music-0, music-1), so swapping one bed for another keeps
     // every id and duration identical - comparing those alone returned "no
     // change" and the lane kept showing the OLD filename.
     return (
-      foreign.length === 0 &&
       owned.length === next.clips.length &&
       owned.every((c, i) => {
         const want = next.clips[i];
@@ -189,6 +273,8 @@ export function syncSidecarTracks(
           c.durationSec === want.durationSec &&
           (c.text || '') === (want.text || '') &&
           c.startSec === want.startSec &&
+          JSON.stringify((c as TimedCaptionClip).words) === JSON.stringify((want as TimedCaptionClip).words) &&
+          (c as TimedCaptionClip).timingStatus === (want as TimedCaptionClip).timingStatus &&
           have?.path === wantAsset?.path &&
           have?.label === wantAsset?.label
         );

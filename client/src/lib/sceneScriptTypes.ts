@@ -1,3 +1,4 @@
+import type { TimingQuality } from './timingQuality';
 export type LineKind = 'narration' | 'scripture' | 'reference' | 'chant';
 
 export interface SceneScriptWord { text: string; start: number; end: number }
@@ -15,7 +16,7 @@ export interface SceneScriptLine {
   rate?: string;
   pitch?: string;
   gapAfter?: number;
-  audio: { key: string; url: string; durationSec: number; words: SceneScriptWord[] } | null;
+  audio: { key: string; url: string; durationSec: number; words: SceneScriptWord[]; timing?: TimingQuality } | null;
   audioError?: string | null;
 }
 

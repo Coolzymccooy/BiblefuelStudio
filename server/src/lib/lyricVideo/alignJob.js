@@ -3,8 +3,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { readProject, updateProject } from "./projectStore.js";
-import { transcribeSong } from "./transcribeWindows.js";
+import { readProject, updateProject, manualTiming } from "./projectStore.js";
+import { transcribeSong, placementPolicy } from "./transcribeWindows.js";
 import { transcribePrompted } from "./whisperPrompted.js";
 import { placeLines, FLAG_CONFIDENCE } from "./align.js";
 import { detectBeats as realDetectBeats } from "./beats.js";
@@ -116,7 +116,7 @@ export function failedTiming(timing, message) {
 }
 
 const sameLyrics = (a, b) => a.length === b.length && a.every((l, i) => l.id === b[i].id && l.text === b[i].text);
-const timingOf = ({ words, start, end, confidence, flag }) => ({ words, start, end, confidence, flag });
+const timingOf = ({ words, start, end, confidence, flag, timingQuality }) => ({ words, start, end, confidence, flag, timingQuality });
 
 /** Each section starts half a beat before its first line, on the beat grid; unsnapped when no beat was found. */
 function sectionStarts(sections, lines, beats) {
@@ -181,7 +181,7 @@ export async function runAlignJob({ dataDir, workDir, projectId, userId, deps })
  */
 function mergePlacement(latest, snapshot, placed, beats) {
   if (!sameLyrics(latest.lines, snapshot.lines)) return null;
-  const lines = latest.lines.map((line, i) => (line.locked ? line : { ...line, ...timingOf(placed[i]) }));
+  const lines = latest.lines.map((line, i) => (line.locked ? manualTiming(line) : { ...line, ...timingOf(placed[i]) }));
   return { lines, sections: sectionStarts(latest.sections, lines, beats) };
 }
 
@@ -226,7 +226,10 @@ async function findAudibleEnd({ d, audio, durationSec, projectId, log }) {
 export function atLeastHeard(audibleEnd, lines, heard, locked, durationSec) {
   if (audibleEnd >= durationSec || !heard?.length) return audibleEnd;
   const confident = placeLines(lines, heard, { locked, durationSec })
-    .filter((l) => !locked.has(l.id) && l.flag === null && l.confidence >= FLAG_CONFIDENCE);
+    .filter((l) => {
+      const policy = placementPolicy(l);
+      return !locked.has(l.id) && policy.flag === null && policy.confidence >= FLAG_CONFIDENCE;
+    });
   const inConfidentLine = (h) => confident.some((l) => h.start >= l.start && h.start <= l.end);
   const heardEnd = heard.reduce((latest, h) => (Number.isFinite(h.end) && inConfidentLine(h) ? Math.max(latest, h.end) : latest), 0);
   return Math.min(durationSec, Math.max(audibleEnd, heardEnd));

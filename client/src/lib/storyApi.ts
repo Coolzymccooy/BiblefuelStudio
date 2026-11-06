@@ -21,6 +21,22 @@ function unwrapProject(res: ProjectResponse): StoryProject {
   return res.data.project as StoryProject;
 }
 
+/** Consent is request-scoped; provenance never establishes acoustic verification. */
+export function storyTimingConsentKind(project: StoryProject): 'estimated' | 'unknown' | null {
+  if (project?.captions === "none") return null;
+  const timing = project?.transcript?.timing;
+  const evidence = [timing, timing?.originalEvidence].filter((t): t is NonNullable<typeof t> => Boolean(t));
+  if (evidence.some(t => t.estimated === true || [t.provenance, t.accuracy, t.status, t.quality].some(v => /estimated|section-spread|interpolated/.test(String(v || "")))
+    || (t.counts?.interpolated || 0) > 0 || t.warnings?.some(w => /estimat|interpolat/.test(typeof w === "string" ? w : w.code)))) return "estimated";
+  if (!timing || ![timing.provenance, timing.status, timing.quality].some(v => ["native", "supplied", "asr-matched", "measured", "manual"].includes(v || ""))) return "unknown";
+  return null;
+}
+
+export function confirmStoryTiming(project: StoryProject): boolean {
+  const kind = storyTimingConsentKind(project);
+  return !kind || window.confirm(`Caption timing is ${kind} — approximate placement, not acoustically verified. Review against the audio. Export with this timing for this render only?`);
+}
+
 export const storyApi = {
   async createProject(title: string, style: string, cast: string[] = [], aspect?: StoryAspect): Promise<StoryProject> {
     return unwrapProject(await api.post('/api/story', { title, style, cast, ...(aspect ? { aspect } : {}) }));
@@ -156,8 +172,8 @@ export const storyApi = {
     return unwrapProject(await api.post(`/api/story/${id}/animate/cancel`, {}));
   },
 
-  async render(id: string): Promise<StoryProject> {
-    return unwrapProject(await api.post(`/api/story/${id}/render`, {}));
+  async render(id: string, options: { acknowledgeApproximateTiming?: boolean } = {}): Promise<StoryProject> {
+    return unwrapProject(await api.post(`/api/story/${id}/render`, options));
   },
 
   async deleteProject(id: string): Promise<void> {

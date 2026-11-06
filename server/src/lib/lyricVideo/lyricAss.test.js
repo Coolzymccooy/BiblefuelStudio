@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLyricAss, resolvedEffects } from "./lyricAss.js";
+import { placeLines } from "./align.js";
 import { chooseEffects } from "./policy.js";
 import { parseSheet } from "./sheetParser.js";
 import { resolveLook } from "../kinetic/looks.js";
@@ -32,6 +33,21 @@ test("builds a full ASS document with every line's words", () => {
 
 test("the same project renders the same ASS", () => {
   assert.equal(buildLyricAss(project, { w: 720, h: 1280 }), buildLyricAss(project, { w: 720, h: 1280 }));
+});
+
+test("timing provenance never replaces karaoke display holds in ASS", () => {
+  const lines = placeLines([
+    { id: "a", sectionId: "s1", kind: "lead", text: "one two three", effect: "pop" },
+    { id: "b", sectionId: "s1", kind: "response", text: "oh yeah", effect: "echo" },
+  ], [{ word: "one", start: 1, end: 1.2 }, { word: "two", start: 3, end: 3.2 }, { word: "three", start: 4, end: 4.3 }], { durationSec: 10 });
+  const p = { ...project, lines, sections: [{ id: "s1", kind: "chorus" }], song: { durationSec: 10 } };
+  const legacy = { ...p, lines: lines.map(({ timingQuality, ...l }) => ({ ...l, words: l.words.map(({ timing, ...w }) => w) })) };
+  assert.equal(lines[0].words[0].timing.acousticEnd, 1.2);
+  assert.equal(lines[0].words[0].end, 3);
+  const before = JSON.stringify(p);
+  const ass = buildLyricAss(p, { w: 720, h: 1280 });
+  assert.equal(ass, buildLyricAss(legacy, { w: 720, h: 1280 }));
+  assert.equal(JSON.stringify(p), before, "renderer must not mutate evidence or holds");
 });
 
 test("unplaced lines are left out; none placed gives an empty string", () => {

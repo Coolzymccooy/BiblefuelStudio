@@ -21,6 +21,107 @@ function assertSong(out, { durationSec = Infinity, locked = new Map() } = {}) {
 }
 const lock = (...pairs) => ({ words: pairs.map(([text, start, end]) => ({ text, start, end })) });
 
+describe("timing provenance (source evidence is not the display hold)", () => {
+  test("one missing interior word flags even 80% exact coverage", () => {
+    const [l] = placeLines([L("x", "one two three four five")], [H("one", 1), H("two", 1.5), H("four", 2.5), H("five", 3)]);
+    assert.equal(l.confidence, 0.8);
+    assert.equal(l.flag, "check");
+    assert.equal(l.timingQuality.verified, false);
+    assert.deepEqual(l.timingQuality.counts, { measured: 0, "asr-matched": 4, interpolated: 1, unresolved: 0, manual: 0 });
+    assert.ok(l.timingQuality.warnings.includes("interpolated-words"));
+    assert.equal(l.words[2].timing.source, "interpolated");
+    assert.equal(l.words[2].timing.acousticStart, null);
+    assert.equal(l.words[2].timing.acousticEnd, null);
+    assertSong([l]);
+  });
+  test("bounded substitution keeps display timing but is not exact heard coverage", () => {
+    const [l] = placeLines([L("x", "i dey wonder")], [H("i", 1), H("de", 1.5), H("wonder", 2)]);
+    assert.deepEqual(l.words.map((w) => w.text), ["i", "dey", "wonder"]);
+    assert.deepEqual(l.words.map((w) => w.start), [1, 1.5, 2]);
+    assert.equal(l.confidence, 0.67);
+    assert.equal(l.flag, "check");
+    assert.ok(l.timingQuality.warnings.includes("lyric-asr-mismatch"));
+    assert.equal(l.words[1].timing.source, "interpolated");
+    assert.equal(l.words[1].timing.exactParts, 0);
+    assert.equal(l.words[1].timing.anchors[0].word, "de");
+    assert.equal(l.words[1].timing.acousticStart, 1.5);
+  });
+  test("repeated lyrics never reuse evidence from the first occurrence", () => {
+    const out = placeLines([L("a", "hello world"), L("b", "hello world")], [H("hello", 1), H("world", 1.5)]);
+    assert.deepEqual(out[0].timingQuality.wordSources, ["asr-matched", "asr-matched"]);
+    assert.deepEqual(out[1].timingQuality.wordSources, ["interpolated", "interpolated"]);
+    assert.equal(out[0].timingQuality.verified, false, "ASR is not measured ground truth");
+    assert.ok(out[1].words.every((w) => w.timing.acousticStart === null));
+  });
+  test("acoustic end remains independent from long display holds and polyphonic overlap", () => {
+    const [l] = placeLines([L("x", "one two three")], [H("one", 1, 1.2), H("two", 3, 4.5), H("three", 4, 4.8)]);
+    assert.equal(l.words[0].end, 3);
+    assert.equal(l.words[0].timing.acousticEnd, 1.2);
+    assert.equal(l.words[1].end, 4);
+    assert.equal(l.words[1].timing.acousticEnd, 4.5);
+    assert.equal(l.words[1].timing.source, "asr-matched");
+    assert.equal(l.flag, null, "interior acoustic overlap need not reject polyphonic music");
+  });
+  test("manual nudge-compatible locks preserve words and original evidence exactly", () => {
+    const [original] = placeLines([L("x", "one two")], [H("one", 1), H("two", 2)]);
+    const nudged = original.words.map((w) => ({ ...w, start: w.start + 2, end: w.end + 2 }));
+    const locked = new Map([["x", { words: nudged }]]);
+    const [l] = placeLines([L("x", "one two")], [], { locked });
+    assert.deepEqual(l.words, nudged);
+    assert.equal(l.words[0].timing.acousticStart, 1);
+    assert.equal(l.words[0].start, 3);
+    assert.equal(l.timingQuality.status, "manual");
+    assert.equal(l.timingQuality.verified, false);
+    assert.equal(l.timingQuality.counts.manual, 2);
+    assert.deepEqual(l.timingQuality.wordSources, ["manual", "manual"]);
+    assert.equal(l.confidence, 1);
+    assert.equal(l.flag, null);
+  });
+  test("bounds adjust display only, retaining out-of-bound source timestamps", () => {
+    const out = placeLines([L("x", "one two")], [H("one", 8, 8.3), H("two", 13, 13.5)], { durationSec: 20, audibleEnd: 10 });
+    assertSong(out, { durationSec: 10 });
+    assert.equal(out[0].words[1].timing.acousticStart, 13);
+    assert.equal(out[0].words[1].timing.acousticEnd, 13.5);
+    assert.ok(out[0].timingQuality.warnings.includes("display-timing-adjusted"));
+  });
+  test("Unicode lyrics preserve tokens while normalised ASR matching works", () => {
+    const text = "Ọmọ 東京 мир".normalize("NFD");
+    const [l] = placeLines([L("x", text)], [H("Omo", 1), H("東京", 2), H("мир", 3)]);
+    assert.deepEqual(l.words.map((w) => w.text), text.split(" "));
+    assert.equal(l.confidence, 1);
+    assert.ok(l.words.every((w) => w.timing.source === "asr-matched"));
+  });
+  test("partial hyphenated word cannot be marked fully matched", () => {
+    const [l] = placeLines([L("x", "oh-yeah praise him")], [H("oh", 1), H("praise", 2), H("him", 3)]);
+    assert.equal(l.words[0].timing.source, "interpolated");
+    assert.equal(l.words[0].timing.exactParts, 1);
+    assert.equal(l.words[0].timing.parts, 2);
+    assert.equal(l.flag, "check");
+  });
+  test("invalid source boundaries and punctuation-only tokens are unresolved", () => {
+    const [l] = placeLines([L("x", "one … two")], [H("one", 1, 0.9), H("two", 2)]);
+    assert.equal(l.words[0].timing.source, "unresolved");
+    assert.equal(l.words[0].timing.acousticEnd, null);
+    assert.equal(l.words[0].timing.anchors[0].end, 0.9);
+    assert.equal(l.words[1].timing.source, "unresolved");
+    assert.ok(l.timingQuality.warnings.includes("unresolved-words"));
+  });
+  test("source end clipped by the song bound is retained and warned, not verified", () => {
+    const [l] = placeLines([L("x", "one")], [{ ...H("one", 9, 12), timingSource: "measured" }], { durationSec: 10 });
+    assert.equal(l.words[0].end, 10);
+    assert.equal(l.words[0].timing.acousticEnd, 12);
+    assert.equal(l.flag, "check");
+    assert.equal(l.timingQuality.verified, false);
+    assert.ok(l.timingQuality.warnings.includes("source-outside-bounds"));
+  });
+  test("only explicitly measured exact input anchors are called measured", () => {
+    const [l] = placeLines([L("x", "one two")], [H("one", 1), H("two", 2)].map((w) => ({ ...w, timingSource: "measured" })));
+    assert.equal(l.timingQuality.status, "measured");
+    assert.ok(l.words.every((w) => w.timing.source === "measured"));
+    assert.equal(l.timingQuality.verified, true);
+  });
+});
+
 describe("constants", () => {
   test("flag thresholds match the spec", () => {
     assert.equal(FLAG_CONFIDENCE, 0.6);

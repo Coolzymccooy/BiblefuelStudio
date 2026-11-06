@@ -6,7 +6,7 @@ import { probeAudioDurationSec } from "../story/storyRender.js";
 import { readProject, updateProject, projectOutputDir, projectOutputUrl } from "./projectStore.js";
 import { deliveryForLine } from "./cast.js";
 import { speakableText, ssmlFor, audioKey } from "./speech.js";
-import { alignWords } from "./align.js";
+import { alignCaption } from "./align.js";
 import { computeTimeline } from "./timeline.js";
 
 /**
@@ -64,12 +64,12 @@ async function synthWithRetry(deps, ssml) {
 }
 
 function wordsFrom(boundaries) {
-  return (boundaries || [])
-    .filter((b) => b.boundaryType === "Word")
+  return (Array.isArray(boundaries) ? boundaries : [])
+    .filter((b) => b?.boundaryType === "Word")
     .map((b) => ({
       text: b.text,
-      start: b.audioOffsetTicks / TICKS_PER_SEC,
-      end: (b.audioOffsetTicks + b.durationTicks) / TICKS_PER_SEC,
+      start: Number.isFinite(b.audioOffsetTicks) ? b.audioOffsetTicks / TICKS_PER_SEC : NaN,
+      end: Number.isFinite(b.audioOffsetTicks) && Number.isFinite(b.durationTicks) ? (b.audioOffsetTicks + b.durationTicks) / TICKS_PER_SEC : NaN,
     }));
 }
 
@@ -135,11 +135,18 @@ function removeOldTakes(dir, lineId, key) {
 
 async function finishLine(deps, project, line, { key, name, file, heard, dir }) {
   const durationSec = Number(await deps.probe(file)) || 0;
-  if (!(durationSec > 0)) throw new Error("The voice file came back empty.");
+  if (!Number.isFinite(durationSec) || !(durationSec > 0)) throw new Error("The voice file came back empty.");
   removeOldTakes(dir, line.id, key);
+  const alignment = alignCaption(line.text, heard, durationSec, { kind: line.kind });
+  if (line.kind === "chant") {
+    alignment.words = [];
+    alignment.timing.source = "ensemble-mix";
+    alignment.timing.quality = "unresolved";
+    alignment.timing.warnings.push({ code: "ensemble-without-word-boundaries" });
+  }
   return {
-    key, file: name, url: projectOutputUrl(project.id, "voice", name), durationSec: +durationSec.toFixed(3),
-    words: line.kind === "chant" ? [] : alignWords(line.text, heard, durationSec),
+    key, file: name, url: projectOutputUrl(project.id, "voice", name), durationSec,
+    ...alignment,
   };
 }
 

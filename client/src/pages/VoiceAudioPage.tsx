@@ -26,6 +26,7 @@ import { ApiError } from '../lib/apiError';
 import { toastError } from '../lib/errors';
 import { cleanSpeakableText } from '../lib/speakableScript';
 import { buildChatterboxPayload } from '../lib/chatterboxRequest';
+import { beginVoiceTakeChange, completeVoiceTakeChange, emptyVoiceTakeTiming, selectVoiceTake, wordsForVoiceTake, type VoiceTakeTiming } from '../lib/voiceTakeTiming';
 import { Link } from 'react-router-dom';
 import {
     Play,
@@ -180,12 +181,35 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
     const [fishReason, setFishReason] = useState<string>('');
     const [voiceDefaults] = useVoiceSynthesisDefaults();
     const [ttsText, setTtsText] = useState('');
-    const [audioPath, setAudioPath] = useState('');
+    const [takeTiming, setTakeTiming] = useState<VoiceTakeTiming>(emptyVoiceTakeTiming);
+    const takeTimingRef = useRef(takeTiming);
+    const audioPath = takeTiming.path;
+    const updateTakeTiming = (next: VoiceTakeTiming) => {
+        takeTimingRef.current = next;
+        setTakeTiming(next);
+    };
+    // Every path setter (history, manual input, restored audio) invalidates pending responses.
+    const setAudioPath = (path: string) => {
+        updateTakeTiming(selectVoiceTake(takeTimingRef.current, path));
+        setLanded(false);
+    };
+    const beginTakeChange = (status: string) => {
+        const next = beginVoiceTakeChange(takeTimingRef.current, status);
+        updateTakeTiming(next);
+        setLanded(false);
+        return next.revision;
+    };
+    const finishTakeChange = (revision: number, path: string, data: unknown, status?: string) => {
+        const current = takeTimingRef.current;
+        const next = completeVoiceTakeChange(current, revision, path, data, status);
+        if (next === current) return false;
+        updateTakeTiming(next);
+        return true;
+    };
     // Embedded: which lab tab is open, and whether a take has landed (gates Next).
     const [labTab, setLabTab] = useState<LabTabId>('generate');
     const [landed, setLanded] = useState(false);
-    // Word timings of the latest generated take - captions align to them.
-    const [lastWords, setLastWords] = useState<Array<{ text: string; startMs: number; endMs: number }> | null>(null);
+
     const footerAudioRef = useRef<HTMLAudioElement | null>(null);
     useEffect(() => {
         if (embedded?.seedText) setTtsText(embedded.seedText);
@@ -440,6 +464,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
         }
         if (formattedTtsText !== ttsText) setTtsText(formattedTtsText);
 
+        const revision = beginTakeChange('Generating a new take — word timing is unavailable until it completes.');
         setIsProcessing(true);
         setTtsStartedAt(Date.now());
         setElapsedTick(0);
@@ -503,8 +528,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
             const response = await api.post(url, payload, undefined, { timeout: GENERATE_TIMEOUT_MS });
 
             if (response.ok && response.data?.file) {
-                setAudioPath(response.data.file);
-                setLastWords(Array.isArray(response.data.words) ? response.data.words : null);
+                if (!finishTakeChange(revision, response.data.file, response.data)) return;
                 // When the server falls back (e.g. Chatterbox 500 → Edge-TTS),
                 // it returns `fallbackProvider` so we can show what actually
                 // produced the audio instead of misleading the user.
@@ -527,9 +551,11 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                     toast.success(`Generated via ${providerLabel}`);
                 }
             } else {
+                finishTakeChange(revision, takeTimingRef.current.path, null, 'Generation failed. No word timing is attached; generate again or align the selected audio.');
                 toast.error(response.error || 'TTS generation failed');
             }
         } catch (error) {
+            finishTakeChange(revision, takeTimingRef.current.path, null, 'Generation failed. No word timing is attached; generate again or align the selected audio.');
             toast.error('An error occurred');
         } finally {
             setIsProcessing(false);
@@ -543,6 +569,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
             return;
         }
 
+        const revision = beginTakeChange('Processing audio — the output must be aligned before using word-synced captions.');
         setIsProcessing(true);
         try {
             const payload: Record<string, any> = {
@@ -577,10 +604,12 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
             const response = await api.post('/api/audio/process', payload, undefined, { timeout: GENERATE_TIMEOUT_MS });
 
             if (response.ok && response.data?.file) {
-                setAudioPath(response.data.file);
+                // No API proof of source/timeline preservation; silence removal can shift speech.
+                if (!finishTakeChange(revision, response.data.file, null, 'Processed audio has no verified word timing. Align this output before using word-synced captions.')) return;
                 addToHistory(response.data.file, 'processed', 'Processed');
                 toast.success('Audio processed!');
             } else {
+                finishTakeChange(revision, takeTimingRef.current.path, null, 'Processing failed. Align the selected audio to restore word timing.');
                 // Surface ffmpeg + audio pipeline failures through the friendly
                 // translator so users don't see raw exit codes like
                 // "ffmpeg failed: 4294967262".
@@ -589,6 +618,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                 toastError(new ApiError(code, code, payload));
             }
         } catch (error) {
+            finishTakeChange(revision, takeTimingRef.current.path, null, 'Processing failed. Align the selected audio to restore word timing.');
             toastError(error);
         } finally {
             setIsProcessing(false);
@@ -596,6 +626,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
     };
 
     const uploadBlob = async (blob: Blob, filename: string, kind: AudioItem['kind']) => {
+        const revision = beginTakeChange('Uploading a new take — no word timing is attached.');
         setIsUploading(true);
         try {
             // Raw binary streaming — no base64 inflation, constant server memory.
@@ -604,16 +635,20 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                 timeout: UPLOAD_TIMEOUT_MS,
             });
             if (response.ok && response.data?.file) {
-                setAudioPath(response.data.file);
+                if (!finishTakeChange(revision, response.data.file, null)) {
+                    return { ok: false as const, error: 'A different take was selected while uploading.' };
+                }
                 addToHistory(response.data.file, kind, filename);
                 toast.success('Audio uploaded!');
                 return { ok: true as const, file: response.data.file as string };
             } else {
+                finishTakeChange(revision, takeTimingRef.current.path, null, 'Upload failed. Align the selected audio to restore word timing.');
                 const error = response.error || 'Upload failed';
                 toast.error(error);
                 return { ok: false as const, error };
             }
         } catch (error) {
+            finishTakeChange(revision, takeTimingRef.current.path, null, 'Upload failed. Align the selected audio to restore word timing.');
             const message = error instanceof Error ? error.message : 'An error occurred';
             toast.error(message);
             return { ok: false as const, error: message };
@@ -1969,6 +2004,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                     placeholder="e.g. server/outputs/audio.mp3"
                                     className="bg-black/20"
                                 />
+                                <p role="status" className="text-[11px] text-editor-faint">{takeTiming.status}</p>
                             </div>
                             {audioHistory.length === 0 ? (
                                 <p className="text-[11px] text-editor-faint">No takes yet.</p>
@@ -2085,7 +2121,8 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                     <p className="truncate text-[10px] text-editor-faint" title={audioPath || undefined}>
                         {audioPath.trim() ? `Current audio · ${currentTrackLabel}` : 'No current audio yet — generate, record or pick a take.'}
                     </p>
-                    {currentAudioUrl && <audio ref={footerAudioRef} controls src={currentAudioUrl} className="h-8 w-full" />}
+                    <p role="status" className="text-[11px] text-editor-faint">{takeTiming.status}</p>
+                    {currentAudioUrl && <audio key={audioPath} ref={footerAudioRef} controls src={currentAudioUrl} className="h-8 w-full" />}
                     <Button
                         onClick={() => {
                             // Real duration from the player, and the words when this is the take we just generated.
@@ -2094,7 +2131,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                 path: audioPath,
                                 label: currentTrackLabel,
                                 durationSec: Number.isFinite(d) && (d as number) > 0 ? Math.round((d as number) * 100) / 100 : undefined,
-                                words: lastWords || undefined,
+                                words: wordsForVoiceTake(takeTimingRef.current, audioPath),
                             });
                             setLanded(true);
                         }}
@@ -2293,6 +2330,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                             onChange={(e) => setAudioPath(e.target.value)}
                             placeholder="e.g. server/outputs/audio.mp3"
                         />
+                        <p role="status" className="text-help mt-2">{takeTiming.status}</p>
                         <p className="text-help mt-2">
                             {audioPath.trim()
                                 ? 'This is the track the Render and Timeline pages will use. Generate, record, or click Use on a Recent Audio clip to change it.'

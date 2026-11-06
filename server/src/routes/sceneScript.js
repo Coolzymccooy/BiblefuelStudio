@@ -19,6 +19,7 @@ import { startRender, isRendering, cancelRender, renderBlockers, recoverInterrup
 import { isBedRef } from "../lib/sceneScript/music.js";
 import { normaliseRefine } from "../lib/sceneScript/refine.js";
 import { shotPlaybacks } from "../lib/sceneScript/renderData.js";
+import { captionTimingRefusal } from "../lib/sceneScript/captionTiming.js";
 
 /**
  * Scene scripts: paste an authored cinematic script, voice it word for word,
@@ -301,6 +302,8 @@ export function createSceneScriptRouter({ ledgerDir = DATA_DIR, deps = {} } = {}
     if (!project) return undefined;
     if (isRendering(project.id)) return fail(res, 409, "RUNNING", "This script is already rendering.");
     if (isVoicing(project.id) || isOrderingShots(project.id)) return fail(res, 409, "BUSY", "Wait for voicing and clips to finish.");
+    const timing = captionTimingRefusal(project);
+    if (timing) return fail(res, 409, timing.code, timing.message, { lines: timing.lines });
     const blockers = renderBlockers(req.ctx, project);
     if (needsVoice(project)) blockers.unshift("Some lines changed since they were voiced. Voice them again.");
     if (blockers.length) return fail(res, 409, "NOT_READY", blockers[0], { blockers });

@@ -29,7 +29,7 @@ import { runAlignJob, isAligning, failedTiming } from "../lib/lyricVideo/alignJo
 import { buildLyricAss, resolvedEffects } from "../lib/lyricVideo/lyricAss.js";
 import { renderSize, runLyricRender, audioShaped } from "../lib/lyricVideo/lyricRender.js";
 import { buildPublishDraft } from "../lib/lyricVideo/publishDraft.js";
-import { cleanText } from "../lib/lyricVideo/projectStore.js";
+import { cleanText, manualTiming } from "../lib/lyricVideo/projectStore.js";
 import { planMusicScenes } from "../lib/musicVideo/scenePlan.js";
 import { writeMusicPrompts, fallbackPrompt } from "../lib/musicVideo/scenePrompts.js";
 import { readProject as readStoryProject } from "../lib/story/projectStore.js";
@@ -79,7 +79,7 @@ const round3 = (n) => Math.round(n * 1000) / 1000;
 const placed = (l) => Array.isArray(l?.words) && l.words.length > 0 && Number.isFinite(l.start) && Number.isFinite(l.end);
 const isFile = (file) => { try { return fs.statSync(file).isFile(); } catch { return false; } };
 /** The line with its timing and its hand-moved lock removed; its text and effect stay. */
-const untimedLine = ({ words, start, end, confidence, flag, locked, ...line }) => line;
+const untimedLine = ({ words, start, end, confidence, flag, locked, timingQuality, ...line }) => line;
 
 /** Wraps a handler so a refusal answers its status and anything else is logged and answered plainly (no stack, no paths). */
 function route(handler) {
@@ -300,7 +300,7 @@ function nudgeLine(lines, i, want, songEnd) {
   const start = round3(Math.max(lo, Math.min(want, hi)));
   const shift = start - line.start;
   return {
-    ...line,
+    ...manualTiming(line, shift),
     words: line.words.map((w) => ({ ...w, start: round3(w.start + shift), end: round3(w.end + shift) })),
     start,
     end: round3(line.end + shift),

@@ -5,6 +5,7 @@ import React from "react";
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import type { Line, RenderData } from "./types";
 import { SANS, SERIF, SERIF_ITALIC } from "./fonts";
+import { captionOpacity, scheduleCaptions, type CaptionWindow } from "./captionSchedule";
 
 export const GOLD = "#F2C46D";
 export const SHADOW = "0 4px 24px rgba(0,0,0,0.85), 0 2px 6px rgba(0,0,0,0.9)";
@@ -40,17 +41,9 @@ function Words({ line, t, style, activeColor, upper = false }: {
   );
 }
 
-function lineWindow(line: Line, t: number) {
-  const hold = Math.min(Math.max(line.gap - 0.1, 0.25), 0.9);
-  const from = line.start - 0.05;
-  const to = line.start + line.dur + hold;
-  if (t < from || t > to + 0.3) return 0;
-  return interpolate(t, [from, from + 0.12, to, to + 0.3], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-}
-
-function ReferenceCard({ t, line }: { t: number; line: Line }) {
+function ReferenceCard({ t, line, window }: { t: number; line: Line; window: CaptionWindow }) {
   const { s, height } = useScale();
-  const o = lineWindow({ ...line, gap: 3.4 }, t);
+  const o = captionOpacity(window, t);
   if (o <= 0) return null;
   const grow = interpolate(t - line.start, [0, 0.8], [0, 1], { extrapolateRight: "clamp" });
   const text = (line.reference || line.text).toUpperCase();
@@ -65,12 +58,12 @@ function ReferenceCard({ t, line }: { t: number; line: Line }) {
   );
 }
 
-function CaptionLine({ line, t }: { line: Line; t: number }) {
+function CaptionLine({ line, t, window }: { line: Line; t: number; window: CaptionWindow }) {
   const { fps } = useVideoConfig();
   const { s, width, height } = useScale();
   const pad = `0 ${width * 0.074}px`;
-  if (line.kind === "reference") return <ReferenceCard t={t} line={line} />;
-  const o = lineWindow(line, t);
+  if (line.kind === "reference") return <ReferenceCard t={t} line={line} window={window} />;
+  const o = captionOpacity(window, t);
   if (o <= 0) return null;
   if (line.kind === "scripture") {
     return (
@@ -119,7 +112,7 @@ export const Captions: React.FC<{ data: RenderData }> = ({ data }) => {
   if (data.endCard && t >= data.endCard.at - 0.2) return null;
   return (
     <AbsoluteFill>
-      {data.lines.map((line) => <CaptionLine key={line.id} line={line} t={t} />)}
+      {scheduleCaptions(data.lines).map(({ line, window }) => <CaptionLine key={line.id} line={line} t={t} window={window} />)}
     </AbsoluteFill>
   );
 };

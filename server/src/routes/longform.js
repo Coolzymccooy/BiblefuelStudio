@@ -213,7 +213,7 @@ async function runNarration(ctx, projectId, voiceId) {
     return;
   }
   const words = wordsFromSections(narrated.sections);
-  const patch = buildImportedTranscript({ script: narrated.sections.map((s) => s.text).join(" "), audioPath: narrated.audioPath, durationMs: narrated.durationMs, words });
+  const patch = buildImportedTranscript({ script: narrated.sections.map((s) => s.text).join(" "), audioPath: narrated.audioPath, durationMs: narrated.durationMs, words, timing: { provenance: "section-spread", estimated: true } });
   const fresh = readProject(ctx.dataDir, projectId);
   writeProject(ctx.dataDir, {
     ...fresh,

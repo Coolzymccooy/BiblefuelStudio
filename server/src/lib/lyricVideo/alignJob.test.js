@@ -43,6 +43,26 @@ const deps = (over = {}) => ({
 });
 const run = (p, over) => runAlignJob({ dataDir: dir, workDir: dir, projectId: p.projectId, deps: deps(over) });
 
+test("quality survives real disk readback, sheet carryover and rerun locks", async () => {
+  const p = setup();
+  await run(p);
+  const saved = readProject(dir, p.projectId);
+  assert.equal(saved.lines[0].timingQuality.status, "asr-matched");
+  assert.ok(saved.lines[2].timingQuality.warnings.includes("interpolated-words"));
+  const carried = applySheet(saved, SHEET);
+  assert.deepEqual(carried.lines.map((l) => l.timingQuality), saved.lines.map((l) => l.timingQuality));
+  carried.lines[0].locked = true;
+  writeProject(dir, carried);
+  await run(carried);
+  const locked = readProject(dir, p.projectId).lines[0];
+  assert.deepEqual(locked.words, saved.lines[0].words, "locked source evidence and display windows are unchanged");
+  assert.equal(locked.timingQuality.status, "manual");
+  assert.equal(locked.timingQuality.verified, false);
+  assert.deepEqual(locked.timingQuality.originalEvidence, saved.lines[0].timingQuality);
+  await run(readProject(dir, p.projectId));
+  assert.deepEqual(readProject(dir, p.projectId).lines[0], locked, "rerun locks do not nest or overwrite evidence");
+});
+
 test("places lines, sets section starts on the beat, stores beats", async () => {
   const p = setup();
   const done = await run(p);
@@ -363,6 +383,8 @@ describe("a Whisper failure part-way keeps what was heard", () => {
     assert.equal(done.lines[0].start, 1);
     assert.equal(done.lines[1].start, 5);
     assert.ok(Array.isArray(done.timing.passes) && done.timing.passes.length >= 1);
+    assert.equal(done.lines[0].timingQuality.status, "asr-matched");
+    assert.ok(done.lines[2].timingQuality.warnings.includes("interpolated-words"));
     assert.deepEqual(readProject(dir, p.projectId).lines, done.lines);
   });
   test("a line locked mid-job still wins", async () => {

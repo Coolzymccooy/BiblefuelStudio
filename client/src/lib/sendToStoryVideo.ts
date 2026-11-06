@@ -14,7 +14,56 @@
  * verbatim.
  */
 import { api } from './api';
-import { extractTranscript, type TranscriptWord } from './gumroadToTimeline';
+
+interface TimedWord { text: string; startMs: number; endMs: number }
+
+function validWords(words: unknown): words is TimedWord[] {
+    if (!Array.isArray(words) || !words.length) return false;
+    return words.every((w, i) => typeof w?.text === 'string' && w.text.trim() &&
+        Number.isFinite(w.startMs) && Number.isFinite(w.endMs) && w.startMs >= 0 && w.endMs > w.startMs &&
+        (!i || (w.startMs >= words[i - 1].startMs && w.endMs >= words[i - 1].endMs)));
+}
+
+/** Native timing only. Never interpolate absent or malformed provider timing. */
+export function storyProviderWords(data: { words?: unknown; alignment?: unknown }): TimedWord[] | undefined {
+    if (validWords(data.words)) return data.words;
+    const a = data.alignment as { characters?: unknown; starts?: unknown; ends?: unknown } | undefined;
+    if (a && Array.isArray(a.characters) && Array.isArray(a.starts) && Array.isArray(a.ends) &&
+        a.characters.length && a.characters.length === a.starts.length && a.characters.length === a.ends.length) {
+        const words: TimedWord[] = [];
+        let current: TimedWord | undefined;
+        let previousStart = -Infinity;
+        let previousEnd = -Infinity;
+        let valid = true;
+        for (let i = 0; i < a.characters.length; i++) {
+            const ch = a.characters[i], start = a.starts[i], end = a.ends[i];
+            if (typeof ch !== 'string' || !ch.length || typeof start !== 'number' || typeof end !== 'number' ||
+                !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start ||
+                start < previousStart || end < previousEnd || (/\s/u.test(ch) && !/^\s+$/u.test(ch))) {
+                valid = false;
+                break;
+            }
+            previousStart = start;
+            previousEnd = end;
+            if (/^\s+$/u.test(ch)) {
+                if (current) words.push(current);
+                current = undefined;
+            } else if (current) {
+                current.text += ch;
+                current.endMs = end * 1000;
+            } else current = { text: ch, startMs: start * 1000, endMs: end * 1000 };
+        }
+        if (current) words.push(current);
+        if (valid && validWords(words)) return words;
+    }
+    const suppliedWords = data.words != null && !(Array.isArray(data.words) && !data.words.length);
+    const alignment = a as { characters?: unknown[] } | undefined;
+    if (suppliedWords || (alignment && (!Array.isArray(alignment.characters) || alignment.characters.length))) {
+        throw new Error('Narration returned invalid timestamps. Retry narration or import without timings as an estimated draft.');
+    }
+    return undefined;
+}
+
 
 /** Narration synthesis routinely exceeds the default 15s client timeout. */
 const GENERATE_TIMEOUT_MS = 120_000;
@@ -32,8 +81,7 @@ export interface SendToStoryResult {
 export function getAudioDurationSec(url: string): Promise<number> {
     return new Promise((resolve) => {
         const el = new Audio();
-        // Resolve to 0 rather than rejecting: the server recomputes duration
-        // from the word timings, so a failed probe degrades instead of blocking.
+        // A failed measurement blocks import; the last word is not audio duration.
         const done = (v: number) => resolve(Number.isFinite(v) && v > 0 ? v : 0);
         el.addEventListener('loadedmetadata', () => done(el.duration));
         el.addEventListener('error', () => done(0));
@@ -70,13 +118,13 @@ export async function narrateAndSendToStory(
 
     const file = tts.data.file as string;
     const durationSec = await getAudioDurationSec(api.mediaUrl(file));
-    const words: TranscriptWord[] = extractTranscript(tts.data, text, durationSec);
-
-    // Prefer the measured duration; fall back to the last word's end so a
-    // failed metadata probe still yields a usable project.
-    const durationMs = durationSec > 0
-        ? Math.round(durationSec * 1000)
-        : (words.length ? words[words.length - 1].endMs : 0);
+    const durationMs = Math.round(durationSec * 1000);
+    let words: TimedWord[] | undefined;
+    try {
+        words = storyProviderWords(tts.data);
+    } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : 'Invalid narration timestamps' };
+    }
 
     if (!durationMs) return { ok: false, error: 'Could not determine narration length' };
 
@@ -84,7 +132,14 @@ export async function narrateAndSendToStory(
         script: text,
         audioPath: file,
         durationMs,
-        words,
+        ...(words ? {
+            words,
+            // Preserve explicit synthesis handoff metadata when available. The
+            // importer validates full deterministic text/map coverage itself.
+            ...(tts.data.spokenText !== undefined ? { spokenText: tts.data.spokenText } : {}),
+            ...(tts.data.tokenMap !== undefined ? { tokenMap: tts.data.tokenMap } : {}),
+            timing: { provenance: 'supplied', estimated: tts.data.timing?.estimated === true, verified: false },
+        } : {}),
         title: opts.title,
         style: opts.style,
         // The server builds the project itself (segment, pictures) rather than

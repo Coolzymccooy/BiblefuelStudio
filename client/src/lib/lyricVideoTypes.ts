@@ -1,3 +1,4 @@
+import type { TimingQuality } from './timingQuality';
 // Mirrors what server/src/routes/lyricVideo.js sends (projectStore.js, alignJob.js, sheetParser.js).
 
 export type SectionKind = 'intro' | 'verse' | 'pre' | 'chorus' | 'final' | 'bridge' | 'outro' | 'other';
@@ -33,6 +34,8 @@ export interface LyricLine {
   confidence?: number;
   /** "check" marks a line worth a second look. */
   flag?: 'check' | null;
+  /** Preserved even after a manual nudge clears the legacy flag. */
+  timingQuality?: TimingQuality;
 }
 
 export type TimingStep = 'preparing' | 'vocals' | 'listening' | 'matching' | 'beats';

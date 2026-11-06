@@ -4,9 +4,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Upload, Loader2, Download, X, RefreshCw } from 'lucide-react';
 import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
-import { storyApi } from '../lib/storyApi';
+import { storyApi, confirmStoryTiming, storyTimingConsentKind } from '../lib/storyApi';
 import { longformApi } from '../lib/longformApi';
 import { useStoryProject } from '../hooks/useStoryProject';
+import { TimingQualityNotice } from '../components/ui/TimingQualityNotice';
+import { storyTimingText } from '../lib/timingQuality';
 import type { AnimateQuality, StoryAspect, StoryCaptionSettings, StoryProject } from '../lib/storyTypes';
 import { StoryAnimatePanel, confirmSceneSpend } from '../components/story/StoryAnimatePanel';
 import { useAnimateEstimate } from '../hooks/useAnimateEstimate';
@@ -220,10 +222,11 @@ export function StoryVideoPage() {
   };
 
   const onRender = async () => {
-    if (!projectId || imagesBusy) return;
+    if (!projectId || imagesBusy || busy || !project) return;
+    if (!confirmStoryTiming(project)) return;
     setBusy(true);
     try {
-      await storyApi.render(projectId);
+      await storyApi.render(projectId, storyTimingConsentKind(project) ? { acknowledgeApproximateTiming: true } : {});
       refresh();
       toast.success('Render started — running in the background. You can leave this page.');
     } catch (e) { toast.error((e as Error).message); }
@@ -317,7 +320,8 @@ export function StoryVideoPage() {
         return;
       }
       if (p.status === 'rendering') {
-        await storyApi.render(projectId);
+        if (!confirmStoryTiming(p)) return;
+        await storyApi.render(projectId, storyTimingConsentKind(p) ? { acknowledgeApproximateTiming: true } : {});
       } else {
         await storyApi.process(projectId, audioPath);
       }
@@ -678,6 +682,8 @@ export function StoryVideoPage() {
           </div>
         </div>
       )}
+
+      {project && (hasTranscript || project.scenes.length > 0) && <div className="mt-4"><TimingQualityNotice messages={[storyTimingText(project)]} /></div>}
 
       {step === 2 && project && (
         <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">

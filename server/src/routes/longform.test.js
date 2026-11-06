@@ -154,6 +154,11 @@ describe("POST /api/longform/:id/narrate", () => {
     assert.equal(pipelineCalls[0].projectId, id);
     assert.ok(p.source.audioPath.endsWith("narration.mp3"));
     assert.equal(p.source.durationMs, 430000);
+    assert.deepEqual(p.transcript.timing, { provenance: 'section-spread', accuracy: 'estimated', estimated: true, verified: false });
+    const { default: storyRouter } = await import('./story.js');
+    app.use('/api/story', storyRouter);
+    const reopened = await request(app).get(`/api/story/${id}`).expect(200);
+    assert.deepEqual(reopened.body.project.transcript.timing, p.transcript.timing);
     assert.equal(p.longform.sections[1].startMs, 65000);
     assert.ok(p.transcript.words.length > 5);
     assert.equal(p.transcript.words[0].startMs, 0);

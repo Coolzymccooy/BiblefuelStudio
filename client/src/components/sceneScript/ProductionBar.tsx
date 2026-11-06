@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { AlertTriangle, Clapperboard, Download, Mic, Sparkles, Square } from 'lucide-react';
 import { Button } from '../ui/Button';
 import type { SceneScriptProject } from '../../lib/sceneScriptTypes';
+import { TimingQualityNotice } from '../ui/TimingQualityNotice';
+import { sceneScriptTimingBlocked, sceneScriptTimingMessages } from '../../lib/timingQuality';
 import { clock, money } from './format';
 
 interface Props {
@@ -109,6 +111,7 @@ function RenderResult({ render }: { render: SceneScriptProject['render'] }) {
 }
 
 function VideoStep({ project, busy, onRender, onCancelRender }: Pick<Props, 'project' | 'busy' | 'onRender' | 'onCancelRender'>) {
+  const timingBlocked = sceneScriptTimingBlocked(project);
   const render = project.render;
   const rendering = project.running.render || render.status === 'queued' || render.status === 'rendering';
   return (
@@ -116,6 +119,8 @@ function VideoStep({ project, busy, onRender, onCancelRender }: Pick<Props, 'pro
       {project.blockers.length > 0 && !rendering && (
         <ul className="space-y-1">{project.blockers.map((b) => <li key={b} className="text-help">{b}</li>)}</ul>
       )}
+      <TimingQualityNotice messages={sceneScriptTimingMessages(project)} />
+      {timingBlocked && <p role="alert" className="text-xs text-bf-danger">Caption export blocked: unresolved or missing word spans could omit words. Re-record the affected lines, or turn captions off to render without captions.</p>}
       {render.status === 'error' && <p className="text-xs text-bf-danger">{render.error}</p>}
       {rendering && (
         <div className="h-1.5 overflow-hidden rounded-full bg-bf-input" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={render.progress ?? 0} aria-label="Render progress">
@@ -126,7 +131,7 @@ function VideoStep({ project, busy, onRender, onCancelRender }: Pick<Props, 'pro
         {rendering ? (
           <Button variant="ghost" onClick={onCancelRender}><Square size={14} aria-hidden="true" /> Stop render</Button>
         ) : (
-          <Button onClick={onRender} isLoading={busy === 'render'} disabled={project.blockers.length > 0 || project.needsVoice || busy !== null}>
+          <Button onClick={() => { if (!timingBlocked) onRender(); }} isLoading={busy === 'render'} disabled={timingBlocked || project.blockers.length > 0 || project.needsVoice || busy !== null}>
             <Clapperboard size={16} aria-hidden="true" /> {render.status === 'done' ? 'Render again' : 'Render video'}
           </Button>
         )}
