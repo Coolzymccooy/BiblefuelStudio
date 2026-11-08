@@ -1,4 +1,19 @@
-import type { TimelineProject } from './timelineProject';
+import type { TimelineClip, TimelineProject, TimelineTrack } from './timelineProject';
+
+/** The numeric editor commits all three clocks together. Only VO currently
+ * renders all three: atrim(source in, duration) then adelay(composition start).
+ * Main footage ignores these clocks; B-roll only gates an overlay window (and
+ * can become the main input); music loops from zero. Do not promise partial
+ * support for those lanes, captions or effects through this editor. */
+export function clipTimingUnavailableReason(track: TimelineTrack, clip: TimelineClip): string | undefined {
+  if (track.locked || track.hidden || clip.id.includes('sidecar-sync')) {
+    return 'Timing is read-only: this lane is locked/hidden, or follows the Captions / Music tool.';
+  }
+  if (track.kind !== 'voiceover') {
+    return 'Timing is not available for this track. Numeric Start, Source in and Duration edits are supported only for Voice-over export.';
+  }
+  return undefined;
+}
 
 /** Numeric alternative to pointer editing, using the existing 1x source clock.
  * Sidecar timings are owned by syncSidecarTracks and must not be overwritten. */
@@ -7,7 +22,7 @@ export function editClipTiming(project: TimelineProject, clipId: string, timing:
 }): TimelineProject {
   const track = project.tracks.find((t) => t.clips.some((c) => c.id === clipId));
   const clip = track?.clips.find((c) => c.id === clipId);
-  if (!track || !clip || track.locked || track.hidden || clip.id.includes('sidecar-sync')) return project;
+  if (!track || !clip || clipTimingUnavailableReason(track, clip)) return project;
   const { startSec, sourceStartSec, durationSec } = timing;
   if (![startSec, sourceStartSec, durationSec].every(Number.isFinite) ||
       startSec < 0 || sourceStartSec < 0 || durationSec < 0.05 ||

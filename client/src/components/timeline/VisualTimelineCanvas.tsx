@@ -887,7 +887,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
 
   const timing = selection && timingOpen && (
     <ClipTimingFields key={`${selection.clip.id}:${selection.clip.startSec}:${selection.clip.sourceStartSec}:${selection.clip.durationSec}`}
-      clip={selection.clip} disabled={!onProjectChange || selectionLocked || selection.clip.id.includes('sidecar-sync')}
+      track={selection.track} clip={selection.clip} disabled={!onProjectChange}
       onApply={(values) => {
         const next = editClipTiming(project, selection.clip.id, values);
         if (next === project) return values.startSec === selection.clip.startSec && values.sourceStartSec === (selection.clip.sourceStartSec || 0) && values.durationSec === selection.clip.durationSec;

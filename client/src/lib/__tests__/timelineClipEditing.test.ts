@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { editClipTiming } from '../timelineClipEditing';
-import { buildWorshipDocumentaryProject, insertAssetOnTrack } from '../timelineProject';
+import { buildWorshipDocumentaryProject, insertAssetOnTrack, type TimelineTrackKind } from '../timelineProject';
 import { composeVoiceTiming } from '../timelineTrackSync';
 
 function fixture() {
@@ -11,6 +11,21 @@ function fixture() {
   });
 }
 describe('numeric clip edits use existing source/composition clocks', () => {
+  test.each(['video', 'broll', 'music', 'captions', 'effects'] as TimelineTrackKind[])('rejects every numeric clock on unsupported %s, without mutating the project', (kind) => {
+    const p = fixture();
+    // Use the same valid asset and in-bounds clocks: renderer capability, not
+    // incidental validation or sidecar naming, must stop the direct caller.
+    const track = p.tracks.find((t) => t.kind === 'voiceover')!;
+    track.kind = kind;
+    const clip = track.clips[0];
+    const before = JSON.stringify(p);
+    for (const timing of [
+      { startSec: 12, sourceStartSec: 0, durationSec: 6 },
+      { startSec: 10, sourceStartSec: 2, durationSec: 6 },
+      { startSec: 10, sourceStartSec: 0, durationSec: 3 },
+    ]) expect(editClipTiming(p, clip.id, timing)).toBe(p);
+    expect(JSON.stringify(p)).toBe(before);
+  });
   test('moves and trims without mutating words or unrelated project state', () => {
     const p = fixture(); const clip = p.tracks.find((t) => t.kind === 'voiceover')!.clips[0];
     const result = editClipTiming(p, clip.id, { startSec: 20.25, sourceStartSec: 2, durationSec: 3 });
