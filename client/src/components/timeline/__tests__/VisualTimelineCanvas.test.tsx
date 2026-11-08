@@ -342,7 +342,7 @@ describe('zoom-out is not swallowed by the minimum width', () => {
     const base = buildWorshipDocumentaryProject({ title: 'Zoom' });
     const project = { ...base, id: 'zoomfloor' };
     const { container, unmount } = render(<VisualTimelineCanvas project={project} compact />);
-    const scroller = container.querySelector('.overflow-x-auto');
+    const scroller = container.querySelector('.timeline-lanes');
     const inner = scroller?.firstElementChild as HTMLElement | null;
     const cls = inner?.className ?? '';
     unmount();

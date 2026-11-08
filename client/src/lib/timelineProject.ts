@@ -45,6 +45,9 @@ export interface TimelineAsset {
   proxyStatus?: 'pending' | 'ready' | 'failed' | string;
   durationSec?: number;
   aspect?: TimelineAspect;
+  /** Original display dimensions, not the project's canvas or preview proxy. */
+  width?: number;
+  height?: number;
   prompt?: string;
   tags?: string[];
   /** Word timings of a voice take - captions align to these. */

@@ -58,6 +58,10 @@ export interface ClipAction {
 
 export interface EditorShellProps {
   tools: EditorTool[];
+  /** Timeline-only compact phone chrome; other editor consumers keep their layout. */
+  compactMobile?: boolean;
+  /** Only Timeline Editor replaces global navigation with its corner menu. */
+  reclaimMobileNavigation?: boolean;
   /** Panel body per tool id. A missing entry renders the empty state. */
   panels: Record<string, ReactNode>;
   /** The preview area. */
@@ -76,6 +80,8 @@ export interface EditorShellProps {
    * without owning the rail's click handling.
    */
   activeToolId?: string;
+  /** Explicit activation request; a new sequence reopens even the same controlled tool. */
+  openToolRequest?: { id: string; sequence: number };
   /**
    * Right-hand properties rail, shown only when there is something to inspect.
    * CapCut reveals this once a clip is selected; keeping it hidden otherwise is
@@ -117,6 +123,8 @@ const RAIL_W = 60;
 
 export function EditorShell({
   tools,
+  compactMobile = false,
+  reclaimMobileNavigation = false,
   panels,
   stage,
   strip,
@@ -124,6 +132,7 @@ export function EditorShell({
   initialToolId,
   onToolChange,
   activeToolId,
+  openToolRequest,
   propertyTools,
   propertyPanels,
   clipActions,
@@ -141,14 +150,19 @@ export function EditorShell({
   const phone = usePhoneLayout();
   // On phones the tool panel is a SHEET over the timeline; tapping the active
   // tool again (or the chevron) folds it away so the whole timeline is usable.
-  const [sheetOpen, setSheetOpen] = useState(true);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  useEffect(() => {
+    if (!openToolRequest) return;
+    setActiveId(openToolRequest.id);
+    setSheetOpen(true);
+  }, [openToolRequest]);
   // How much of the phone screen the stage keeps. Dragged by the grip
   // between stage and timeline, clamped so neither can be squeezed away
   // (the operator could pull the timeline up and then not pull it back).
   const [stagePct, setStagePct] = useState<number>(() => {
     const raw = typeof window !== 'undefined' ? window.localStorage.getItem('bf.editor.phoneStagePct') : null;
     const n = raw ? Number(raw) : NaN;
-    return Number.isFinite(n) ? Math.min(62, Math.max(14, n)) : 42;
+    return Number.isFinite(n) ? Math.min(62, Math.max(14, n)) : 30;
   });
   useEffect(() => {
     try { window.localStorage.setItem('bf.editor.phoneStagePct', String(stagePct)); } catch { /* private mode */ }
@@ -177,7 +191,7 @@ export function EditorShell({
   const [toolsEdge, setToolsEdge] = useState({ start: false, end: false, overflows: false });
   // The phone rail is a horizontal strip; the desktop rail is a vertical
   // column. One flag, read in both places, so they cannot disagree.
-  const toolsAxis: 'vertical' | 'horizontal' = phone ? 'horizontal' : 'vertical';
+  const toolsAxis: 'vertical' | 'horizontal' = phone && !shortScreenLayout ? 'horizontal' : 'vertical';
   const measureTools = useCallback(() => {
     const el = toolsRef.current;
     if (!el) return;
@@ -252,7 +266,12 @@ export function EditorShell({
   };
   // The preview drawer folds away entirely, so the lanes get the screen.
   const [stageCollapsed, setStageCollapsed] = useState<boolean>(() => {
-    try { return window.localStorage.getItem('bf.editor.phoneStageCollapsed') === '1'; } catch { return false; }
+    // A first-use short landscape needs the full timeline width. Keep an
+    // explicit saved choice, and leave portrait/desktop defaults unchanged.
+    try {
+      const saved = window.localStorage.getItem('bf.editor.phoneStageCollapsed');
+      return saved === null ? phone && shortScreenLayout : saved === '1';
+    } catch { return phone && shortScreenLayout; }
   });
   useEffect(() => {
     try { window.localStorage.setItem('bf.editor.phoneStageCollapsed', stageCollapsed ? '1' : '0'); } catch { /* private mode */ }
@@ -445,13 +464,13 @@ export function EditorShell({
         </div>
       )}
       {/* Grip: drag to trade stage for timeline, in BOTH directions. */}
-      <div className="flex h-7 shrink-0 items-center gap-2 border-y border-editor-line bg-editor-chrome px-2 short:hidden">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-y border-editor-line bg-editor-chrome px-2 short:h-auto short:w-11 short:flex-col short:border-r short:px-0">
         <button
           type="button"
           aria-label={stageCollapsed ? 'Show preview' : 'Hide preview'}
           title={stageCollapsed ? 'Show the preview' : 'Hide the preview and give the lanes the screen'}
           onClick={() => setStageCollapsed((v) => !v)}
-          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-editor-dim transition hover:bg-editor-hover hover:text-editor-text"
+          className="flex h-11 items-center gap-1 rounded-md px-1.5 text-xs font-semibold text-editor-dim transition hover:bg-editor-hover hover:text-editor-text short:h-auto short:min-h-11 short:w-full short:flex-col short:px-0 short:text-[10px]"
         >
           {stageCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
           Preview
@@ -463,7 +482,7 @@ export function EditorShell({
             aria-label="Resize preview"
             aria-orientation="horizontal"
             onPointerDown={onPhoneDragStart}
-            onDoubleClick={() => setStagePct(42)}
+            onDoubleClick={() => setStagePct(30)}
             title="Drag to resize the preview · double-tap to reset"
             className="flex h-full flex-1 cursor-row-resize touch-none items-center justify-center"
           >
@@ -476,7 +495,7 @@ export function EditorShell({
         <div className="h-full overflow-hidden">{strip}</div>
         {/* Bring the panel back. Without this the sheet could only be
             closed - the operator had no way back to the tool. */}
-        {!sheetOpen && (
+        {!sheetOpen && !compactMobile && (
           <button
             type="button"
             onClick={() => setSheetOpen(true)}
@@ -503,7 +522,7 @@ export function EditorShell({
                 onClick={() => setSheetOpen(false)}
                 aria-label="Hide panel"
                 title="Hide this panel and see the timeline"
-                className="grid h-7 w-7 place-items-center rounded-md text-editor-dim hover:bg-editor-hover hover:text-editor-text"
+                className="grid h-11 w-11 place-items-center rounded-md text-editor-dim hover:bg-editor-hover hover:text-editor-text"
               >
                 <ChevronDown size={15} />
               </button>
@@ -566,7 +585,7 @@ export function EditorShell({
   return createPortal(
     <div
       ref={shellRef}
-      className="fixed inset-0 z-30 flex h-screen flex-col overflow-hidden bg-editor-chrome text-editor-text phone:bottom-[calc(64px_+_env(safe-area-inset-bottom))] phone:h-[calc(100dvh_-_64px_-_env(safe-area-inset-bottom))] lg:left-[240px]"
+      className={`fixed inset-0 z-30 flex h-screen flex-col overflow-hidden bg-editor-chrome text-editor-text ${reclaimMobileNavigation ? 'phone:bottom-0 phone:h-[100dvh] phone:pb-[env(safe-area-inset-bottom)]' : 'phone:bottom-[calc(64px_+_env(safe-area-inset-bottom))] phone:h-[calc(100dvh_-_64px_-_env(safe-area-inset-bottom))]'} lg:left-[240px] ${compactMobile ? 'timeline-editor-shell' : ''}`}
       // h-screen is NOT redundant with inset-0. Measured in the live DOM: with
       // position:fixed, top:0 AND bottom:0, the element still computed to
       // 106.75px, because it is a flex ITEM of the app's <main> column and that
@@ -583,9 +602,10 @@ export function EditorShell({
       // lanes inside it scroll. overflow-hidden makes that structural.
     >
       {topBar && (
-        <div className="flex shrink-0 items-center gap-3 border-b border-editor-line px-4 short:h-[36px] h-[52px] phone:h-[44px] phone:gap-2 phone:px-2 phone:[&>*]:shrink-0 phone:overflow-x-auto">
-          {topBar}
-        </div>
+        <div data-editor-header className="shrink-0 border-b border-editor-line" style={{ display: 'grid', gridTemplateColumns: phone && reclaimMobileNavigation ? 'minmax(0, 1fr) 50px' : 'minmax(0, 1fr)' }}>
+                  <div style={{ minWidth: 0 }} className="flex items-center gap-3 px-4 short:h-[36px] h-[52px] phone:h-[48px] phone:gap-2 phone:px-2 phone:[&>*]:shrink-0 overflow-x-auto">{topBar}</div>
+                  {phone && reclaimMobileNavigation && <div data-editor-navigation-slot aria-hidden="true" />}
+                </div>
       )}
 
       {phone ? phoneBody : (

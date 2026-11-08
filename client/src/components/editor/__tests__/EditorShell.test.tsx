@@ -200,13 +200,9 @@ describe('EditorShell — phone legibility', () => {
   });
 
   it('gives the phone reopen button a readable size', async () => {
-    // Closed sheet: this bar is the operator's way back to the tool, and was
-    // one of the labels marked unreadable. The sheet starts OPEN, so fold it
-    // away first - the bar only exists once it is closed.
+    // The timeline is exposed by default; the reopen bar must remain readable.
     asPhone(true);
-    const user = userEvent.setup();
     setup();
-    await user.click(screen.getByRole('button', { name: /hide panel/i }));
     const bar = document.body.querySelector('button.absolute.inset-x-0');
     const barPx = Number(((bar?.className as string) || '').match(/text-\[(\d+)px\]/)?.[1]);
     expect(barPx).toBeGreaterThanOrEqual(13);
@@ -215,7 +211,7 @@ describe('EditorShell — phone legibility', () => {
   it('gives the phone sheet header a readable size', async () => {
     asPhone(true);
     setup();
-    // The sheet is open by default on a phone, so its header is already here.
+    await userEvent.setup().click(screen.getByRole('tab', { name: /media/i }));
     // Target the sheet header by its distinctive uppercase tracking, not by
     // position - the rail renders spans of its own.
     const header = [...document.body.querySelectorAll('span')]
@@ -224,12 +220,29 @@ describe('EditorShell — phone legibility', () => {
     expect(px).toBeGreaterThanOrEqual(13);
   });
 
-  it('keeps empty-state copy readable on phones', () => {
+  it('keeps empty-state copy readable on phones', async () => {
     asPhone(true);
     setup({ panels: {} });
+    await userEvent.setup().click(screen.getByRole('tab', { name: /media/i }));
     const empty = screen.getByText(/nothing here yet/i);
     const px = Number((empty.className.match(/text-\[(\d+)px\]/) || [])[1]);
     expect(px).toBeGreaterThanOrEqual(13);
+  });
+
+  it('defaults only short phones to collapsed preview and keeps its toggle reachable', async () => {
+    localStorage.removeItem('bf.editor.phoneStageCollapsed');
+    asPhone(true);
+    const original = window.matchMedia;
+    window.matchMedia = (q: string) => ({ ...original(q), matches: q === PHONE || q === '(max-height: 500px)' });
+    setup();
+    expect(screen.queryByText('stage content')).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: 'Show preview' });
+    expect(toggle.parentElement?.className).not.toContain('short:hidden');
+    await userEvent.setup().click(toggle);
+    expect(screen.getByText('stage content')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Hide preview' }));
+    expect(screen.queryByText('stage content')).not.toBeInTheDocument();
+    localStorage.removeItem('bf.editor.phoneStageCollapsed');
   });
 
   it('leaves the desktop layout alone', () => {

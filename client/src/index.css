@@ -722,6 +722,37 @@
 
   /* Neutral icon button. The DEFAULT for icon actions: no colour until hover,
      so a row of them reads as one control group rather than a fruit salad. */
+  .timeline-toolbar .icon-btn, .timeline-toolbar .icon-btn-danger {
+    min-width: 44px;
+    min-height: 44px;
+    flex-shrink: 0;
+  }
+  @media (max-width: 1023px) {
+    .timeline-editor-shell > div:first-child { min-height: 48px; }
+    .timeline-editor-shell > div:first-child button, .timeline-editor-shell > div:first-child select { min-height: 44px; }
+    .timeline-editor-shell button[aria-label="Hide preview"], .timeline-editor-shell button[aria-label="Show preview"] { min-height: 44px; min-width: 44px; }
+    .timeline-canvas .timeline-lanes button[title="Open the tool that fills this lane"] { min-height: 44px; font-size: 12px; }
+    .timeline-mobile-tools > button { min-height: 44px; min-width: 44px; flex-shrink: 0; }
+    .timeline-mobile-tools > select { height: 44px; }
+    .timeline-canvas .timeline-lanes { padding: 4px; }
+    .timeline-canvas .timeline-lanes [aria-label^="Track lane:"] { min-height: 48px; }
+    .timeline-canvas .timeline-lanes [aria-label^="Timeline clip:"] { min-height: 44px; top: 0; font-size: 12px; }
+    .timeline-canvas .timeline-lanes [aria-label^="Timeline clip:"] > div > button { min-height: 42px; }
+    .timeline-canvas .timeline-lanes .relative.h-9 { height: 44px; }
+    .timeline-canvas .timeline-lanes summary { height: 44px; width: 44px; }
+    .timeline-canvas .timeline-lanes button:disabled { opacity: .5; }
+  }
+  .timeline-lane-menu > div > button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 44px;
+    margin-left: 0;
+    padding: 8px;
+    text-align: left;
+  }
+  .timeline-lane-menu > div > button::after { content: attr(aria-label); font-size: 12px; }
   .icon-btn {
     @apply inline-grid place-items-center rounded-md p-1.5 transition-colors;
     color: var(--content-tertiary);
