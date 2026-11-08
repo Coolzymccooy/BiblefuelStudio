@@ -336,7 +336,9 @@ router.get("/info", async (req, res) => {
   try {
     const inputPath = userFile(req.ctx, req.query?.inputPath);
     const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
-    const args = ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", ...LOCAL_PROTOCOL_GUARD, inputPath];
+    // Probe the original, never the resized proxy. Display geometry includes
+    // sample aspect ratio and rotation so portrait recordings stay portrait.
+    const args = ["-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration:stream=width,height,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation", "-of", "json", ...LOCAL_PROTOCOL_GUARD, inputPath];
     const proc = spawn(ffprobe, args);
     let out = "";
     let err = "";
@@ -346,8 +348,11 @@ router.get("/info", async (req, res) => {
       if (code !== 0) {
         return res.status(400).json({ ok: false, error: `ffprobe failed: ${code}`, details: err.slice(-1000) });
       }
-      const durationSec = Number(String(out).trim());
-      res.json({ ok: true, durationSec: Number.isFinite(durationSec) ? durationSec : null });
+      let metadata;
+      try { metadata = JSON.parse(out); } catch { return res.status(400).json({ ok: false, error: "Invalid ffprobe metadata" }); }
+      const durationSec = Number(metadata.format?.duration);
+      const size = parseProbeSize(out);
+      res.json({ ok: true, durationSec: Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null, ...(size || {}) });
     });
   } catch (e) {
     failRoute(res, e);
@@ -431,3 +436,4 @@ router.post("/timeline-preview", async (req, res) => {
 });
 
 export default router;
+import { parseProbeSize } from "../lib/story/sceneFraming.js";

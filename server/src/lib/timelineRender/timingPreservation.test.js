@@ -39,6 +39,21 @@ function project() {
   ] };
 }
 const opts = { serverRoot: process.cwd(), outputDir: path.resolve(process.env.TMPDIR || process.cwd()), outputPath: path.resolve(process.env.TMPDIR || process.cwd(), 'synthetic-clock.mp4') };
+test('numeric VO timing contract reaches the actual proof renderer source trim and composition delay without rewriting source words', () => {
+  const p = project();
+  p.targetDurationSec = 30;
+  p.assets.vo.durationSec = 10;
+  p.tracks[1].clips = [{ id: 'numeric-vo', assetId: 'vo', startSec: 20.25, sourceStartSec: 2, durationSec: 3 }];
+  const original = JSON.stringify(p);
+  const plan = buildTimelineRenderPlan(JSON.parse(original));
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.tracks.find((t) => t.kind === 'voiceover').clips[0].words, words);
+  const command = buildProofRenderCommand(plan, opts);
+  assert.equal(command.ok, true);
+  const graph = command.args[command.args.indexOf('-filter_complex') + 1];
+  assert.match(graph, /atrim=start=2:duration=3,asetpts=PTS-STARTPTS,adelay=20250\|20250/);
+  assert.equal(JSON.stringify(p), original);
+});
 test('authored Hello! survives serialization, planner, drawtext and Studio ASS with original timing', () => {
   const p = project();
   p.tracks[2].clips = [{ id: 'authored-punctuation', assetId: 'captions', text: 'Hello!',

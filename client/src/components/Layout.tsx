@@ -12,6 +12,8 @@ import { AUTH_INVALID_EVENT } from '../lib/api';
 import { NotificationsBell } from './NotificationsBell';
 import { VerifyEmailGate } from './VerifyEmailGate';
 import { ReportIssueWidget } from './ReportIssueWidget';
+import { EditorNavigationContext } from './editor/EditorNavigationContext';
+import { EditorAppNavigation } from './editor/EditorAppNavigation';
 
 // Full page list for the desktop sidebar + mobile drawer. `superOnly` items are
 // hidden for non-super-admins (the server still enforces the gate).
@@ -43,11 +45,13 @@ const studioGroup = ['/app/studio', '/app/voice-audio', '/app/timeline', '/app/b
 
 export function Layout() {
     const [drawerOpen, setDrawerOpen] = useState(false);
+    const [timelineEditorActive, setTimelineEditorActive] = useState(false);
     const { token, emailVerified, isSuperAdmin, isLoading, error: authError, logout, checkStatus } = useAuth();
     // A validation failure that is NOT a rejection: the app stays usable.
     const sessionCheckFailed = Boolean(authError) && !/expired|login again/i.test(String(authError));
     const location = useLocation();
     const navigate = useNavigate();
+    const editorNavigation = location.pathname === '/app/timeline' && timelineEditorActive;
     const [loadingExpired, setLoadingExpired] = useState(false);
     // Give validation a few seconds, then show the app anyway. A stalled
     // check must never cost the operator their navigation.
@@ -138,6 +142,7 @@ export function Layout() {
     ];
 
     return (
+        <EditorNavigationContext.Provider value={setTimelineEditorActive}>
         <div className="min-h-screen flex flex-col lg:flex-row font-sans text-bf-cream">
             {/* ── Desktop sidebar (warm, inherits the new tokens) ── */}
             <aside className="hidden lg:flex fixed top-0 left-0 z-40 w-64 h-screen lg:static bg-bf-bg2/80 backdrop-blur-xl border-r border-[rgba(216,184,120,0.10)] flex-col">
@@ -199,7 +204,7 @@ export function Layout() {
                     // Width is per-screen: editing surfaces (timeline, studio) get
                     // near-full width on desktop, two-pane screens get a wider
                     // column, and reading/form screens stay narrow. See pageWidth.
-                    className={`mx-auto w-full ${pageWidthClass(location.pathname)} px-[18px] pt-5 lg:pt-8 lg:px-8 pb-[calc(88px+env(safe-area-inset-bottom))] lg:pb-16 animate-bffade`}
+                    className={`mx-auto w-full ${pageWidthClass(location.pathname)} px-[18px] pt-5 lg:pt-8 lg:px-8 ${editorNavigation ? 'pb-0' : 'pb-[calc(88px+env(safe-area-inset-bottom))]'} lg:pb-16 animate-bffade`}
                 >
                     {/* Job outcomes announce themselves here rather than only
                         in the bell, so a finished or failed render is seen. */}
@@ -211,7 +216,7 @@ export function Layout() {
             <ReportIssueWidget />
 
             {/* ── Mobile bottom tab bar ── */}
-            <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-bf-bg/95 backdrop-blur-xl border-t border-[rgba(216,184,120,0.12)] pb-[env(safe-area-inset-bottom)]">
+            <nav aria-label="App navigation" className={`${editorNavigation ? 'hidden' : 'lg:hidden'} fixed bottom-0 inset-x-0 z-40 bg-bf-bg/95 backdrop-blur-xl border-t border-[rgba(216,184,120,0.12)] pb-[env(safe-area-inset-bottom)]`}>
                 <div className="flex items-stretch">
                     {bottomTabs.map((tab) => {
                         const Icon = tab.icon;
@@ -228,6 +233,13 @@ export function Layout() {
                     })}
                 </div>
             </nav>
+
+            {editorNavigation && <EditorAppNavigation items={[
+                ...visibleNav,
+                ...(isSuperAdmin ? [{ path: '/app/admin', label: 'Admin', icon: ShieldCheck }] : []),
+                { path: '/app/settings', label: 'Settings', icon: Settings },
+                { path: '/app/help', label: 'Help', icon: HelpCircle },
+            ]} />}
 
             {/* ── Mobile drawer (right slide-over) ── */}
             {drawerOpen && (
@@ -281,5 +293,6 @@ export function Layout() {
                 </div>
             )}
         </div>
+        </EditorNavigationContext.Provider>
     );
 }

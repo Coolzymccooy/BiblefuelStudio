@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { browserSourceInfo, insertMeasuredSource, type SourceMediaInfo } from '../lib/timelineSourceInsertion';
 import { api, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS, videoGenApi, timelineApi, RESUMABLE_UPLOAD_MAX_BYTES } from '../lib/api';
 import { uploadMedia } from '../lib/mediaUpload';
 import toast from 'react-hot-toast';
@@ -59,6 +60,7 @@ import { useSourceVocalRemoval } from '../components/timeline/useSourceVocalRemo
 import { swapIntoMusicBed } from '../lib/musicBedSwap';
 import { TranscriptActions } from '../components/timeline/TranscriptActions';
 import { EditorShell } from '../components/editor/EditorShell';
+import { useTimelineEditorNavigation } from '../components/editor/EditorNavigationContext';
 import { PanelSection } from '../components/editor/PanelSection';
 import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
 import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
@@ -192,6 +194,11 @@ export function TimelinePage() {
     // The rail is controlled from here so a quick job can hand off to the
     // next tool: Script -> Voice this -> Voice -> Next: Render -> Output.
     const [activeTool, setActiveTool] = useState('media');
+    const [openToolRequest, setOpenToolRequest] = useState<{ id: string; sequence: number }>();
+    const openTool = (id: string) => {
+        setActiveTool(id);
+        setOpenToolRequest(previous => ({ id, sequence: (previous?.sequence ?? 0) + 1 }));
+    };
     const [voiceSeedText, setVoiceSeedText] = useState('');
     // The docked Render lab's background picks, mirrored on the stage live.
     const [labBackgrounds, setLabBackgrounds] = useState<Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>>([]);
@@ -458,6 +465,7 @@ export function TimelinePage() {
     const [editorLayout, setEditorLayout] = usePersistedState<boolean>(
         'bf.timeline.editorLayout', false,
     );
+    useTimelineEditorNavigation(editorLayout);
 
     // Drives a single compact toast through an upload's two phases: byte
     // transfer (determinate %) then server-side processing (indeterminate).
@@ -1247,7 +1255,18 @@ export function TimelinePage() {
         toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} added to the timeline`);
     };
 
-    const handleInsertSourceMediaIntoDocumentary = () => {
+    // Invalidate pending probes on every source/upload/project switch (including A → B → A).
+    const insertionContext = useRef({ path: sourceMediaPath, kind: sourceMediaKind, uploading: isUploading, projectId: documentaryProject?.id, revision: 0 });
+    const previousInsertion = insertionContext.current;
+    if (previousInsertion.path !== sourceMediaPath || previousInsertion.kind !== sourceMediaKind || previousInsertion.uploading !== isUploading || previousInsertion.projectId !== documentaryProject?.id) {
+        insertionContext.current = { path: sourceMediaPath, kind: sourceMediaKind, uploading: isUploading, projectId: documentaryProject?.id, revision: previousInsertion.revision + 1 };
+    }
+    const insertionBusy = useRef(false);
+    const insertionProject = useRef(documentaryProject);
+    insertionProject.current = documentaryProject;
+    const insertionProxy = useRef({ path: sourceMediaPath, proxyPath: sourceMediaProxyPath, proxyStatus: sourceMediaProxyStatus });
+    insertionProxy.current = { path: sourceMediaPath, proxyPath: sourceMediaProxyPath, proxyStatus: sourceMediaProxyStatus };
+    const handleInsertSourceMediaIntoDocumentary = async () => {
         if (!documentaryProject) {
             toast.error('Create a documentary timeline first');
             return;
@@ -1256,17 +1275,30 @@ export function TimelinePage() {
             toast.error('Upload source media first');
             return;
         }
-        const label = sourceMediaPath.split(/[\\/]/).pop() || (sourceMediaKind === 'video' ? 'Uploaded video' : sourceMediaKind === 'image' ? 'Uploaded image' : 'Uploaded audio');
-        const nextProject = insertSourceMediaOnTimeline(documentaryProject, {
-            label,
-            path: sourceMediaPath,
-            proxyPath: sourceMediaKind === 'video' ? sourceMediaProxyPath || undefined : undefined,
-            proxyStatus: sourceMediaKind === 'video' ? sourceMediaProxyStatus || undefined : undefined,
-            kind: sourceMediaKind,
-            durationSec: sourceMediaKind === 'image' ? 5 : 30,
-        });
-        setDocumentaryProject(nextProject);
-        toast.success(sourceMediaKind === 'video' ? 'Inserted into Real footage track' : sourceMediaKind === 'image' ? 'Inserted into AI B-roll / cutaways track' : 'Inserted into Music bed track');
+        if (insertionBusy.current || isUploading) return;
+        insertionBusy.current = true;
+        const context = insertionContext.current;
+        const path = sourceMediaPath, kind = sourceMediaKind;
+        const label = path.split(/[\\/]/).pop() || 'Uploaded source';
+        try {
+            const response = await api.get<SourceMediaInfo>(`/api/audio-adv/info?inputPath=${encodeURIComponent(path)}`);
+            let info: SourceMediaInfo = response.ok ? response.data || {} : {};
+            if ((kind !== 'image' && !(Number.isFinite(info.durationSec) && info.durationSec! > 0)) ||
+                (kind !== 'audio' && !(info.width! > 0 && info.height! > 0))) {
+                const browser = await browserSourceInfo(api.mediaUrl(path), kind);
+                info = { ...info, ...browser, durationSec: info.durationSec || browser.durationSec };
+            }
+            if (insertionContext.current !== context) return;
+            const current = insertionProject.current;
+            if (!current || current.id !== context.projectId) return;
+            const next = insertMeasuredSource(current, { path, kind, label, info,
+                proxyPath: kind === 'video' && insertionProxy.current.path === path ? insertionProxy.current.proxyPath || undefined : undefined,
+                proxyStatus: kind === 'video' && insertionProxy.current.path === path ? insertionProxy.current.proxyStatus || undefined : undefined });
+            setDocumentaryProject(next);
+            toast.success('Measured source inserted into timeline');
+        } catch (error) {
+            if (insertionContext.current === context) toast.error((error as Error).message || 'Could not measure source. Nothing was inserted.');
+        } finally { insertionBusy.current = false; }
     };
 
     const handleInsertVoiceoverPlaceholder = () => {
@@ -2256,6 +2288,8 @@ export function TimelinePage() {
         return (
             <>
             <EditorShell
+                compactMobile
+                reclaimMobileNavigation
                 topBar={(
                     <>
                         <span className="truncate whitespace-nowrap font-semibold phone:hidden">Arrange the cut</span>
@@ -2301,7 +2335,7 @@ export function TimelinePage() {
                                     ...documentaryProject,
                                     aspect: e.target.value as typeof documentaryProject.aspect,
                                 })}
-                                className="h-9 rounded-xl border border-editor-line bg-editor-hover/40 px-2.5 text-editor-dim transition hover:border-editor-accent/40 hover:text-editor-text font-mono text-[11px] phone:max-w-[124px]"
+                                className="h-9 rounded-xl border border-editor-line bg-editor-hover/40 px-2.5 text-editor-dim transition hover:border-editor-accent/40 hover:text-editor-text font-mono text-[11px] phone:max-w-[96px]"
                             >
                                 <option value="9:16">Portrait 9:16</option>
                                 <option value="1:1">Square 1:1</option>
@@ -2321,15 +2355,17 @@ export function TimelinePage() {
                             source media, use the renderer that composes every
                             track; otherwise the captioned-video pipeline. */}
                         <Button
-                            className="h-9 rounded-xl px-4 text-xs font-bold shadow-[0_10px_22px_-12px_rgba(122,98,46,0.55)]"
-                            onClick={handleRenderFromEditor}
+                            className="h-9 rounded-xl px-4 text-xs font-bold shadow-[0_10px_22px_-12px_rgba(122,98,46,0.55)] phone:w-11 phone:shrink-0 phone:px-0"
+                                                        aria-label={isRenderingVideo || isRenderingDocumentaryTimeline ? 'Rendering…' : 'Render'}
+                                                        onClick={handleRenderFromEditor}
                             disabled={isRenderingVideo || isRenderingDocumentaryTimeline}
                             title={timelineHasOwnContent
                                 ? 'Composes every timeline track: footage, B-roll, voice-over, music, captions and effects.'
                                 : 'Renders your source media with captions and backgrounds.'}
                         >
-                            {isRenderingVideo || isRenderingDocumentaryTimeline ? 'Rendering…' : 'Render'}
-                        </Button>
+                            <Film size={16} className="hidden phone:block" aria-hidden="true" />
+                                                        <span className="phone:sr-only">{isRenderingVideo || isRenderingDocumentaryTimeline ? 'Rendering…' : 'Render'}</span>
+                                                    </Button>
                     </>
                 )}
                 tools={[
@@ -2353,6 +2389,7 @@ export function TimelinePage() {
                 // not change what the editor opens on.
                 initialToolId="media"
                 activeToolId={activeTool}
+                openToolRequest={openToolRequest}
                 onToolChange={setActiveTool}
                 panels={{
                     script: (
@@ -2897,11 +2934,11 @@ export function TimelinePage() {
                     // visible at once. Compact mode folds ~180px of header
                     // chrome into one toolbar row to make that fit.
                     <div className="h-full">
-                        <VisualTimelineCanvas
+                        <VisualTimelineCanvas timeSec={previewTimeSec} onTimeChange={setPreviewTimeSec}
                             onClearLane={handleClearLane}
                             onWipeAll={handleWipeAllLanes}
                             compact
-                            onEmptyLaneClick={(kind) => setActiveTool(kind === 'video' ? 'media' : kind === 'broll' ? 'background' : kind === 'voiceover' ? 'voice' : kind === 'music' ? 'music' : kind === 'captions' ? 'captions' : 'scenes')}
+                            onEmptyLaneClick={(kind) => openTool(kind === 'video' ? 'media' : kind === 'broll' ? 'background' : kind === 'voiceover' ? 'voice' : kind === 'music' ? 'music' : kind === 'captions' ? 'captions' : 'scenes')}
                             project={documentaryProject}
                             onProjectChange={handleCanvasProjectChange}
                             onRequestVeoBroll={handleRequestVeoBroll}
@@ -3072,7 +3109,7 @@ export function TimelinePage() {
                         ))}
                     </div>
                 </Card>
-                <VisualTimelineCanvas
+                <VisualTimelineCanvas timeSec={previewTimeSec} onTimeChange={setPreviewTimeSec}
                     onClearLane={handleClearLane}
                     onWipeAll={handleWipeAllLanes}
                     project={documentaryProject}

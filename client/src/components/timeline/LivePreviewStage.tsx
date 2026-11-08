@@ -188,7 +188,7 @@ export function LivePreviewStage({
 
       <div
         ref={controlsRef}
-        className={shortScreen ? 'flex min-w-0 flex-1 flex-col items-stretch gap-1' : 'flex items-center gap-2'}
+        className={`phone:hidden ${shortScreen ? 'flex min-w-0 flex-1 flex-col items-stretch gap-1' : 'flex min-w-0 shrink-0 items-center gap-2'}`}
         style={shortScreen ? undefined : { width: fitWidth ?? '100%' }}
       >
         <input
@@ -199,22 +199,22 @@ export function LivePreviewStage({
           value={Math.min(timeSec, totalSec)}
           onChange={(e) => onTimeChange(Number(e.target.value))}
           aria-label="Preview playhead"
-          className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-white/15 accent-primary-400"
+          className="h-11 min-w-0 flex-1 cursor-pointer rounded-full accent-primary-400"
         />
-        <span className="w-20 text-right text-[11px] tabular-nums text-editor-faint">
+        <span className="shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-editor-dim">
           {Math.floor(timeSec / 60)}:{String(Math.floor(timeSec % 60)).padStart(2, '0')} / {Math.floor(totalSec / 60)}:{String(Math.floor(totalSec % 60)).padStart(2, '0')}
         </span>
       </div>
 
       {/* Honest about what this is. The render is the source of truth. */}
-      <p className="text-[10px] text-editor-faint short:hidden">
+      <p className="text-[10px] text-editor-faint short:hidden phone:sr-only">
         Live preview · approximate. Transitions and glow appear in the render.
       </p>
       {isStudioLook(captionStyle?.preset) && (
         // Studio looks are drawn by the server's libass engine; the browser
         // shows the plain caption only, so say so.
         <span
-          className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] text-editor-faint"
+          className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] text-editor-faint phone:sr-only"
           data-testid="studio-preview-badge"
         >
           Studio effects appear in the render
