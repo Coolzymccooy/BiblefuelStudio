@@ -6,7 +6,7 @@ import { api } from '../../lib/api';
 import { uploadMedia } from '../../lib/mediaUpload';
 import { londonToUtc, parseCampaign } from '../../lib/scheduledPosts';
 const auth = vi.hoisted(() => ({ userId: 'owner-A' as string | null, isLoading: false }));
-vi.mock('../../hooks/useAuth', () => ({ useAuth: Object.assign((selector: (s: typeof auth) => unknown) => selector(auth), { getState: () => auth }) }));
+vi.mock('../../hooks/useAuth', () => ({ useAuth: Object.assign((selector: (s: typeof auth) => unknown) => selector(auth), { getState: () => auth, subscribe: () => () => {} }) }));
 vi.mock('../../lib/mediaUpload', () => ({ uploadMedia: vi.fn() }));
 const future = '2099-11-18T08:00';
 function file(name = 'final.mp4') {

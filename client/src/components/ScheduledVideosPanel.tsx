@@ -129,6 +129,19 @@ function OwnerScheduledVideosPanel({ owner }: { owner: string }) {
   };
   const upload = () => run(async () => {
     if (locked || !ready) return;
+    // Subscribe synchronously for the whole operation, including local hashing.
+    // Latch invalidation: A -> logout -> A (even the same token) must not revive it.
+    const token = useAuth.getState().token;
+    const controller = new AbortController();
+    let invalidated = false;
+    const isCurrent = () => !invalidated && mounted.current && !controller.signal.aborted
+      && useAuth.getState().userId === owner && useAuth.getState().token === token && !useAuth.getState().isLoading;
+    const unsubscribe = useAuth.subscribe(state => {
+      if (state.userId !== owner || state.token !== token || state.isLoading) {
+        invalidated = true; controller.abort();
+      }
+    });
+    try {
     for (const row of rows) {
       if (!row.included) continue;
       if (row.videoUrl) continue;
@@ -137,13 +150,14 @@ function OwnerScheduledVideosPanel({ owner }: { owner: string }) {
       if (row.bytes !== undefined && row.bytes !== row.file.size) throw new Error(`File size does not match the manifest: ${row.filename}`);
       const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await row.file.arrayBuffer())), b => b.toString(16).padStart(2, '0')).join('');
       if (row.sha256 && row.sha256.toLowerCase() !== hash) throw new Error(`SHA-256 does not match the manifest: ${row.filename}`);
-      assertOwner();
-      const result = await uploadMedia(row.file, row.filename, 'source-video');
-      assertOwner();
+      if (!isCurrent()) throw new Error('Account changed. This upload was stopped.');
+      const result = await uploadMedia(row.file, row.filename, 'source-video', undefined, { isCurrent, signal: controller.signal });
+      if (!isCurrent()) return;
       if (!result.file || result.file === result.proxyPath || /\/proxy(?:\/|[-_.])/i.test(result.file)) throw new Error('Upload did not return an original video. Nothing was scheduled.');
       setRows(current => current.map(r => r.key === row.key ? { ...r, videoUrl: result.file, localHash: hash, localBytes: row.file!.size } : r));
     }
     setNotice('Original videos uploaded. Review times, destinations and public visibility before scheduling.');
+    } finally { unsubscribe(); }
   });
   const schedule = () => run(async () => {
     if (!ready) throw new Error('Refresh the queue before submitting.');

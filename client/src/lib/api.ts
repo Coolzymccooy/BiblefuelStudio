@@ -60,6 +60,8 @@ export interface PostOptions {
     timeout?: number;
     /** Suppress late auth failures after this request's session has changed. */
     isAuthCurrent?: () => boolean;
+    /** Credential exchange rejection is not expiry of the existing app session. Defaults to true. */
+    invalidateSessionOn401?: boolean;
     /** Called with 0..100 as the request body uploads. */
     onUploadProgress?: (percent: number) => void;
 }
@@ -189,7 +191,7 @@ class ApiClient {
                 data: response.data,
             };
         } catch (error) {
-            return this.handleError(error, options?.isAuthCurrent);
+            return this.handleError(error, options?.isAuthCurrent, options?.invalidateSessionOn401);
         }
     }
 
@@ -376,13 +378,13 @@ class ApiClient {
         }
     }
 
-    private handleError(error: unknown, isAuthCurrent?: () => boolean): ApiResponse {
+    private handleError(error: unknown, isAuthCurrent?: () => boolean, invalidateSessionOn401 = true): ApiResponse {
         if (axios.isAxiosError(error)) {
             const axiosError = error as AxiosError<any>;
             const status = axiosError.response?.status || 500;
             const responseBody = axiosError.response?.data;
             const errorMessage = responseBody?.error || axiosError.message || 'Network error';
-            if (status === 401 && (!isAuthCurrent || isAuthCurrent())) {
+            if (status === 401 && invalidateSessionOn401 && (!isAuthCurrent || isAuthCurrent())) {
                 this.setToken(null);
                 if (typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT, {
@@ -393,7 +395,7 @@ class ApiClient {
             return {
                 ok: false,
                 status,
-                error: status === 401 ? 'Session expired. Please login again.' : errorMessage,
+                error: status === 401 && invalidateSessionOn401 ? 'Session expired. Please login again.' : errorMessage,
                 // Preserve the full server payload so callers can read
                 // structured fields (bucket, used, limit, hint, etc.)
                 // instead of just the top-level error code.

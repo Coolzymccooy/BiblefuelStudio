@@ -200,7 +200,7 @@ export const useAuth = create<AuthState>((set, get) => ({
         set({ isLoading: true, error: null, userId: null });
         const response = await api.post('/api/auth/setup',
             { email, password },
-            { 'X-Setup-Key': setupKey }, { isAuthCurrent: isCurrent }
+            { 'X-Setup-Key': setupKey }, { isAuthCurrent: isCurrent, invalidateSessionOn401: false }
         );
         if (!isCurrent()) return false;
 
@@ -221,7 +221,7 @@ export const useAuth = create<AuthState>((set, get) => ({
         let intentToken = get().token;
         const isCurrent = () => generation === authGeneration && get().token === intentToken;
         set({ isLoading: true, error: null, userId: null });
-        const response = await api.post('/api/auth/login', { email, password }, undefined, { isAuthCurrent: isCurrent });
+        const response = await api.post('/api/auth/login', { email, password }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
         if (!isCurrent()) return false;
 
         if (response.ok && response.data?.token) {
@@ -249,7 +249,7 @@ export const useAuth = create<AuthState>((set, get) => ({
             // account that can never actually sign in.
             const probe = await api.post<{ eligible: boolean; reason?: string }>(
                 '/api/auth/check-signup-eligibility',
-                { email }, undefined, { isAuthCurrent: isCurrent },
+                { email }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false },
             );
             if (!isCurrent()) return false;
             if (probe.ok && probe.data && probe.data.eligible === false) {
@@ -263,7 +263,7 @@ export const useAuth = create<AuthState>((set, get) => ({
 
             const idToken = await firebaseEmailSignup(email, password);
             if (!isCurrent()) return false;
-            const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent });
+            const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
             if (!isCurrent()) return false;
             if (response.ok && response.data?.token) {
                 generation = ++authGeneration;
@@ -299,7 +299,7 @@ export const useAuth = create<AuthState>((set, get) => ({
         try {
             const idToken = await firebaseEmailLogin(email, password);
             if (!isCurrent()) return false;
-            const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent });
+            const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
             if (!isCurrent()) return false;
             if (response.ok && response.data?.token) {
                 generation = ++authGeneration;
@@ -335,7 +335,7 @@ export const useAuth = create<AuthState>((set, get) => ({
         try {
             const idToken = await firebaseGoogleLogin();
             if (!isCurrent()) return false;
-            const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent });
+            const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
             if (!isCurrent()) return false;
             if (response.ok && response.data?.token) {
                 generation = ++authGeneration;
@@ -388,7 +388,7 @@ export const useAuth = create<AuthState>((set, get) => ({
             if (emailVerified) {
                 // Exchange the fresh Firebase id token (now carrying email_verified=true)
                 // for a new Biblefuel JWT so server-side claims line up.
-                const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent });
+                const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
                 if (!isCurrent()) return false;
                 if (response.ok && response.data?.token) {
                     generation = ++authGeneration;
