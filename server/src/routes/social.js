@@ -18,6 +18,9 @@ import { publicDirectConfig, mergeDirectSecrets } from "../lib/social/directSecr
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 import { spendScheduleRender } from "../lib/social/scheduleQuota.js";
 import { changedCronProblem, agentScheduleCount, MAX_AGENT_SCHEDULES } from "../lib/social/scheduleRules.js";
+import { createFinitePostQueue, createFinitePostsRouter } from "../lib/social/finitePosts.js";
+import { createFiniteDispatcher } from "../lib/social/finiteProvider.js";
+import { createFiniteMediaRouter } from "../lib/social/finiteMedia.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
 import { uploadToYoutube, setYoutubeThumbnail, listYoutubePlaylists } from "../lib/social/youtubeUpload.js";
 import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
@@ -38,6 +41,33 @@ import { ensureZernioProfile, tiktokConnectUrl, findTikTokAccount, disconnectZer
 
 const router = Router();
 const scheduleTasks = new Map();
+export const finiteMediaRouter = createFiniteMediaRouter({ Router, resolveOwner: id => {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) return null;
+  const user = (getUsersStore().users || []).find(user => user.id === id);
+  return user ? { userId: id, ...resolveScopeDirs({ sub: id, email: user.email }) } : null;
+} });
+export const finitePostQueue = createFinitePostQueue({
+  dispatch: createFiniteDispatcher((payload, req) => dispatchPost(payload, req), getConfiguredPublicBaseUrl),
+  preflight: (payload, req) => preflightFinitePost(payload, req),
+});
+router.use('/scheduled-posts', createFinitePostsRouter({ Router, queue: finitePostQueue }));
+// Explicit server-start registration only: importing this router in a test
+// never starts the finite worker or creates any queue entries.
+export function startFinitePostWorker() {
+  finitePostQueue.start(() => (getUsersStore().users || []).map(user => ({
+    userId: user.id, ...resolveScopeDirs({ sub: user.id, email: user.email }),
+  })));
+}
+export async function stopFinitePostWorker() { await finitePostQueue.stop(); }
+export function preflightFinitePost(payload, req) {
+  const store = readSocialStore(req.ctx.dataDir);
+  if (payload.destination === 'youtube') {
+    checkYoutubePost(payload, req, store);
+  } else {
+    if (!/^https:\/\//i.test(getConfiguredPublicBaseUrl())) throw new Error('Configure a public HTTPS base URL before scheduling TikTok.');
+    if (!tiktokTargetFor(req.ctx, store)) throw new Error('Connect TikTok in Settings before scheduling.');
+  }
+}
 
 // Injectable fetch so the streaming download path in
 // resolveVideoInputForUpload is testable without a real network call.
@@ -253,7 +283,7 @@ function deriveCleanTitle(caption) {
 
 // apiKey + accountId come from tiktokTargetFor: the server's for the owner,
 // the user's own key and account, or their account on the server's key.
-async function publishToZernioTikTok({ caption, videoUrl, title, accountId, apiKey }) {
+async function publishToZernioTikTok({ caption, videoUrl, title, accountId, apiKey, privacyLevel, allowDraftFallback = true }) {
   if (!apiKey || !accountId) {
     return { skipped: true, reason: "No Zernio key on the server, or no TikTok account connected" };
   }
@@ -265,7 +295,7 @@ async function publishToZernioTikTok({ caption, videoUrl, title, accountId, apiK
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(buildZernioPost({ caption, title, videoUrl, accountId, draft })),
+      body: JSON.stringify(buildZernioPost({ caption, title, videoUrl, accountId, draft, privacyLevel })),
     });
     const text = await resp.text();
     let body = null;
@@ -286,7 +316,7 @@ async function publishToZernioTikTok({ caption, videoUrl, title, accountId, apiK
   // posting. (The permanent fix is reconnecting the account to TikTok's
   // Business app, which is exempt entirely.)
   let deliveredAsDraft = false;
-  if (!attempt.outcome.ok && attempt.outcome.atCapacity) {
+  if (allowDraftFallback && !attempt.outcome.ok && attempt.outcome.atCapacity) {
     console.warn("[SOCIAL] TikTok direct posting at capacity — retrying as a Creator Inbox draft");
     const draftAttempt = await send(true);
     if (draftAttempt.outcome.ok) {
@@ -306,7 +336,9 @@ async function publishToZernioTikTok({ caption, videoUrl, title, accountId, apiK
   }
 
   if (!attempt.outcome.ok) {
-    throw new Error(`Zernio publish failed: ${attempt.resp.status} ${attempt.outcome.error || attempt.text.slice(0, 500)}`);
+    const reported = attempt.body?.post?.platforms?.find(p => p.platform === 'tiktok')?.status || attempt.body?.post?.status;
+    const explicit = ['failed', 'rejected'].includes(reported) || (attempt.resp.status >= 400 && attempt.resp.status < 500 && ![408, 409, 429].includes(attempt.resp.status));
+    throw Object.assign(new Error(`Zernio publish failed: ${attempt.resp.status} ${attempt.outcome.error || attempt.text.slice(0, 500)}`), { finiteProviderRejected: explicit });
   }
 
   return {
@@ -499,8 +531,10 @@ async function postToTikTok({ caption, videoUrl, title }, req, store) {
   const resolvedTitle = String(title || "").trim().slice(0, 100) || deriveCleanTitle(caption);
   let zernio;
   try {
-    zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle, accountId: target.accountId, apiKey: target.apiKey });
+    zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle, accountId: target.accountId, apiKey: target.apiKey,
+      ...(req?.finiteOneOff ? { privacyLevel: 'PUBLIC_TO_EVERYONE', allowDraftFallback: false } : {}) });
   } catch (e) {
+    if (req?.finiteOneOff) throw Object.assign(new Error(TIKTOK_POST_FAILED), { finiteProviderRejected: e?.finiteProviderRejected === true });
     // The vendor's wording and status code are for the log; the user gets a plain sentence.
     console.error("[SOCIAL] TikTok post failed:", e?.message || e);
     throw new Error(TIKTOK_POST_FAILED);

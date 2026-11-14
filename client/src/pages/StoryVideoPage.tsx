@@ -15,6 +15,7 @@ import { useAnimateEstimate } from '../hooks/useAnimateEstimate';
 import { useAuth } from '../hooks/useAuth';
 import { clipSeconds } from '../lib/storyWizard';
 import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
+import { TikTokPostPanel } from '../components/share/TikTokPostPanel';
 import {
   deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel, storyStyleLabel,
 } from '../lib/storyWizard';
@@ -855,7 +856,7 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-function DonePanel({ project }: { project: StoryProject }) {
+export function DonePanel({ project }: { project: StoryProject }) {
   // Render output is deterministic: outputs/story/<projectId>/video.mp4.
   // projectId is a uuid (untouched by the server's path sanitiser). /outputs
   // is served without sign-in, so the link carries no token.
@@ -895,6 +896,10 @@ function DonePanel({ project }: { project: StoryProject }) {
             chapters={chapters.length >= 3 ? chapters : undefined}
           />
         )}
+        {!waitingForSong && <div className="mt-6 border-t border-white/10 pt-4 [&_button]:min-h-[44px]">
+          <p className="text-help mb-2">Posts this Story export, not a separately edited final. Use Scheduled videos in Settings for finished local MP4s.</p>
+          <TikTokPostPanel key={`tiktok:${project.projectId}`} videoUrl={`/outputs/story/${project.projectId}/video.mp4`} caption={storyDescription(project, song)} title={project.title || 'Story video'} />
+        </div>}
       </div>
     </div>
   );

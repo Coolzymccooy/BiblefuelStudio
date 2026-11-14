@@ -24,6 +24,7 @@ import { TikTokConnectCard } from '../components/TikTokConnectCard';
 import { WebhookConnectCard } from '../components/WebhookConnectCard';
 import { ConnectedAgentsCard } from '../components/ConnectedAgentsCard';
 import { BrandingCard } from '../components/BrandingCard';
+import { ScheduledVideosPanel } from '../components/ScheduledVideosPanel';
 
 
 export function SettingsPage() {
@@ -377,6 +378,7 @@ export function SettingsPage() {
             {activeSection === 'social' && isSuperAdmin && (
                 <Card title="Social Automation">
                     <div className="space-y-4">
+                        <ScheduledVideosPanel />
                         <div className="text-help">
                             Use Buffer or webhooks for the fastest setup. Direct APIs require OAuth apps and approvals.
                         </div>
