@@ -9,6 +9,18 @@ import { resumableUploadToSession } from './resumableUpload';
 
 export type UploadKind = 'audio' | 'source-video' | 'background';
 
+/** Caller-owned session identity; omitted for existing upload callers. */
+export interface UploadMediaOptions {
+    isCurrent?: () => boolean;
+    signal?: AbortSignal;
+}
+
+function assertCurrent(options: UploadMediaOptions): void {
+    if (options.signal?.aborted || options.isCurrent?.() === false) {
+        throw new DOMException('Account changed or upload cancelled. This upload was stopped.', 'AbortError');
+    }
+}
+
 export interface UploadResult {
     /** Server-side local path the pipeline consumes. */
     file: string;
@@ -36,7 +48,8 @@ interface UploadConfig {
 
 let uploadConfigCache: UploadConfig | null = null;
 
-export async function getUploadConfig(): Promise<UploadConfig> {
+export async function getUploadConfig(options: UploadMediaOptions = {}): Promise<UploadConfig> {
+    assertCurrent(options);
     if (uploadConfigCache) return uploadConfigCache;
     const fallback: UploadConfig = {
         resumable: true,
@@ -44,7 +57,8 @@ export async function getUploadConfig(): Promise<UploadConfig> {
         maxBytes: RESUMABLE_UPLOAD_MAX_BYTES,
         maxMb: Math.floor(RESUMABLE_UPLOAD_MAX_BYTES / 1024 / 1024),
     };
-    const res = await api.get<Partial<UploadConfig> & { directMaxMb?: number }>('/api/media/upload-config');
+    const res = await api.get<Partial<UploadConfig> & { directMaxMb?: number }>('/api/media/upload-config', undefined, options.isCurrent);
+    assertCurrent(options);
     if (!res.ok || !res.data) return fallback;
     const directMaxBytes = Number(res.data.directMaxBytes || (res.data.directMaxMb || 90) * 1024 * 1024);
     const maxBytes = Number(res.data.maxBytes || (res.data.maxMb || fallback.maxMb) * 1024 * 1024);
@@ -65,24 +79,31 @@ function mb(bytes: number): string {
     return (bytes / 1024 / 1024).toFixed(0);
 }
 
-async function resumable(file: Blob, filename: string, kind: UploadKind, onProgress?: (pct: number) => void): Promise<UploadResult> {
+async function resumable(file: Blob, filename: string, kind: UploadKind, onProgress: ((pct: number) => void) | undefined, options: UploadMediaOptions): Promise<UploadResult> {
     const contentType = (file as File).type || 'application/octet-stream';
+    assertCurrent(options);
     const session = await api.post<{ sessionUrl: string; objectPath: string }>(
         '/api/media/upload-session',
         { filename, contentType, size: file.size, kind },
+        undefined,
+        { isAuthCurrent: options.isCurrent },
     );
+    assertCurrent(options);
     if (!session.ok || !session.data?.sessionUrl || !session.data?.objectPath) {
         throw new Error(session.error || 'Large uploads are not available on this server right now.');
     }
 
-    await resumableUploadToSession(session.data.sessionUrl, file, { onProgress });
+    assertCurrent(options);
+    await resumableUploadToSession(session.data.sessionUrl, file, { onProgress, signal: options.signal, isCurrent: options.isCurrent });
+    assertCurrent(options);
 
     const finalized = await api.post<UploadResult>(
         '/api/media/upload-finalize',
         { objectPath: session.data.objectPath, filename, contentType, kind },
         undefined,
-        { timeout: MEDIA_OP_TIMEOUT_MS },
+        { timeout: MEDIA_OP_TIMEOUT_MS, isAuthCurrent: options.isCurrent },
     );
+    assertCurrent(options);
     if (!finalized.ok || !finalized.data?.file) throw new Error(finalized.error || 'Finalizing upload failed');
     return finalized.data;
 }
@@ -99,8 +120,11 @@ export async function uploadMedia(
     filename: string,
     kind: UploadKind,
     onProgress?: (pct: number) => void,
+    options: UploadMediaOptions = {},
 ): Promise<UploadResult> {
-    const config = await getUploadConfig();
+    assertCurrent(options);
+    const config = await getUploadConfig(options);
+    assertCurrent(options);
     if (file.size > config.maxBytes) {
         throw new Error(`File is ${mb(file.size)} MB. The maximum is ${config.maxMb || mb(config.maxBytes)} MB.`);
     }
@@ -108,13 +132,16 @@ export async function uploadMedia(
         if (!config.resumable) {
             throw new Error('Large uploads are not available on this server right now.');
         }
-        return resumable(file, filename, kind, onProgress);
+        return resumable(file, filename, kind, onProgress, options);
     }
+    assertCurrent(options);
     const res = await api.uploadRaw<UploadResult>(DIRECT_ENDPOINT[kind], file, {
         filename,
         timeout: UPLOAD_TIMEOUT_MS,
         onUploadProgress: onProgress,
+        isAuthCurrent: options.isCurrent,
     });
+    assertCurrent(options);
     if (!res.ok || !res.data?.file) throw new Error(res.error || 'Upload failed');
     return res.data;
 }

@@ -37,13 +37,19 @@ const writeCachedBool = (key: string, value: boolean): void => {
 // (including StrictMode double-mounts in dev) and every transient re-render
 // fires a new checkStatus, which can stack 20+ in-flight /auth/me requests
 // against a busy proxy and leave the UI stuck on "isLoading=true" forever.
-let inflightCheckStatus: Promise<void> | null = null;
+// Advance for every credential intent, credential installation and logout.
+// Token equality alone cannot reject an A -> B -> A completion. Guards also
+// reach ApiClient: its 401 handler runs before these async actions resume.
+let authGeneration = 0;
+let inflightCheckStatus: { generation: number; token: string | null; promise: Promise<void> } | null = null;
 
 interface AuthState {
     token: string | null;
     hasUser: boolean;
     firebaseEnabled: boolean;
     emailVerified: boolean;
+    /** Stable nonsecret owner identifier returned by /auth/me; never decoded from a token. */
+    userId: string | null;
     email: string | null;
     role: string | null;
     isSuperAdmin: boolean;
@@ -70,7 +76,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     hasUser: readCachedBool(HAS_USER_CACHE_KEY, false),
     firebaseEnabled: readCachedBool(FIREBASE_ENABLED_CACHE_KEY, false),
     emailVerified: readCachedBool(VERIFIED_CACHE_KEY, false),
-    email: null,
+    email: null, userId: null,
     role: null,
     isSuperAdmin: false,
     // Truthful initial state: checkStatus() hasn't run yet, so consumers
@@ -81,16 +87,17 @@ export const useAuth = create<AuthState>((set, get) => ({
     error: null,
 
     checkStatus: async () => {
-        // Coalesce concurrent calls. Layout + HomePage both fire checkStatus
-        // on mount; StrictMode double-mounts double that; any HMR cycle
-        // re-fires. Without coalescing, a slow first request can have a
-        // dozen siblings stacked behind it that all eventually time out
-        // and clear the auth state to the same "logged out" view 12 times
-        // in a row.
-        if (inflightCheckStatus) return inflightCheckStatus;
-        inflightCheckStatus = (async () => {
-        set({ isLoading: true, error: null });
-        const statusResponse = await api.get('/api/auth/status');
+        const generation = authGeneration;
+        const token = get().token;
+        const isCurrent = () => generation === authGeneration && get().token === token;
+        if (inflightCheckStatus?.generation === generation && inflightCheckStatus.token === token) {
+            return inflightCheckStatus.promise;
+        }
+        const promise = (async () => {
+        if (!isCurrent()) return;
+        set({ isLoading: true, error: null, userId: null });
+        const statusResponse = await api.get('/api/auth/status', undefined, isCurrent);
+        if (!isCurrent()) return;
         // Preserve last-known-good when the request fails (network blip,
         // proxy backed up). Flipping firebaseEnabled to `false` on a
         // transient failure is what drops the user into the setup-key
@@ -106,16 +113,17 @@ export const useAuth = create<AuthState>((set, get) => ({
             writeCachedBool(FIREBASE_ENABLED_CACHE_KEY, firebaseEnabled);
             writeCachedBool(HAS_USER_CACHE_KEY, hasUser);
         }
-        const token = get().token || readStoredToken();
 
         if (token) {
-            const meResponse = await api.get('/api/auth/me');
+            const meResponse = await api.get('/api/auth/me', undefined, isCurrent);
+            if (!isCurrent()) return;
             // 401 = real auth failure → clear token. Any other failure
             // (network error, 5xx, timeout) is transient — keep the token
             // and surface an error so the user can retry, instead of
             // logging them out on a flaky connection.
             if (!meResponse.ok) {
                 if (meResponse.status === 401) {
+                    ++authGeneration;
                     api.setToken(null);
                     writeCachedBool(VERIFIED_CACHE_KEY, false);
                     set({
@@ -123,7 +131,7 @@ export const useAuth = create<AuthState>((set, get) => ({
                         hasUser,
                         firebaseEnabled,
                         emailVerified: false,
-                        email: null,
+                        email: null, userId: null,
                         role: null,
                         isSuperAdmin: false,
                         isLoading: false,
@@ -143,7 +151,7 @@ export const useAuth = create<AuthState>((set, get) => ({
                 }
                 return;
             }
-            const me = (meResponse.data as { user?: { email?: string; emailVerified?: boolean; role?: string; isSuperAdmin?: boolean } })?.user || {};
+            const me = (meResponse.data as { user?: { sub?: string; email?: string; emailVerified?: boolean; role?: string; isSuperAdmin?: boolean } })?.user || {};
             // Super-admin (identified by SUPER_ADMIN_EMAIL env match on the
             // server) bypasses the verify-email gate so the operator can
             // never lock themselves out of their own deploy. /me returns an
@@ -159,7 +167,7 @@ export const useAuth = create<AuthState>((set, get) => ({
                 hasUser,
                 firebaseEnabled,
                 emailVerified: verified,
-                email: me.email || null,
+                email: me.email || null, userId: me.sub || null,
                 role: me.role || null,
                 isSuperAdmin: admin,
                 isLoading: false,
@@ -170,7 +178,7 @@ export const useAuth = create<AuthState>((set, get) => ({
                 hasUser,
                 firebaseEnabled,
                 emailVerified: false,
-                email: null,
+                email: null, userId: null,
                 role: null,
                 isSuperAdmin: false,
                 isLoading: false,
@@ -178,19 +186,29 @@ export const useAuth = create<AuthState>((set, get) => ({
             });
         }
         })();
-        try { await inflightCheckStatus; } finally { inflightCheckStatus = null; }
+        const flight = { generation, token, promise };
+        inflightCheckStatus = flight;
+        try { await promise; } finally {
+            if (inflightCheckStatus === flight) inflightCheckStatus = null;
+        }
     },
 
     setup: async (email: string, password: string, setupKey: string) => {
-        set({ isLoading: true, error: null });
+        let generation = ++authGeneration;
+        let intentToken = get().token;
+        const isCurrent = () => generation === authGeneration && get().token === intentToken;
+        set({ isLoading: true, error: null, userId: null });
         const response = await api.post('/api/auth/setup',
             { email, password },
-            { 'X-Setup-Key': setupKey }
+            { 'X-Setup-Key': setupKey }, { isAuthCurrent: isCurrent, invalidateSessionOn401: false }
         );
+        if (!isCurrent()) return false;
 
         if (response.ok && response.data?.token) {
-            api.setToken(response.data.token);
-            set({ token: response.data.token, hasUser: true, isLoading: false });
+            generation = ++authGeneration;
+            intentToken = response.data.token;
+            api.setToken(intentToken);
+            set({ token: response.data.token, userId: null, hasUser: true, isLoading: false });
             return true;
         } else {
             set({ isLoading: false, error: response.error || 'Setup failed' });
@@ -199,12 +217,18 @@ export const useAuth = create<AuthState>((set, get) => ({
     },
 
     login: async (email: string, password: string) => {
-        set({ isLoading: true, error: null });
-        const response = await api.post('/api/auth/login', { email, password });
+        let generation = ++authGeneration;
+        let intentToken = get().token;
+        const isCurrent = () => generation === authGeneration && get().token === intentToken;
+        set({ isLoading: true, error: null, userId: null });
+        const response = await api.post('/api/auth/login', { email, password }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
+        if (!isCurrent()) return false;
 
         if (response.ok && response.data?.token) {
-            api.setToken(response.data.token);
-            set({ token: response.data.token, hasUser: true, isLoading: false });
+            generation = ++authGeneration;
+            intentToken = response.data.token;
+            api.setToken(intentToken);
+            set({ token: response.data.token, userId: null, hasUser: true, isLoading: false });
             return true;
         } else {
             set({ isLoading: false, error: response.error || 'Login failed' });
@@ -213,7 +237,10 @@ export const useAuth = create<AuthState>((set, get) => ({
     },
 
     signupWithFirebaseEmail: async (email: string, password: string) => {
-        set({ isLoading: true, error: null });
+        let generation = ++authGeneration;
+        let intentToken = get().token;
+        const isCurrent = () => generation === authGeneration && get().token === intentToken;
+        set({ isLoading: true, error: null, userId: null });
         try {
             // Pre-check approval BEFORE invoking Firebase. Without this,
             // Firebase silently creates an orphan account and ships a
@@ -222,8 +249,9 @@ export const useAuth = create<AuthState>((set, get) => ({
             // account that can never actually sign in.
             const probe = await api.post<{ eligible: boolean; reason?: string }>(
                 '/api/auth/check-signup-eligibility',
-                { email },
+                { email }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false },
             );
+            if (!isCurrent()) return false;
             if (probe.ok && probe.data && probe.data.eligible === false) {
                 const reason = probe.data.reason || 'NOT_APPROVED';
                 const message = reason === 'ALREADY_REGISTERED'
@@ -234,21 +262,27 @@ export const useAuth = create<AuthState>((set, get) => ({
             }
 
             const idToken = await firebaseEmailSignup(email, password);
-            const response = await api.post('/api/auth/firebase', { idToken });
+            if (!isCurrent()) return false;
+            const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
+            if (!isCurrent()) return false;
             if (response.ok && response.data?.token) {
-                api.setToken(response.data.token);
+                generation = ++authGeneration;
+                intentToken = response.data.token;
+                api.setToken(intentToken);
                 // Re-sync the full auth state (email, role, emailVerified,
                 // isSuperAdmin) from /api/auth/me so the verify-email gate
                 // and other UI affordances respect the freshly signed-in
                 // identity. Without this, emailVerified stays at the
                 // default `false` and verified users are stuck on the gate.
-                set({ token: response.data.token, hasUser: true });
+                set({ token: response.data.token, userId: null, hasUser: true });
                 await get().checkStatus();
+                if (!isCurrent()) return false;
                 return true;
             }
             set({ isLoading: false, error: response.error || 'Unable to create your account right now.' });
             return false;
         } catch (err) {
+            if (!isCurrent()) return false;
             set({
                 isLoading: false,
                 error: getFirebaseAuthErrorMessage(err, 'Unable to create your account right now.'),
@@ -258,24 +292,33 @@ export const useAuth = create<AuthState>((set, get) => ({
     },
 
     loginWithFirebaseEmail: async (email: string, password: string) => {
-        set({ isLoading: true, error: null });
+        let generation = ++authGeneration;
+        let intentToken = get().token;
+        const isCurrent = () => generation === authGeneration && get().token === intentToken;
+        set({ isLoading: true, error: null, userId: null });
         try {
             const idToken = await firebaseEmailLogin(email, password);
-            const response = await api.post('/api/auth/firebase', { idToken });
+            if (!isCurrent()) return false;
+            const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
+            if (!isCurrent()) return false;
             if (response.ok && response.data?.token) {
-                api.setToken(response.data.token);
+                generation = ++authGeneration;
+                intentToken = response.data.token;
+                api.setToken(intentToken);
                 // Re-sync the full auth state (email, role, emailVerified,
                 // isSuperAdmin) from /api/auth/me so the verify-email gate
                 // and other UI affordances respect the freshly signed-in
                 // identity. Without this, emailVerified stays at the
                 // default `false` and verified users are stuck on the gate.
-                set({ token: response.data.token, hasUser: true });
+                set({ token: response.data.token, userId: null, hasUser: true });
                 await get().checkStatus();
+                if (!isCurrent()) return false;
                 return true;
             }
             set({ isLoading: false, error: response.error || 'Unable to sign in right now.' });
             return false;
         } catch (err) {
+            if (!isCurrent()) return false;
             set({
                 isLoading: false,
                 error: getFirebaseAuthErrorMessage(err, 'Unable to sign in right now.'),
@@ -285,24 +328,33 @@ export const useAuth = create<AuthState>((set, get) => ({
     },
 
     loginWithFirebaseGoogle: async () => {
-        set({ isLoading: true, error: null });
+        let generation = ++authGeneration;
+        let intentToken = get().token;
+        const isCurrent = () => generation === authGeneration && get().token === intentToken;
+        set({ isLoading: true, error: null, userId: null });
         try {
             const idToken = await firebaseGoogleLogin();
-            const response = await api.post('/api/auth/firebase', { idToken });
+            if (!isCurrent()) return false;
+            const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
+            if (!isCurrent()) return false;
             if (response.ok && response.data?.token) {
-                api.setToken(response.data.token);
+                generation = ++authGeneration;
+                intentToken = response.data.token;
+                api.setToken(intentToken);
                 // Re-sync the full auth state (email, role, emailVerified,
                 // isSuperAdmin) from /api/auth/me so the verify-email gate
                 // and other UI affordances respect the freshly signed-in
                 // identity. Without this, emailVerified stays at the
                 // default `false` and verified users are stuck on the gate.
-                set({ token: response.data.token, hasUser: true });
+                set({ token: response.data.token, userId: null, hasUser: true });
                 await get().checkStatus();
+                if (!isCurrent()) return false;
                 return true;
             }
             set({ isLoading: false, error: response.error || 'Google sign-in failed. Please try again.' });
             return false;
         } catch (err) {
+            if (!isCurrent()) return false;
             set({
                 isLoading: false,
                 error: getFirebaseAuthErrorMessage(err, 'Google sign-in failed. Please try again.'),
@@ -312,26 +364,37 @@ export const useAuth = create<AuthState>((set, get) => ({
     },
 
     resendVerificationEmail: async () => {
+        const generation = authGeneration;
+        const token = get().token;
+        const isCurrent = () => generation === authGeneration && get().token === token;
         try {
             await firebaseResendEmailVerification();
-            return true;
+            return isCurrent();
         } catch (err) {
+            if (!isCurrent()) return false;
             set({ error: getFirebaseAuthErrorMessage(err, 'Could not send the verification email. Try again in a moment.') });
             return false;
         }
     },
 
     refreshAfterVerify: async () => {
-        set({ isLoading: true, error: null });
+        let generation = ++authGeneration;
+        let intentToken = get().token;
+        const isCurrent = () => generation === authGeneration && get().token === intentToken;
+        set({ isLoading: true, error: null, userId: null });
         try {
             const { idToken, emailVerified } = await firebaseRefreshIdTokenAfterVerify();
+            if (!isCurrent()) return false;
             if (emailVerified) {
                 // Exchange the fresh Firebase id token (now carrying email_verified=true)
                 // for a new Biblefuel JWT so server-side claims line up.
-                const response = await api.post('/api/auth/firebase', { idToken });
+                const response = await api.post('/api/auth/firebase', { idToken }, undefined, { isAuthCurrent: isCurrent, invalidateSessionOn401: false });
+                if (!isCurrent()) return false;
                 if (response.ok && response.data?.token) {
-                    api.setToken(response.data.token);
-                    set({ token: response.data.token, hasUser: true, emailVerified: true, isLoading: false, error: null });
+                    generation = ++authGeneration;
+                    intentToken = response.data.token;
+                    api.setToken(intentToken);
+                    set({ token: response.data.token, userId: null, hasUser: true, emailVerified: true, isLoading: false, error: null });
                     return true;
                 }
                 set({ isLoading: false, error: response.error || 'Verified, but could not refresh your session. Try logging out and back in.' });
@@ -341,15 +404,18 @@ export const useAuth = create<AuthState>((set, get) => ({
             // after the user clicked the verify link. Ask the server to check
             // Firebase Admin directly — if it confirms verification, refresh
             // /me so the gate clears without forcing a sign-out/sign-in.
-            const serverCheck = await api.post<{ emailVerified: boolean }>('/api/auth/refresh-verify');
+            const serverCheck = await api.post<{ emailVerified: boolean }>('/api/auth/refresh-verify', undefined, undefined, { isAuthCurrent: isCurrent });
+            if (!isCurrent()) return false;
             if (serverCheck.ok && serverCheck.data?.emailVerified) {
                 await get().checkStatus();
+                if (!isCurrent()) return false;
                 set({ isLoading: false, error: null });
                 return true;
             }
             set({ isLoading: false, error: 'Still unverified. Open the link in the email we sent, then try again.' });
             return false;
         } catch (err) {
+            if (!isCurrent()) return false;
             set({
                 isLoading: false,
                 error: getFirebaseAuthErrorMessage(err, 'Could not refresh your verification status.'),
@@ -359,7 +425,10 @@ export const useAuth = create<AuthState>((set, get) => ({
     },
 
     logout: () => {
+        ++authGeneration;
+        inflightCheckStatus = null;
+        writeCachedBool(VERIFIED_CACHE_KEY, false);
         api.setToken(null);
-        set({ token: null, hasUser: false, emailVerified: false, email: null, role: null, isSuperAdmin: false, error: null });
+        set({ token: null, hasUser: false, emailVerified: false, email: null, userId: null, role: null, isSuperAdmin: false, isLoading: false, error: null });
     },
 }));

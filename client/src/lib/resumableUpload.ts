@@ -18,6 +18,8 @@ export interface ResumableUploadOptions {
     onProgress?: (percent: number) => void;
     /** Abort the in-flight upload. */
     signal?: AbortSignal;
+    /** Checked immediately before every chunk/status request, including retries. */
+    isCurrent?: () => boolean;
     chunkSize?: number;
 }
 
@@ -50,8 +52,12 @@ function putChunk(
     total: number,
     onLoaded: (loadedInChunk: number) => void,
     signal?: AbortSignal,
+    isCurrent?: () => boolean,
 ): Promise<ChunkResult> {
     return new Promise((resolve, reject) => {
+        if (signal?.aborted || isCurrent?.() === false) {
+            reject(new DOMException('Upload cancelled', 'AbortError')); return;
+        }
         const xhr = new XMLHttpRequest();
         xhr.open('PUT', sessionUrl, true);
 
@@ -86,8 +92,8 @@ function putChunk(
 }
 
 /** Ask GCS how many bytes it has committed for this session (0 if none, total if done). */
-async function queryCommittedOffset(sessionUrl: string, total: number, signal?: AbortSignal): Promise<number> {
-    const r = await putChunk(sessionUrl, null, 0, total, () => {}, signal);
+async function queryCommittedOffset(sessionUrl: string, total: number, signal?: AbortSignal, isCurrent?: () => boolean): Promise<number> {
+    const r = await putChunk(sessionUrl, null, 0, total, () => {}, signal, isCurrent);
     if (r.status === 200 || r.status === 201) return total; // already complete
     if (r.status === 308) return r.committedEnd != null ? r.committedEnd + 1 : 0;
     throw new Error(`Unexpected status querying upload: ${r.status}`);
@@ -116,7 +122,7 @@ export async function resumableUploadToSession(
         const base = offset;
 
         try {
-            const result = await putChunk(sessionUrl, chunk, offset, total, (loaded) => report(base + loaded), opts.signal);
+            const result = await putChunk(sessionUrl, chunk, offset, total, (loaded) => report(base + loaded), opts.signal, opts.isCurrent);
 
             if (result.status === 200 || result.status === 201) { report(total); return; }
 
@@ -139,7 +145,7 @@ export async function resumableUploadToSession(
             // the `Range` header is unreadable (CORS) and the query reports 0, we
             // keep our confirmed offset instead of restarting the whole file.
             try {
-                const committed = await queryCommittedOffset(sessionUrl, total, opts.signal);
+                const committed = await queryCommittedOffset(sessionUrl, total, opts.signal, opts.isCurrent);
                 if (committed >= total) { report(total); return; }
                 offset = Math.max(offset, committed);
                 report(offset);

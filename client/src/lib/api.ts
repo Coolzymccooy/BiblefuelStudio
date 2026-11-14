@@ -58,6 +58,10 @@ export const GENERATE_TIMEOUT_MS = 15 * 60_000;
 export interface PostOptions {
     /** Override the default 15s request timeout (e.g. UPLOAD_TIMEOUT_MS). */
     timeout?: number;
+    /** Suppress late auth failures after this request's session has changed. */
+    isAuthCurrent?: () => boolean;
+    /** Credential exchange rejection is not expiry of the existing app session. Defaults to true. */
+    invalidateSessionOn401?: boolean;
     /** Called with 0..100 as the request body uploads. */
     onUploadProgress?: (percent: number) => void;
 }
@@ -148,7 +152,7 @@ class ApiClient {
         return headers;
     }
 
-    async get<T = any>(url: string, customHeaders?: Record<string, string>): Promise<ApiResponse<T>> {
+    async get<T = any>(url: string, customHeaders?: Record<string, string>, isAuthCurrent?: () => boolean): Promise<ApiResponse<T>> {
         try {
             const response = await axios.get(url, {
                 headers: this.getHeaders(customHeaders),
@@ -160,7 +164,7 @@ class ApiClient {
                 data: response.data,
             };
         } catch (error) {
-            return this.handleError(error);
+            return this.handleError(error, isAuthCurrent);
         }
     }
 
@@ -187,7 +191,7 @@ class ApiClient {
                 data: response.data,
             };
         } catch (error) {
-            return this.handleError(error);
+            return this.handleError(error, options?.isAuthCurrent, options?.invalidateSessionOn401);
         }
     }
 
@@ -374,13 +378,13 @@ class ApiClient {
         }
     }
 
-    private handleError(error: unknown): ApiResponse {
+    private handleError(error: unknown, isAuthCurrent?: () => boolean, invalidateSessionOn401 = true): ApiResponse {
         if (axios.isAxiosError(error)) {
             const axiosError = error as AxiosError<any>;
             const status = axiosError.response?.status || 500;
             const responseBody = axiosError.response?.data;
             const errorMessage = responseBody?.error || axiosError.message || 'Network error';
-            if (status === 401) {
+            if (status === 401 && invalidateSessionOn401 && (!isAuthCurrent || isAuthCurrent())) {
                 this.setToken(null);
                 if (typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT, {
@@ -391,7 +395,7 @@ class ApiClient {
             return {
                 ok: false,
                 status,
-                error: status === 401 ? 'Session expired. Please login again.' : errorMessage,
+                error: status === 401 && invalidateSessionOn401 ? 'Session expired. Please login again.' : errorMessage,
                 // Preserve the full server payload so callers can read
                 // structured fields (bucket, used, limit, hint, etc.)
                 // instead of just the top-level error code.

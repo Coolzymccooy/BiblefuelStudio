@@ -21,7 +21,8 @@ import audioAdvancedRouter from "./src/routes/audio_advanced.js";
 import authRouter from "./src/routes/auth.js";
 import jobsRouter from "./src/routes/jobs.js";
 import libraryRouter from "./src/routes/library.js";
-import socialRouter, { youtubeOauthCallback, tiktokConnectCallback } from "./src/routes/social.js";
+import { denyFiniteSnapshotAliases } from "./src/lib/social/finiteMedia.js";
+import socialRouter, { youtubeOauthCallback, tiktokConnectCallback, startFinitePostWorker, stopFinitePostWorker, finiteMediaRouter } from "./src/routes/social.js";
 import firebaseRouter from "./src/routes/firebase.js";
 import bibleRouter from "./src/routes/bible.js";
 import seriesRouter from "./src/routes/series.js";
@@ -176,6 +177,7 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 // video instead of saving it. The attachment header is the only reliable way
 // to make "Download" actually save to Files/Photos on iOS. safeDownloadName
 // sanitises the value to a single safe segment to prevent header injection.
+app.use("/outputs", denyFiniteSnapshotAliases);
 app.use("/outputs", (req, res, next) => {
   setOutputSafetyHeaders(res);
   res.setHeader("Accept-Ranges", "bytes");
@@ -496,6 +498,8 @@ app.use("/api/stems-worker", stemsWorkerRouter);
 app.get("/api/social/youtube/callback", youtubeOauthCallback);
 // Zernio's TikTok sign-in redirect: no session either; the signed bf_state says whose it is.
 app.get("/api/social/tiktok/callback", tiktokConnectCallback);
+// One-job, expiring media-read capabilities only; no API/login authority.
+app.use("/api/finite-media", finiteMediaRouter);
 app.use("/api/social",    requireAuth, withUserScope, requireVerifiedEmail,                       socialRouter);
 app.use("/api/firebase",  requireAuth, withUserScope,                                              firebaseRouter);
 app.use("/api/bible",     requireAuth, withUserScope,                                              bibleRouter);
@@ -581,7 +585,8 @@ try {
   console.warn("[stems] laptop queue not loaded:", e?.message || e);
 }
 
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
+  startFinitePostWorker();
   console.log(`✅ Biblefuel Studio v2 running at http://localhost:${PORT}`);
   maintenance.start();
   const { backupsOn } = maintenance.status();
@@ -606,3 +611,4 @@ app.listen(PORT, () => {
     }
   }
 });
+httpServer.once('close', () => { void stopFinitePostWorker(); });

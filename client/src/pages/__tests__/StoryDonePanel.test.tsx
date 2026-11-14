@@ -1,0 +1,22 @@
+import { beforeEach, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { DonePanel } from '../StoryVideoPage';
+import { api } from '../../lib/api';
+import { storyDescription } from '../../lib/storyShare';
+import type { StoryProject } from '../../lib/storyTypes';
+vi.mock('../../hooks/useMusicLibrary', () => ({ useMusicLibrary: () => ({ data: [], isPending: false }) }));
+vi.mock('../../components/share/YoutubePublishPanel', () => ({ YoutubePublishPanel: () => <div>YouTube controls retained</div> }));
+beforeEach(() => vi.restoreAllMocks());
+it('adds the existing TikTok action to Story with the exact Story source, title and description, not local finals or webhooks', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({ ok: true, status: 200, data: { connected: true, username: 'synthetic' } });
+  const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { results: [{ destination: 'tiktok', ok: true, draft: true }] } });
+  const project = { projectId: 'story-fixture', title: 'Story title', scenes: [], music: { path: null } } as unknown as StoryProject;
+  render(<MemoryRouter><DonePanel project={project} /></MemoryRouter>);
+  expect(screen.getByText('YouTube controls retained')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Download MP4' })).toBeInTheDocument();
+  expect(screen.getByText(/not a separately edited final/)).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole('button', { name: 'Post to TikTok' }));
+  expect(post).toHaveBeenCalledExactlyOnceWith('/api/social/post', { destination: 'tiktok', videoUrl: '/outputs/story/story-fixture/video.mp4', title: 'Story title', caption: storyDescription(project) });
+  expect(await screen.findByText(/inbox as a draft/)).toBeInTheDocument();
+});
